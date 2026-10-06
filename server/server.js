@@ -1,6 +1,7 @@
 require('./loadEnv');
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 const session = require('express-session');
 
@@ -74,16 +75,30 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/internal', internalRoutes);
 
+const sendHealth = (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        service: 'campus-print-api',
+        commit: process.env.RENDER_GIT_COMMIT || null
+    });
+};
+app.get('/health', sendHealth);
+
 // ── React SPA (built by client-react) — public site + admin + super-admin ────
 // Auth/role guards live client-side in the React app (each page/layout
 // checks session status via the API routes above and redirects as needed).
 const CLIENT_DIST = path.join(__dirname, '../client-react/dist');
-console.log('Serving static files from:', CLIENT_DIST);
-app.use(express.static(CLIENT_DIST));
-
-app.get(/^(?!\/api\/).*/, (req, res) => {
-    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
-});
+const CLIENT_INDEX = path.join(CLIENT_DIST, 'index.html');
+if (fs.existsSync(CLIENT_INDEX)) {
+    console.log('Serving static files from:', CLIENT_DIST);
+    app.use(express.static(CLIENT_DIST));
+    app.get(/^(?!\/api\/).*/, (req, res) => {
+        res.sendFile(CLIENT_INDEX);
+    });
+} else {
+    console.log('No client build found; running as API-only server.');
+    app.get('/', sendHealth);
+}
 
 // ── Start Server ─────────────────────────────────
 app.listen(PORT, () => {
