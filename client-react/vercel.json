@@ -9,6 +9,10 @@
     {
       "source": "/api/(.*)",
       "destination": "https://campus-print-1yeh.onrender.com/api/$1"
+    },
+    {
+      "source": "/((?!api/|api$).*)",
+      "destination": "/index.html"
     }
   ]
 }
