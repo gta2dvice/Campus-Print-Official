@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import Toast from '../components/Toast';
 import useToast from '../lib/useToast';
@@ -12,9 +12,11 @@ import {
   flushSaveCurrentOrder,
   loadCurrentOrder,
   removeCurrentOrder,
+  saveCurrentOrder,
   scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
+import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 
@@ -35,30 +37,44 @@ function isFileSupported(file) {
   if (file.name && ALLOWED_EXTENSIONS.test(file.name)) return true;
   return false;
 }
-const LOCATIONS = [
-  { id: 'main-gate', name: 'Main Gate', sub: 'Campus Gate 1 pickup', icon: <path d="M3 21V3h18v18M3 12h18M12 3v18" /> },
-  { id: 'red-canteen', name: 'Red Canteen', sub: 'Red Canteen pickup', icon: <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" /> },
+// Card icons per location id; names, hints and availability come from the shared slot matrix.
+const LOCATION_ICONS = {
+  'main-gate': <path d="M3 21V3h18v18M3 12h18M12 3v18" />,
+  'red-canteen': <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" />,
+  'hostel-gate': (
+    <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
+  ),
+  'academic-block': (
+    <><path d="M3 21h18M3 7v14M21 7v14M9 7v14M15 7v14M3 7h18M3 11h18M3 15h18" /><rect x="2" y="2" width="20" height="20" rx="2" /></>
+  ),
+};
+const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
+
+// Booking step 3. 'whatsapp' and 'none' are settled outside the app (POST /api/orders/payment/offline).
+const PAYMENT_OPTIONS = [
   {
-    id: 'hostel-gate', name: 'Hostel Gate', sub: 'Hostel entrance pickup', icon: (
-      <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
-    )
+    id: 'cashfree',
+    name: 'Cashfree Payment',
+    sub: 'Pay online now with UPI, card or netbanking',
+    icon: <><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></>,
   },
   {
-    id: 'academic-block', name: 'Academic Block', sub: 'Academic Block pickup', icon: (
-      <><path d="M3 21h18M3 7v14M21 7v14M9 7v14M15 7v14M3 7h18M3 11h18M3 15h18" /><rect x="2" y="2" width="20" height="20" rx="2" /></>
-    )
+    id: 'whatsapp',
+    name: 'WhatsApp Payment',
+    sub: 'Scan the shop QR with WhatsApp or any UPI app',
+    icon: <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></>,
+  },
+  {
+    id: 'none',
+    name: 'No Payment',
+    sub: 'Contact the shop for payment instructions',
+    icon: <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />,
   },
 ];
-const OFFERED_BY_TIME = {
-  '9:25 AM': ['red-canteen'],
-  '11:15 AM': ['red-canteen'],
-  '1:15 PM': ['red-canteen', 'hostel-gate'],
-  '2:05 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
-  '4:00 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
-};
-const TIME_SLOTS = ['9:25 AM', '11:15 AM', '1:15 PM', '2:05 PM', '4:00 PM'];
 const SLOT_CUTOFF_MINUTES = 5;
-const LIVE_SLOT_AVAILABILITY = false;
+const LIVE_SLOT_AVAILABILITY = true;
+// 5:00 PM IST — once reached, same-day booking is closed and tomorrow opens for pre-order.
+const NEXT_DAY_SWITCH_MINUTES = 17 * 60;
 
 // Campus Print only operates in India, so slot cutoffs always use IST — regardless of the
 // student's device timezone. Comparing minutes-since-midnight avoids local-Date pitfalls.
@@ -75,13 +91,28 @@ function slotMinutes(time) {
   return hour * 60 + parseInt(minStr, 10);
 }
 
+// This is only the offline fallback used when /api/orders/slots can't be reached —
+// the server (server/slots.js) is the source of truth whenever it's reachable.
+function isPreOrderModeFallback() {
+  if (!LIVE_SLOT_AVAILABILITY) return false;
+  return nowMinutesIST() >= NEXT_DAY_SWITCH_MINUTES;
+}
+
 function isSlotPast(time) {
   if (!LIVE_SLOT_AVAILABILITY) return false;
+  if (isPreOrderModeFallback()) return false; // tomorrow's slots are never "past" today
   return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
 }
 
-function isLocationOffered(locationId, time) {
-  return (OFFERED_BY_TIME[time] || []).includes(locationId);
+// Printing cost for one file. B&W double-sided is charged per physical sheet
+// (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
+// Keep in sync with filePrintingCost() in server/routes/orders.js, which verifies the total.
+function filePrintingCost(f) {
+  const pages = f?.pages || 1;
+  const copies = f?.copies || 1;
+  if (f?.colorMode === 'color') return pages * copies * 5;
+  if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+  return pages * copies * 2;
 }
 
 function formatSize(bytes) {
@@ -94,6 +125,7 @@ let fileKeySeq = 0;
 
 export default function NewOrder() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   useBodyClass('app-body');
   useDocumentTitle('New Order – Print Campus');
   const { toast, showToast } = useToast();
@@ -115,15 +147,23 @@ export default function NewOrder() {
 
   // ── Booking modal state ──
   const [modalOpen, setModalOpen] = useState(false);
-  const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'review'
+  const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'payment' | 'review'
+  const [preOrderMode, setPreOrderMode] = useState(false); // true once same-day booking closed (after 5 PM IST) — slots shown are tomorrow's
   const [selectedLocationId, setSelectedLocationId] = useState(null);
   const [selectedLocationName, setSelectedLocationName] = useState(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [locationStatuses, setLocationStatuses] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState(null); // 'cashfree' | 'whatsapp' | 'none'
+  const [paymentOptions, setPaymentOptions] = useState(null); // { phone, hasQr, qrVersion } from /api/orders/payment-options
+  const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const persistReadyRef = useRef(false);
+  const handledReturnOrderRef = useRef(null);
+  const confirmPaidOrderRef = useRef(null);
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
 
   useEffect(() => {
     let cancelled = false;
@@ -142,8 +182,11 @@ export default function NewOrder() {
           setSpiralBinding(unfinished.spiralBinding);
           setExpressDelivery(unfinished.expressDelivery);
           setClassroomDelivery(unfinished.classroomDelivery || false);
-          setSelectedLocationId(unfinished.selectedLocationId);
-          setSelectedLocationName(unfinished.selectedLocationName);
+          // A saved pairing may no longer exist in the slot matrix — keep the time, drop the location.
+          const savedPairValid = !unfinished.selectedLocationId || !unfinished.selectedTimeSlot
+            || isLocationOffered(unfinished.selectedLocationId, unfinished.selectedTimeSlot);
+          setSelectedLocationId(savedPairValid ? unfinished.selectedLocationId : null);
+          setSelectedLocationName(savedPairValid ? unfinished.selectedLocationName : null);
           setSelectedTimeSlot(unfinished.selectedTimeSlot);
         }
 
@@ -381,12 +424,18 @@ export default function NewOrder() {
   }
 
   async function finishSuccessfulOrder(orderId) {
+    if (!orderId) {
+      showToast('Payment was verified, but the server did not return a ticket number.', 'error');
+      setPaying(false);
+      return;
+    }
     try {
       await clearCompletedOrder();
     } catch {
       // Server order already succeeded; clearing the local draft is best-effort.
     }
     closeBookingModal();
+    console.info('[NAVIGATION] Navigating to ticket:', { orderId });
     navigate(`/ticket?id=${orderId}`);
   }
 
@@ -396,12 +445,7 @@ export default function NewOrder() {
   function calcPrice() {
     if (!config) return { pages: 0, base: 0, a3Extra: 0, serviceCharge: 0, deliveryCharge: 0, total: 0 };
 
-    const printingSubtotal = files.reduce((sum, f) => {
-      const rate = f?.colorMode === 'color' ? 5 : (f?.printingSide === 'double' ? 3 : 2);
-      const pages = f?.pages || 1;
-      const copies = f?.copies || 1;
-      return sum + (pages * copies * rate);
-    }, 0);
+    const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
 
     const serviceCharge = 3;
     let deliveryCharge = 0;
@@ -453,6 +497,22 @@ export default function NewOrder() {
     setStep(nextStep);
     if (nextStep === 'slot') loadTimeSlots();
     if (nextStep === 'location') loadLocationOptions();
+    if (nextStep === 'payment') loadPaymentOptions();
+  }
+
+  async function loadPaymentOptions() {
+    setPaymentOptionsLoading(true);
+    let options = { phone: null, hasQr: false, qrVersion: null };
+    try {
+      const res = await fetch('/api/orders/payment-options', { credentials: 'include' });
+      if (res.ok) options = await res.json();
+    } catch {
+      // Cashfree and "No Payment" still work without these details.
+    }
+    setPaymentOptions(options);
+    // The shop may have removed its QR since it was picked.
+    setPaymentMethod((m) => (m === 'whatsapp' && !options.hasQr ? null : m));
+    setPaymentOptionsLoading(false);
   }
 
   function selectTimeSlot(time) {
@@ -466,11 +526,13 @@ export default function NewOrder() {
   async function loadTimeSlots() {
     setSlotsLoading(true);
     let slotsData = [];
+    let preOrder = false;
     try {
       const res = await fetch('/api/orders/slots', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         slotsData = data.slots || [];
+        preOrder = !!data.preOrder;
       } else {
         showToast('Could not load available slots.', 'error');
       }
@@ -478,11 +540,13 @@ export default function NewOrder() {
       // fall through to local cutoff
     }
     if (!slotsData.length) {
+      preOrder = isPreOrderModeFallback();
       slotsData = TIME_SLOTS.map((time) => ({
         time,
         status: isSlotPast(time) ? 'past' : 'available',
       }));
     }
+    setPreOrderMode(preOrder);
     setSlots(slotsData);
     setSlotsLoading(false);
   }
@@ -517,6 +581,7 @@ export default function NewOrder() {
   }
 
   function handleLocationSelect(locId, locName) {
+    if (selectedTimeSlot && !isLocationOffered(locId, selectedTimeSlot)) return;
     setSelectedLocationId(locId);
     setSelectedLocationName(locName);
 
@@ -580,18 +645,84 @@ export default function NewOrder() {
     }
   }
 
+  // WhatsApp/UPI QR and "No Payment": the order is placed now with a pending payment
+  // that the shop marks as paid once the money arrives.
+  async function placeOfflineOrder(method) {
+    try {
+      const formData = buildOrderFormData();
+      formData.append('paymentMethod', method);
+      const res = await fetch('/api/orders/payment/offline', { method: 'POST', credentials: 'include', body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        await finishSuccessfulOrder(data.id);
+      } else {
+        showToast(data.message || 'Failed to place order.', 'error');
+        setPaying(false);
+      }
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+      setPaying(false);
+    }
+  }
+
   async function confirmPaidOrder(cashfreeOrderId) {
+    console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
     const formData = buildOrderFormData();
     formData.append('cashfree_order_id', cashfreeOrderId);
     const verifyRes = await fetch('/api/orders/payment/verify', { method: 'POST', credentials: 'include', body: formData });
-    const verifyData = await verifyRes.json();
-    if (verifyRes.ok) {
+    const verifyData = await verifyRes.json().catch(() => ({}));
+    if (verifyRes.ok && verifyData.id) {
+      console.info('[PAYMENT_VERIFY] Backend returned created ticket:', {
+        cashfreeOrderId,
+        orderId: verifyData.id,
+        hasTicketNumber: Boolean(verifyData.ticketNumber)
+      });
       await finishSuccessfulOrder(verifyData.id);
+      return true;
+    }
+    console.error('[PAYMENT_VERIFY_FAILED]', {
+      stage: 'verification_response',
+      cashfreeOrderId,
+      httpStatus: verifyRes.status,
+      code: verifyData.code || 'PAYMENT_VERIFICATION_FAILED'
+    });
+    const errorCode = verifyData.code ? ` (${verifyData.code})` : '';
+    showToast(
+      `${verifyData.message || 'Payment could not be confirmed or the ticket could not be generated. Please contact support.'}${errorCode}`,
+      'error'
+    );
+    setPaying(false);
+    return false;
+  }
+  confirmPaidOrderRef.current = confirmPaidOrder;
+
+  const returnedCashfreeOrderId = searchParams.get('cf_order') || searchParams.get('order_id');
+  useEffect(() => {
+    if (loading || !returnedCashfreeOrderId || handledReturnOrderRef.current === returnedCashfreeOrderId) return;
+    handledReturnOrderRef.current = returnedCashfreeOrderId;
+    console.info('[PAYMENT_RETURN] Cashfree return received:', {
+      cashfreeOrderId: returnedCashfreeOrderId,
+      restoredFileCount: files.length
+    });
+    if (!files.length) {
+      console.error('[PAYMENT_RETURN_FAILED]', {
+        stage: 'restore_pending_order',
+        cashfreeOrderId: returnedCashfreeOrderId
+      });
+      showToast('Payment returned successfully, but the saved order files could not be restored. Please contact support.', 'error');
       return;
     }
-    showToast(verifyData.message || 'Payment could not be confirmed. If money was deducted, contact support.', 'error');
-    setPaying(false);
-  }
+    setPaying(true);
+    confirmPaidOrderRef.current(returnedCashfreeOrderId).catch((error) => {
+      console.error('[PAYMENT_RETURN_FAILED]', {
+        stage: 'verification_request',
+        cashfreeOrderId: returnedCashfreeOrderId,
+        errorName: error instanceof Error ? error.name : 'UnknownError'
+      });
+      showToastRef.current('Payment verification could not reach the server. Please retry or contact support.', 'error');
+      setPaying(false);
+    });
+  }, [loading, returnedCashfreeOrderId, files.length]);
 
   async function handlePay() {
     if (!selectedLocationId || !selectedTimeSlot) {
@@ -608,10 +739,39 @@ export default function NewOrder() {
       return;
     }
 
+    if (!paymentMethod) {
+      showToast('Please choose a payment option.', 'error');
+      goToStep('payment');
+      return;
+    }
+
     setPaying(true);
 
+    if (paymentMethod !== 'cashfree') {
+      await placeOfflineOrder(paymentMethod);
+      return;
+    }
 
     try {
+      try {
+        await saveCurrentOrder({
+          meta: {
+            guestDetails,
+            paperSize,
+            spiralBinding,
+            expressDelivery,
+            classroomDelivery,
+            selectedLocationId,
+            selectedLocationName,
+            selectedTimeSlot,
+          },
+          files,
+        });
+      } catch (error) {
+        showToast(storageErrorMessage(error), 'error');
+        setPaying(false);
+        return;
+      }
       const createRes = await fetch('/api/orders/payment/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -766,7 +926,7 @@ export default function NewOrder() {
                         } else {
                           pagesText = `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (estimated)' : ''}`;
                         }
-                        const pdfTotal = (f.pages || 1) * (f.copies || 1) * (f.printingSide === 'double' ? 3 : 2);
+                        const pdfTotal = filePrintingCost(f);
                         return (
                           <div className="file-item" key={f.key} style={{
                             display: 'flex',
@@ -778,8 +938,8 @@ export default function NewOrder() {
                             borderRadius: '8px',
                             marginBottom: '0.75rem'
                           }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
+                            <div className="file-item-head">
+                              <div className="file-item-main">
                                 <div className="file-icon" style={{ fontSize: '1.5rem' }}>📄</div>
                                 <div className="file-item-info">
                                   <div className="file-item-name" style={{ fontWeight: '600' }}>{f.file.name}</div>
@@ -789,15 +949,15 @@ export default function NewOrder() {
                               <button className="file-remove" title="Remove" onClick={() => removeFile(f.key)}>✕</button>
                             </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingLeft: '2.5rem' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                            <div className="file-item-settings">
+                              <div className="file-item-row">
                                 <div className="counter" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                   <span style={{ fontSize: '0.85rem', color: '#666' }}>Copies:</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, -1)}>−</button>
                                   <span className="counter-value" style={{ minWidth: '1.5rem', textAlign: 'center' }}>{f.copies || 1}</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, 1)}>+</button>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <div className="file-item-options">
                                   <button
                                     className={`btn btn-sm ${f.printingSide === 'single' ? 'btn-primary' : 'btn-outline'}`}
                                     onClick={() => updateFilePrintingSide(f.key, 'single')}
@@ -814,9 +974,9 @@ export default function NewOrder() {
                                   </button>
                                 </div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                              <div className="file-item-row">
                                 <span style={{ fontSize: '0.85rem', color: '#666' }}>Color Mode:</span>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <div className="file-item-options">
                                   <button
                                     className={`btn btn-sm ${f.colorMode === 'bw' ? 'btn-primary' : 'btn-outline'}`}
                                     onClick={() => updateFileColorMode(f.key, 'bw')}
@@ -864,12 +1024,15 @@ export default function NewOrder() {
                       <button className={toggleClass(paperSize === 'A4')} onClick={() => setPaperSize('A4')}>A4</button>
                     </div>
                   </div>
-                </div>
-
-
+                  <div className="setting-group">
+                    <span className="setting-label">Classroom Delivery</span>
+                    <div className="toggle-group" id="classroomDeliveryGroup">
+                      <button className={toggleClass(!classroomDelivery)} onClick={() => setClassroomDelivery(false)}>No (Free)</button>
+                      <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹10)</button>
+                    </div>
+                  </div>
                 </div>
               </div>
-
             </div>
 
             {/* Right: Order Summary */}
@@ -903,22 +1066,23 @@ export default function NewOrder() {
               </button>
               <p className="summary-note">{summaryNote}</p>
             </div>
+          </div>
           </main>
         </div>
 
-      {/* Booking flow: Time → Location → Review */}
+      {/* Booking flow: Time → Location → Payment → Review */}
       <div className="booking-overlay" hidden={!modalOpen} onClick={(e) => { if (e.target === e.currentTarget) closeBookingModal(); }}>
-        <div className="booking-panel booking-container" role="dialog" aria-modal="true" style={{ maxWidth: 920, padding: '2.5rem 2rem' }}>
+        <div className="booking-panel booking-container" role="dialog" aria-modal="true">
           <button className="booking-close" type="button" aria-label="Close booking" onClick={closeBookingModal}>×</button>
 
-          <div className="cp-nav-steps" role="navigation" aria-label="Booking steps">
-            <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step === 'location' || step === 'review' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
+          <div className="cp-nav-steps cp-nav-steps--four" role="navigation" aria-label="Booking steps">
+            <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step !== 'slot' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
               <span className="step-num">01</span><span className="step-title">Time Slot</span>
             </button>
             <span className="step-arrow">→</span>
             <button
               type="button"
-              className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
+              className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'payment' || step === 'review' ? ' is-done' : ''}`}
               onClick={() => selectedTimeSlot && goToStep('location')}
             >
               <span className="step-num">02</span><span className="step-title">Location</span>
@@ -926,10 +1090,18 @@ export default function NewOrder() {
             <span className="step-arrow">→</span>
             <button
               type="button"
-              className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
-              onClick={() => selectedLocationId && selectedTimeSlot && goToStep('review')}
+              className={`cp-nav-step${step === 'payment' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
+              onClick={() => selectedLocationId && selectedTimeSlot && goToStep('payment')}
             >
-              <span className="step-num">03</span><span className="step-title">Review</span>
+              <span className="step-num">03</span><span className="step-title">Payment</span>
+            </button>
+            <span className="step-arrow">→</span>
+            <button
+              type="button"
+              className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
+              onClick={() => selectedLocationId && selectedTimeSlot && paymentMethod && goToStep('review')}
+            >
+              <span className="step-num">04</span><span className="step-title">Review</span>
             </button>
           </div>
 
@@ -940,6 +1112,11 @@ export default function NewOrder() {
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose your collection time</h2>
               <p className="location-subtitle">Select a time first. Pickup points for that slot are shown next.</p>
             </div>
+            {preOrderMode && (
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
+                🕔 Same-day booking is closed for today. You're pre-ordering for <strong>tomorrow</strong> — the times below are tomorrow's slots.
+              </div>
+            )}
             <div className="cp-slots-grid">
               {slotsLoading ? (
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
@@ -952,14 +1129,17 @@ export default function NewOrder() {
                 const isLimited = s.status === 'limited';
                 const isDisabled = isPast || isFull;
                 const isSelected = selectedTimeSlot === s.time;
+                // Still selectable: picking it clears the chosen location (see selectTimeSlot).
+                const notAtSelectedLocation = !!selectedLocationId && !isLocationOffered(selectedLocationId, s.time);
                 let statusLabel = 'Available';
                 if (isPast) statusLabel = 'Unavailable';
                 else if (isFull) statusLabel = 'Fully Booked';
+                else if (notAtSelectedLocation) statusLabel = `Not at ${selectedLocationName}`;
                 else if (isLimited) statusLabel = 'Limited';
                 let classes = 'cp-slot-pill';
                 if (isPast) classes += ' is-past';
                 else if (isFull) classes += ' is-full';
-                else if (isLimited) classes += ' is-limited';
+                else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
                 else classes += ' is-available';
                 if (isSelected) classes += ' is-selected';
                 return (
@@ -970,6 +1150,11 @@ export default function NewOrder() {
                 );
               })}
             </div>
+            {preOrderMode && selectedTimeSlot && (
+              <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#9a3412', fontWeight: 600 }}>
+                You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot}.
+              </p>
+            )}
             <div className="cp-step-footer">
               <button type="button" className="btn btn-primary" disabled={!selectedTimeSlot} onClick={() => goToStep('location')}>
                 Continue to Location <span className="arrow-icon">→</span>
@@ -982,7 +1167,10 @@ export default function NewOrder() {
             <div className="cp-view-header">
               <span className="location-tag">📍 Collection Point</span>
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Where should we deliver your prints?</h2>
-              <p className="location-subtitle">Pickup at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+              <p className="location-subtitle">Pickup {preOrderMode ? 'tomorrow' : ''} at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+              {preOrderMode && (
+                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>📦 This is a pre-order — same-day booking for today is closed.</p>
+              )}
             </div>
             <div className="cp-cards-grid">
               {slotsLoading ? (
@@ -993,12 +1181,13 @@ export default function NewOrder() {
               ) : LOCATIONS.map((loc) => {
                 const locStatus = locationStatuses.find((l) => l.id === loc.id);
                 const status = locStatus?.status || 'unavailable';
-                const isUnavailable = status === 'unavailable' || status === 'past';
+                const isPastSlot = status === 'past';
+                const isUnavailable = status === 'unavailable' || isPastSlot;
                 const isFull = status === 'full';
                 const isLimited = status === 'limited';
                 const isDisabled = isUnavailable || isFull;
                 let statusLabel = 'Available';
-                if (isUnavailable) statusLabel = 'Unavailable';
+                if (isUnavailable) statusLabel = 'Booked';
                 else if (isFull) statusLabel = 'Fully Booked';
                 else if (isLimited) statusLabel = 'Limited';
                 let classes = 'cp-loc-card';
@@ -1031,18 +1220,101 @@ export default function NewOrder() {
             </div>
             <div className="cp-step-footer space-between">
               <button type="button" className="btn btn-secondary" onClick={() => goToStep('slot')}>← Back to Time Slot</button>
-              <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('review')}>
+              <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('payment')}>
+                Continue to Payment <span className="arrow-icon">→</span>
+              </button>
+            </div>
+          </section>
+
+          {/* Step 3: Payment gateway */}
+          <section className="cp-step-view" hidden={step !== 'payment'}>
+            <div className="cp-view-header">
+              <span className="location-tag">💳 Payment</span>
+              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose how you'll pay</h2>
+              <p className="location-subtitle">Total payable: <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>₹{p.total}</strong></p>
+            </div>
+            {paymentOptionsLoading && !paymentOptions ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
+                <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
+                <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading payment options...</p>
+              </div>
+            ) : (
+              <>
+                <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
+                  {PAYMENT_OPTIONS.map((opt) => {
+                    const isDisabled = opt.id === 'whatsapp' && !paymentOptions?.hasQr;
+                    const isSelected = paymentMethod === opt.id && !isDisabled;
+                    let classes = 'cp-loc-card';
+                    if (isSelected) classes += ' is-selected';
+                    if (isDisabled) classes += ' is-unavailable';
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        className={classes}
+                        disabled={isDisabled}
+                        onClick={() => setPaymentMethod(opt.id)}
+                      >
+                        <div className="cp-card-icon">
+                          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>
+                        </div>
+                        <h3 className="cp-card-title">{opt.name}</h3>
+                        <p className="cp-card-sub">{opt.sub}</p>
+                        <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {paymentMethod === 'whatsapp' && paymentOptions?.hasQr && (
+                  <div className="cp-review-box cp-payment-detail">
+                    <h3 className="cp-review-heading">Scan to pay ₹{p.total}</h3>
+                    <img
+                      className="cp-payment-qr"
+                      src={`/api/orders/payment-options/qr?v=${paymentOptions.qrVersion || ''}`}
+                      alt="Shop payment QR code"
+                    />
+                    <p className="cp-card-sub">
+                      Scan this QR with WhatsApp or any UPI app and pay <strong>₹{p.total}</strong>. Your order is placed when you continue,
+                      and the shop confirms the payment once it's received.
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === 'none' && (
+                  <div className="cp-review-box cp-payment-detail">
+                    <h3 className="cp-review-heading">Online payment is currently unavailable</h3>
+                    <p className="cp-card-sub">Contact the shop for payment instructions:</p>
+                    {paymentOptions?.phone ? (
+                      <a className="cp-payment-phone" href={`tel:${paymentOptions.phone.replace(/[^\d+]/g, '')}`}>📞 {paymentOptions.phone}</a>
+                    ) : (
+                      <p className="cp-card-sub"><strong>Please contact the shop at the pickup counter.</strong></p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            <div className="cp-step-footer space-between">
+              <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
+              <button type="button" className="btn btn-primary" disabled={!paymentMethod} onClick={() => goToStep('review')}>
                 Continue to Review <span className="arrow-icon">→</span>
               </button>
             </div>
           </section>
 
-          {/* Step 3: Review */}
+          {/* Step 4: Review */}
           <section className="cp-step-view" hidden={step !== 'review'}>
             <div className="cp-view-header">
               <span className="location-tag">✨ Confirm Details</span>
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Review your booking</h2>
               <p className="location-subtitle">Confirm pickup details before proceeding to payment.</p>
+              {preOrderMode && (
+                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>
+                  You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot || '—'}.
+                </p>
+              )}
             </div>
 
             <div className="cp-review-container">
@@ -1080,6 +1352,19 @@ export default function NewOrder() {
                   </div>
                   <button type="button" className="cp-inline-edit" onClick={() => goToStep('slot')}>Edit Time</button>
                 </div>
+                <div className="cp-review-row">
+                  <div>
+                    <span className="cp-review-label">Collection Day</span>
+                    <strong className="cp-review-val">{preOrderMode ? 'Tomorrow (Pre-order)' : 'Today'}</strong>
+                  </div>
+                </div>
+                <div className="cp-review-row">
+                  <div>
+                    <span className="cp-review-label">Payment Method</span>
+                    <strong className="cp-review-val">{PAYMENT_OPTIONS.find((o) => o.id === paymentMethod)?.name || '—'}</strong>
+                  </div>
+                  <button type="button" className="cp-inline-edit" onClick={() => goToStep('payment')}>Edit Payment</button>
+                </div>
               </div>
 
               <div className="cp-review-box">
@@ -1116,12 +1401,12 @@ export default function NewOrder() {
             </div>
 
             <div className="cp-step-footer space-between" style={{ marginTop: '1.5rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
+              <button type="button" className="btn btn-secondary" onClick={() => goToStep('payment')}>← Back to Payment</button>
               <button type="button" className="btn btn-primary" disabled={paying} onClick={handlePay}>
                 {paying ? (
                   <><span className="loading-spinner"></span>&nbsp; Processing…</>
                 ) : (
-                  <>Proceed to Payment <span className="arrow-icon">→</span></>
+                  <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : 'Place Order'} <span className="arrow-icon">→</span></>
                 )}
               </button>
             </div>

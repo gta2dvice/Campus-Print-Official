@@ -103,17 +103,17 @@ export function Pagination({ data, onPage }) {
   const totalPages = Math.max(1, Math.ceil(data.total / data.limit));
   if (totalPages <= 1) return null;
   return (
-    <div className="mt-5 flex items-center justify-center gap-4 text-sm text-gray-600">
+    <div className="mt-5 flex items-center justify-center gap-4 text-sm text-gray-600 max-sm:gap-3">
       <button
-        className="rounded-full border border-gray-200 px-3.5 py-1.5 text-[0.8rem] font-semibold text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+        className="whitespace-nowrap rounded-full border border-gray-200 px-3.5 py-1.5 text-[0.8rem] font-semibold max-sm:px-4 max-sm:py-2.5 text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
         disabled={data.page <= 1}
         onClick={() => onPage(data.page - 1)}
       >
         ← Prev
       </button>
-      <span>Page {data.page} of {totalPages}</span>
+      <span className="whitespace-nowrap">Page {data.page} of {totalPages}</span>
       <button
-        className="rounded-full border border-gray-200 px-3.5 py-1.5 text-[0.8rem] font-semibold text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+        className="whitespace-nowrap rounded-full border border-gray-200 px-3.5 py-1.5 text-[0.8rem] font-semibold max-sm:px-4 max-sm:py-2.5 text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
         disabled={data.page >= totalPages}
         onClick={() => onPage(data.page + 1)}
       >
@@ -156,15 +156,15 @@ export function TrendChart({ trend }) {
 export function Modal({ title, onClose, children }) {
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/45 p-6 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/45 p-6 backdrop-blur-[2px] max-sm:p-3"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="max-h-[85vh] w-full max-w-[560px] overflow-y-auto rounded-[20px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-5">
-          <h3 className="text-[1.05rem] font-bold text-gray-900">{title}</h3>
-          <button className="text-base text-gray-400 hover:text-gray-600" onClick={onClose}>✕</button>
+      <div className="max-h-[85vh] w-full max-w-[560px] overflow-y-auto rounded-[20px] bg-white shadow-[0_20px_60px_rgba(0,0,0,0.25)] max-sm:max-h-[calc(100dvh-24px)]">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-6 py-5 max-sm:px-4 max-sm:py-3">
+          <h3 className="min-w-0 text-[1.05rem] font-bold text-gray-900 [overflow-wrap:anywhere]">{title}</h3>
+          <button className="flex-shrink-0 text-base text-gray-400 hover:text-gray-600 max-sm:flex max-sm:h-10 max-sm:w-10 max-sm:items-center max-sm:justify-center" onClick={onClose}>✕</button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-6 max-sm:p-4">{children}</div>
       </div>
     </div>
   );
@@ -178,7 +178,7 @@ export function DetailItem({ label, children }) {
   return (
     <div>
       <span className="mb-[0.15rem] block text-[0.72rem] uppercase tracking-wide text-gray-400">{label}</span>
-      <span className="text-gray-900">{children}</span>
+      <span className="text-gray-900 [overflow-wrap:anywhere]">{children}</span>
     </div>
   );
 }

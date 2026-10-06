@@ -79,7 +79,7 @@ export default function Earnings() {
         ) : !data.trend.length ? (
           <div className="py-8 text-center text-xs font-semibold text-slate-400">No completed orders in the last 14 days.</div>
         ) : (
-          <div className="flex h-44 items-end gap-2 pt-6 pb-2">
+          <div className="flex h-44 items-end gap-2 pt-6 pb-2 max-sm:gap-1">
             {data.trend.map((t) => (
               <div key={t.date} className="group relative flex h-full flex-1 flex-col items-center justify-end gap-2" title={`${t.date}: ${fmtMoney(t.amount)}`}>
                 <div className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-indigo-500 transition-all group-hover:from-blue-500 group-hover:to-indigo-400 group-hover:shadow-md" style={{ height: `${Math.max(8, (t.amount / max) * 100)}%` }} />
@@ -92,7 +92,7 @@ export default function Earnings() {
 
       {/* Recent Completed Transactions */}
       <div className="admin-card">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div>
             <h3 className="text-base font-extrabold text-slate-900">Recent Completed Transactions</h3>
             <p className="text-xs text-slate-500">Verified payouts from completed print jobs</p>
@@ -120,10 +120,10 @@ export default function Earnings() {
               <tbody>
                 {data.recentTransactions.map((t) => (
                   <tr key={t.id}>
-                    <td className="font-extrabold text-slate-900">#{String(t.id).padStart(4, '0')}</td>
-                    <td className="font-medium text-slate-800">{t.customer_email}</td>
-                    <td className="font-black text-emerald-600">{fmtMoney(t.total_price)}</td>
-                    <td className="text-right text-slate-400 text-xs font-medium">{fmtDate(t.created_at)}</td>
+                    <td data-label="Order ID" className="font-extrabold text-slate-900">#{String(t.id).padStart(4, '0')}</td>
+                    <td data-label="Customer Email" className="font-medium text-slate-800">{t.customer_email}</td>
+                    <td data-label="Amount" className="font-black text-emerald-600">{fmtMoney(t.total_price)}</td>
+                    <td data-label="Date" className="text-right text-slate-400 text-xs font-medium">{fmtDate(t.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,0 +1,15 @@
+{
+  "locations": [
+    { "id": "main-gate", "name": "Main Gate", "hint": "Campus Gate 1 pickup" },
+    { "id": "red-canteen", "name": "Red Canteen", "hint": "Red Canteen pickup" },
+    { "id": "hostel-gate", "name": "Hostel Gate", "hint": "Hostel entrance pickup" },
+    { "id": "academic-block", "name": "Academic Block", "hint": "Academic Block pickup" }
+  ],
+  "availability": {
+    "9:25 AM":  { "main-gate": false, "red-canteen": false, "hostel-gate": false, "academic-block": true },
+    "11:15 AM": { "main-gate": false, "red-canteen": false, "hostel-gate": true,  "academic-block": true },
+    "1:15 PM":  { "main-gate": true,  "red-canteen": true,  "hostel-gate": true,  "academic-block": true },
+    "2:05 PM":  { "main-gate": false, "red-canteen": false, "hostel-gate": false, "academic-block": true },
+    "4:00 PM":  { "main-gate": true,  "red-canteen": true,  "hostel-gate": false, "academic-block": false }
+  }
+}

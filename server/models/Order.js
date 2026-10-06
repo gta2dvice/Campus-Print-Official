@@ -4,7 +4,7 @@ const Profile = require('./Profile');
 async function createOrder(userId, shopId, data) {
     const {
         paperSize, copies, spiralBinding, expressDelivery, totalPrice, fileCount,
-        collectionLocationId, collectionLocationName, collectionTime, totalPages,
+        collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
         guestFullName, guestPhone, guestClassroom
     } = data;
 
@@ -17,9 +17,9 @@ async function createOrder(userId, shopId, data) {
     const [result] = await pool.execute(
         `INSERT INTO orders
             (user_id, student_id, shop_id, paper_size, copies, spiral_binding, express_delivery, total_price, file_count,
-             collection_location_id, collection_location, collection_time, total_pages,
+             collection_location_id, collection_location, collection_time, collection_date, total_pages,
              guest_full_name, guest_phone, guest_classroom)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             userId || null,
             studentId,
@@ -33,6 +33,7 @@ async function createOrder(userId, shopId, data) {
             collectionLocationId || null,
             collectionLocationName || null,
             collectionTime || null,
+            collectionDate || null,
             totalPages || 0,
             guestFullName || null,
             guestPhone || null,
@@ -130,7 +131,7 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
 
     const [rows] = await pool.query(
         `SELECT o.*, u.email AS customer_email, s.shop_name, p.full_name, p.phone_number, p.class_room_number
-         FROM orders o JOIN users u ON u.id = o.user_id
+         FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
          ${whereClause}
@@ -139,7 +140,7 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
         [...params, limit, offset]
     );
     const [[{ count }]] = await pool.query(
-        `SELECT COUNT(*) AS count FROM orders o JOIN users u ON u.id = o.user_id ${whereClause}`,
+        `SELECT COUNT(*) AS count FROM orders o LEFT JOIN users u ON u.id = o.user_id ${whereClause}`,
         params
     );
     return { orders: rows, total: count, page, limit };
@@ -151,7 +152,7 @@ async function getOrderById(orderId, shopId = null) {
     if (shopId) { shopFilter = 'AND o.shop_id = ?'; params.push(shopId); }
     const [rows] = await pool.execute(
         `SELECT o.*, u.email AS customer_email, s.shop_name, p.full_name, p.phone_number, p.class_room_number
-         FROM orders o JOIN users u ON u.id = o.user_id
+         FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.id = ? ${shopFilter}`,
@@ -200,7 +201,7 @@ async function getDashboardStats(shopId = null) {
     );
     const recentFilter = shopId ? 'WHERE o.shop_id = ?' : '';
     const [recentOrders] = await pool.query(
-        `SELECT o.*, u.email AS customer_email FROM orders o JOIN users u ON u.id = o.user_id
+        `SELECT o.*, u.email AS customer_email FROM orders o LEFT JOIN users u ON u.id = o.user_id
          ${recentFilter} ORDER BY o.created_at DESC LIMIT 5`,
         shopParams
     );
@@ -246,7 +247,7 @@ async function getEarnings(shopId = null) {
     const txFilter = shopId ? 'AND o.shop_id = ?' : '';
     const [recentTransactions] = await pool.query(
         `SELECT o.id, o.total_price, o.created_at, u.email AS customer_email
-         FROM orders o JOIN users u ON u.id = o.user_id
+         FROM orders o LEFT JOIN users u ON u.id = o.user_id
          WHERE o.status = 'completed' ${txFilter} ORDER BY o.created_at DESC LIMIT 10`, shopParams
     );
 

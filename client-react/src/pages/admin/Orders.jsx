@@ -25,6 +25,13 @@ const NEXT_ACTIONS_CONFIG = {
   ready: [{ status: 'completed', label: 'Mark Completed' }],
 };
 
+const PAYMENT_METHOD_LABELS = {
+  cashfree: 'Cashfree (online)',
+  simulated: 'Test checkout',
+  whatsapp: 'WhatsApp / UPI QR',
+  none: 'No payment (pay shop directly)',
+};
+
 export default function Orders() {
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -54,6 +61,7 @@ export default function Orders() {
   const [modalOrder, setModalOrder] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
+  const [markingPaid, setMarkingPaid] = useState(false);
 
   const [rejectOrderId, setRejectOrderId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -133,6 +141,25 @@ export default function Orders() {
       setModalError(err.message || 'Failed to load order');
     } finally {
       setModalLoading(false);
+    }
+  }
+
+  async function markOrderPaid() {
+    if (!modalOrder?.id) return;
+    setMarkingPaid(true);
+    try {
+      const res = await adminApi(`/api/admin/orders/${modalOrder.id}/mark-paid`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.message || 'Could not mark as paid.', 'error');
+        return;
+      }
+      setModalOrder((o) => (o ? { ...o, payment: data } : o));
+      showToast('Payment marked as received.');
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+    } finally {
+      setMarkingPaid(false);
     }
   }
 
@@ -239,23 +266,25 @@ export default function Orders() {
               <tbody>
                 {data.orders.map((o) => (
                   <tr key={o.id}>
-                    <td className="font-extrabold text-slate-900 whitespace-nowrap">#{String(o.id).padStart(4, '0')}</td>
-                    <td>
-                      <div className="font-bold text-slate-900">{o.full_name || o.customer_email}</div>
-                      <div className="text-[0.68rem] text-slate-400">{o.phone_number || o.customer_email}</div>
+                    <td data-label="Order ID" className="font-extrabold text-slate-900 whitespace-nowrap">#{String(o.id).padStart(4, '0')}</td>
+                    <td data-label="Customer & Contact">
+                      <div>
+                        <div className="font-bold text-slate-900">{o.full_name || o.customer_email}</div>
+                        <div className="text-[0.68rem] text-slate-400">{o.phone_number || o.customer_email}</div>
+                      </div>
                     </td>
-                    <td className="text-slate-600 font-medium whitespace-nowrap">{fmtPickup(o)}</td>
-                    <td className="whitespace-nowrap">
+                    <td data-label="Pickup Slot" className="text-slate-600 font-medium whitespace-nowrap">{fmtPickup(o)}</td>
+                    <td data-label="Specs" className="whitespace-nowrap">
                       <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[0.7rem] font-bold text-slate-700">
                         {o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x
                       </span>
                     </td>
-                    <td className="whitespace-nowrap">
+                    <td data-label="Status" className="whitespace-nowrap">
                       <StatusBadge status={o.status} />
                     </td>
-                    <td className="font-black text-slate-900 whitespace-nowrap">{fmtMoney(o.total_price)}</td>
-                    <td className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
-                    <td className="text-right whitespace-nowrap">
+                    <td data-label="Amount" className="font-black text-slate-900 whitespace-nowrap">{fmtMoney(o.total_price)}</td>
+                    <td data-label="Date" className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
+                    <td data-label="Actions" className="text-right whitespace-nowrap">
                       <div className="admin-actions-cell">
                         <button
                           onClick={() => openOrderModal(o.id)}
@@ -294,7 +323,7 @@ export default function Orders() {
                   #{String(modalOrder.id).padStart(4, '0')}
                 </div>
                 <div>
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <h3 className="text-base font-black text-slate-900">Order #{String(modalOrder.id).padStart(4, '0')}</h3>
                     {modalOrder.status && <StatusBadge status={modalOrder.status} />}
                   </div>
@@ -303,7 +332,7 @@ export default function Orders() {
               </div>
               <button
                 onClick={() => setModalOrder(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-800 transition"
+                className="flex h-8 w-8 max-sm:h-10 max-sm:w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-800 transition"
                 title="Close"
               >
                 ✕
@@ -390,6 +419,43 @@ export default function Orders() {
                     </div>
                   </div>
 
+                  {/* Payment Section */}
+                  <div className="admin-modal-section">
+                    <div className="admin-modal-section-title">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                      Payment
+                    </div>
+                    {modalOrder.payment ? (
+                      <div className="admin-modal-grid">
+                        <div className="admin-modal-field">
+                          <span className="admin-modal-label">Method</span>
+                          <span className="admin-modal-value">{PAYMENT_METHOD_LABELS[modalOrder.payment.method] || modalOrder.payment.method || 'N/A'}</span>
+                        </div>
+                        <div className="admin-modal-field">
+                          <span className="admin-modal-label">Status</span>
+                          <span className="admin-modal-value flex flex-wrap items-center gap-2">
+                            <StatusBadge status={modalOrder.payment.status} kind="payment" />
+                            {modalOrder.payment.status === 'pending' && (
+                              <button onClick={markOrderPaid} disabled={markingPaid} className="admin-action-btn admin-action-btn-accept max-sm:min-h-11">
+                                {markingPaid ? 'Saving…' : 'Mark Paid'}
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                        {modalOrder.payment.transaction_ref && (
+                          <div className="admin-modal-field">
+                            <span className="admin-modal-label">Transaction Ref</span>
+                            <span className="admin-modal-value break-all">{modalOrder.payment.transaction_ref}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="py-2 text-center text-xs font-semibold text-slate-400">No payment recorded.</p>
+                    )}
+                  </div>
+
                   {/* Uploaded Documents Section */}
                   <div className="admin-modal-section">
                     <div className="admin-modal-section-title">
@@ -465,7 +531,7 @@ export default function Orders() {
           <div className="w-full max-w-[420px] rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <h3 className="text-base font-extrabold text-slate-900">Reject Print Order</h3>
-              <button onClick={() => setRejectOrderId(null)} className="text-slate-400 hover:text-slate-700">✕</button>
+              <button onClick={() => setRejectOrderId(null)} className="text-slate-400 hover:text-slate-700 max-sm:flex max-sm:h-10 max-sm:w-10 max-sm:items-center max-sm:justify-center">✕</button>
             </div>
             <div className="mt-4 space-y-4">
               <p className="text-xs text-slate-600">Are you sure you want to reject order #{String(rejectOrderId).padStart(4, '0')}?</p>
@@ -479,9 +545,9 @@ export default function Orders() {
                   className="admin-input"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-2 max-sm:flex-col-reverse">
                 <button onClick={() => setRejectOrderId(null)} className="admin-btn-secondary">Cancel</button>
-                <button onClick={confirmReject} className="admin-action-btn admin-action-btn-reject">Confirm Reject</button>
+                <button onClick={confirmReject} className="admin-action-btn admin-action-btn-reject max-sm:min-h-11">Confirm Reject</button>
               </div>
             </div>
           </div>

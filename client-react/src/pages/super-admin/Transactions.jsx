@@ -45,7 +45,7 @@ export default function Transactions() {
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center gap-[0.6rem]">
+      <div className="sa-filter-bar mb-5 flex flex-wrap items-center gap-[0.6rem]">
         <input
           type="text"
           value={search}
@@ -70,7 +70,7 @@ export default function Transactions() {
         <button onClick={resetFilters} className="rounded-full border border-gray-200 px-[1.1rem] py-2 text-[0.85rem] font-semibold text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">Reset</button>
       </div>
 
-      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
         {loading ? (
           <Loading />
         ) : error ? (
@@ -79,7 +79,7 @@ export default function Transactions() {
           <EmptyState>No transactions match your filters.</EmptyState>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[0.85rem]">
+            <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
                   {['Reference', 'Order', 'Customer', 'Shop', 'Amount', 'Status', 'Date'].map((h) => (
@@ -90,13 +90,13 @@ export default function Transactions() {
               <tbody>
                 {data.payments.map((p) => (
                   <tr key={p.id} className="hover:bg-blue-500/[0.03]">
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.transaction_ref}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(p.order_id).padStart(4, '0')}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.customer_email}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.shop_name || '—'}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(p.amount)}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><PaymentBadge status={p.status} /></td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(p.created_at)}</td>
+                    <td data-label="Reference" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.transaction_ref}</td>
+                    <td data-label="Order" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(p.order_id).padStart(4, '0')}</td>
+                    <td data-label="Customer" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.customer_email}</td>
+                    <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.shop_name || '—'}</td>
+                    <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(p.amount)}</td>
+                    <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><PaymentBadge status={p.status} /></td>
+                    <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(p.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

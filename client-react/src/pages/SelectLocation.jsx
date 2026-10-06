@@ -7,26 +7,22 @@ import useToast from '../lib/useToast';
 import useBodyClass from '../lib/useBodyClass';
 import useDocumentTitle from '../lib/useDocumentTitle';
 import LogoLink from '../components/LogoLink';
+import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 
-const LOCATIONS = [
-  { id: 'main-gate', name: 'Main Gate', sub: 'Campus Gate 1 pickup', icon: <path d="M3 21V3h18v18M3 12h18M12 3v18" /> },
-  { id: 'red-canteen', name: 'Red Canteen', sub: 'Red Canteen pickup', icon: <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" /> },
-  {
-    id: 'hostel-gate', name: 'Hostel Gate', sub: 'Hostel entrance pickup', icon: (
-      <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
-    )
-  },
-];
-const OFFERED_BY_TIME = {
-  '9:25 AM': ['red-canteen'],
-  '11:15 AM': ['red-canteen'],
-  '1:15 PM': ['red-canteen', 'hostel-gate'],
-  '2:05 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
-  '4:00 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
+// Card icons per location id; names, hints and availability come from the shared slot matrix.
+const LOCATION_ICONS = {
+  'main-gate': <path d="M3 21V3h18v18M3 12h18M12 3v18" />,
+  'red-canteen': <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" />,
+  'hostel-gate': (
+    <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
+  ),
+  'academic-block': (
+    <><path d="M3 21h18M3 7v14M21 7v14M9 7v14M15 7v14M3 7h18M3 11h18M3 15h18" /><rect x="2" y="2" width="20" height="20" rx="2" /></>
+  ),
 };
-const TIME_SLOTS = ['9:25 AM', '11:15 AM', '1:15 PM', '2:05 PM', '4:00 PM'];
+const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 const SLOT_CUTOFF_MINUTES = 5;
 const LIVE_SLOT_AVAILABILITY = false;
 
@@ -48,10 +44,6 @@ function slotMinutes(time) {
 function isSlotPast(time) {
   if (!LIVE_SLOT_AVAILABILITY) return false;
   return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
-}
-
-function isLocationOffered(locationId, time) {
-  return (OFFERED_BY_TIME[time] || []).includes(locationId);
 }
 
 const ORDER_SUMMARY = [
@@ -195,14 +187,17 @@ export default function SelectLocation() {
                     const isLimited = s.status === 'limited';
                     const isDisabled = isPast || isFull;
                     const isSelected = timeSlot === s.time;
+                    // Still selectable: picking it clears the chosen location (see selectTime).
+                    const notAtSelectedLocation = !!locationId && !isLocationOffered(locationId, s.time);
                     let statusLabel = 'Available';
                     if (isPast) statusLabel = 'Unavailable';
                     else if (isFull) statusLabel = 'Fully Booked';
+                    else if (notAtSelectedLocation) statusLabel = `Not at ${locationName}`;
                     else if (isLimited) statusLabel = 'Limited';
                     let classes = 'cp-slot-pill';
                     if (isPast) classes += ' is-past';
                     else if (isFull) classes += ' is-full';
-                    else if (isLimited) classes += ' is-limited';
+                    else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
                     else classes += ' is-available';
                     if (isSelected) classes += ' is-selected';
                     return (
@@ -240,7 +235,7 @@ export default function SelectLocation() {
                   const isLimited = status === 'limited';
                   const isDisabled = isUnavailable || isFull;
                   let statusLabel = 'Available';
-                  if (isUnavailable) statusLabel = 'Unavailable';
+                  if (isUnavailable) statusLabel = 'Booked';
                   else if (isFull) statusLabel = 'Fully Booked';
                   else if (isLimited) statusLabel = 'Limited';
                   let classes = 'cp-loc-card';
@@ -252,7 +247,11 @@ export default function SelectLocation() {
                       type="button"
                       className={classes}
                       disabled={isDisabled}
-                      onClick={() => { setLocationId(loc.id); setLocationName(loc.name); }}
+                      onClick={() => {
+                        if (timeSlot && !isLocationOffered(loc.id, timeSlot)) return;
+                        setLocationId(loc.id);
+                        setLocationName(loc.name);
+                      }}
                     >
                       <div className="cp-card-icon">
                         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{loc.icon}</svg>

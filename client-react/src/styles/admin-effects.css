@@ -916,3 +916,221 @@
   border-color: #0f172a;
 }
 
+
+/* ==========================================================================
+   MOBILE (phones). Desktop/tablet rules above are untouched.
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .admin-header {
+    padding: 0 16px;
+    gap: 12px;
+  }
+  .admin-header > :first-child {
+    min-width: 0;
+  }
+  .admin-header-title {
+    font-size: 1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .admin-content-body {
+    padding: 20px 16px 40px;
+  }
+  .admin-welcome-banner,
+  .admin-card {
+    padding: 18px 16px;
+    border-radius: 16px;
+  }
+  .admin-sidebar {
+    max-width: 85vw;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Inputs at 16px stop iOS from zooming on focus */
+  .admin-search-input,
+  .admin-input,
+  .admin-select,
+  .admin-date-input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .admin-btn-primary,
+  .admin-btn-secondary {
+    min-height: 44px;
+  }
+
+  .admin-action-btn,
+  .admin-doc-btn {
+    min-height: 40px;
+  }
+
+  /* Banners */
+  .admin-alert-banner .truncate {
+    white-space: normal;
+  }
+  .admin-alert-banner > a {
+    width: 100%;
+  }
+
+  /* Filter bar stacks */
+  .admin-filter-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 14px;
+  }
+  .admin-filter-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-search-box {
+    min-width: 0;
+    width: 100%;
+  }
+  .admin-select {
+    width: 100%;
+  }
+  .admin-filter-group > * {
+    min-width: 0;
+  }
+  /* width: 0 lets date inputs shrink below their intrinsic width */
+  .admin-filter-group .admin-date-input {
+    flex: 1 1 0;
+    width: 0;
+    min-width: 0;
+  }
+  .admin-filter-card .admin-btn-primary,
+  .admin-filter-card .admin-btn-secondary {
+    flex: 1;
+  }
+
+  /* Tables become stacked cards; each cell shows its column name from data-label */
+  .admin-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .admin-table,
+  .admin-table tbody,
+  .admin-table tr,
+  .admin-table td {
+    display: block;
+    width: 100%;
+  }
+  .admin-table tr {
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 4px 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .admin-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .admin-table tr:hover td {
+    background-color: transparent;
+  }
+  .admin-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px dashed #e2e8f0;
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .admin-table td:last-child {
+    border-bottom: none;
+  }
+  .admin-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    max-width: 45%;
+    text-align: left;
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+  }
+  .admin-table td > * {
+    min-width: 0;
+  }
+  .admin-table td:has(.admin-actions-cell) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-table .admin-actions-cell {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .admin-table .admin-actions-cell .admin-action-btn {
+    flex: 1 1 auto;
+  }
+
+  /* Order details modal fits the viewport */
+  .admin-modal-backdrop {
+    padding: 12px;
+  }
+  .admin-modal-card {
+    max-height: calc(100dvh - 24px);
+    border-radius: 20px;
+  }
+  .admin-modal-header,
+  .admin-modal-body,
+  .admin-modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .admin-modal-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .admin-modal-header > :first-child {
+    min-width: 0;
+  }
+  .admin-modal-section {
+    padding: 16px;
+  }
+  .admin-modal-value {
+    overflow-wrap: anywhere;
+  }
+  .admin-doc-item {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+  }
+  .admin-doc-item > :first-child {
+    flex: 1 1 100%;
+  }
+  .admin-doc-item > :last-child {
+    width: 100%;
+  }
+  .admin-doc-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .admin-doc-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .admin-modal-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .admin-modal-footer > div {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .admin-modal-footer > div > * {
+    flex: 1 1 auto;
+  }
+}

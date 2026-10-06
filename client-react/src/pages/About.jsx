@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
 import SocialLinks from '../components/SocialLinks';
 import Footer from '../components/Footer';
@@ -26,9 +27,9 @@ export default function About() {
 
         <header className="top-nav about-nav">
           <nav>
-            <a href="/" className="nav-link">Home</a>
-            <a href="/about" className="nav-link nav-link--active">About Us</a>
-            <a href="#" className="nav-link">Location</a>
+            <Link to="/" className="nav-link">Home</Link>
+            <Link to="/about" className="nav-link nav-link--active">About Us</Link>
+            <a href="/#location-section" className="nav-link">Location</a>
           </nav>
         </header>
 

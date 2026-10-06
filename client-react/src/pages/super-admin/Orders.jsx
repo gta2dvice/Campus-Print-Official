@@ -59,7 +59,7 @@ export default function Orders() {
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center gap-[0.6rem]">
+      <div className="sa-filter-bar mb-5 flex flex-wrap items-center gap-[0.6rem]">
         <input
           type="text"
           value={search}
@@ -87,7 +87,7 @@ export default function Orders() {
         <button onClick={resetFilters} className="rounded-full border border-gray-200 px-[1.1rem] py-2 text-[0.85rem] font-semibold text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">Reset</button>
       </div>
 
-      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
         {loading ? (
           <Loading />
         ) : error ? (
@@ -96,7 +96,7 @@ export default function Orders() {
           <EmptyState>No orders match your filters.</EmptyState>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[0.85rem]">
+            <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
                   {['Order ID', 'Student', 'Shop', 'Pickup', 'Details', 'Status', 'Amount', 'Date', ''].map((h) => (
@@ -107,14 +107,14 @@ export default function Orders() {
               <tbody>
                 {data.orders.map((o) => (
                   <tr key={o.id} className="hover:bg-blue-500/[0.03]">
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
+                    <td data-label="Order ID" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
+                    <td data-label="Student" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
+                    <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
+                    <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
+                    <td data-label="Details" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x</td>
+                    <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
+                    <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                    <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
                     <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]">
                       <button onClick={() => setOpenOrderId(o.id)} className="rounded-full border border-gray-200 px-[0.7rem] py-[0.32rem] text-[0.72rem] font-semibold text-gray-600 hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">View</button>
                     </td>
@@ -178,9 +178,9 @@ function OrderModal({ orderId, onClose }) {
           {order.files.length ? (
             <ul className="flex flex-col gap-2">
               {order.files.map((f) => (
-                <li key={f.id} className="flex items-center justify-between rounded-[10px] bg-black/[0.02] px-[0.8rem] py-[0.6rem] text-[0.82rem]">
-                  <span>{f.original_name} <small className="text-gray-400">({(f.size_bytes / 1024).toFixed(0)} KB)</small></span>
-                  <span>
+                <li key={f.id} className="flex items-center justify-between gap-x-3 gap-y-1 rounded-[10px] bg-black/[0.02] px-[0.8rem] py-[0.6rem] text-[0.82rem] max-sm:flex-wrap">
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{f.original_name} <small className="text-gray-400">({(f.size_bytes / 1024).toFixed(0)} KB)</small></span>
+                  <span className="flex-shrink-0">
                     <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}`} target="_blank" rel="noopener noreferrer" className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">View</a>
                     <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}?download=1`} className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">Download</a>
                   </span>

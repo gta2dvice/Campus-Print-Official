@@ -1,4 +1,6 @@
 const express = require('express');
+const multer = require('multer');
+const crypto = require('crypto');
 const router = express.Router();
 const User = require('../models/User');
 const Order = require('../models/Order');
@@ -7,6 +9,14 @@ const Shop = require('../models/Shop');
 const Payment = require('../models/Payment');
 const { requireShopAdmin } = require('../middleware/roleAuth');
 const { sendStoredFile } = require('../sendStoredFile');
+const { uploadBuffer, deleteFiles, downloadFile } = require('../storage');
+
+const QR_MIME_EXTENSIONS = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
+const qrUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    fileFilter: (req, file, cb) => cb(null, Object.prototype.hasOwnProperty.call(QR_MIME_EXTENSIONS, file.mimetype))
+});
 
 // ── Auth ──────────────────────────────────────────
 
@@ -81,7 +91,12 @@ router.get('/orders/:id', requireShopAdmin, async (req, res) => {
         const order = await Order.getOrderById(req.params.id, req.shopId);
         if (!order) return res.status(404).json({ message: 'Order not found' });
         const files = await OrderFile.getFilesByOrder(order.id);
-        res.json({ ...order, files });
+        const payment = await Payment.findByOrderId(order.id);
+        res.json({
+            ...order,
+            files,
+            payment: payment ? { status: payment.status, method: payment.method, transaction_ref: payment.transaction_ref } : null
+        });
     } catch (err) {
         console.error('Admin get order error:', err);
         res.status(500).json({ message: 'Server Error' });
@@ -129,6 +144,20 @@ router.post('/orders/:id/reject', requireShopAdmin, async (req, res) => {
         res.json(result.order);
     } catch (err) {
         console.error('Admin reject order error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// Marks a WhatsApp / pay-at-shop order's pending payment as received.
+router.post('/orders/:id/mark-paid', requireShopAdmin, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id, req.shopId);
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+        const payment = await Payment.markPaidForOrder(order.id);
+        if (!payment) return res.status(400).json({ message: 'This order has no pending payment.' });
+        res.json({ status: payment.status, method: payment.method, transaction_ref: payment.transaction_ref });
+    } catch (err) {
+        console.error('Admin mark paid error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });
@@ -193,6 +222,45 @@ router.put('/shop-profile', requireShopAdmin, async (req, res) => {
         res.json(profile);
     } catch (err) {
         console.error('Admin update shop profile error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// Preview of this shop's current payment QR for the Shop Profile page.
+router.get('/shop-profile/payment-qr', requireShopAdmin, async (req, res) => {
+    try {
+        const shop = await Shop.getShopById(req.shopId);
+        if (!shop?.payment_qr_path) return res.status(404).json({ message: 'No payment QR uploaded' });
+        const buffer = await downloadFile(shop.payment_qr_path);
+        res.setHeader('Content-Type', shop.payment_qr_mime || 'image/png');
+        res.setHeader('Cache-Control', 'private, no-cache');
+        res.send(buffer);
+    } catch (err) {
+        console.error('Admin payment QR preview error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// WhatsApp/UPI payment QR shown to students in the booking flow's payment step.
+router.post('/shop-profile/payment-qr', requireShopAdmin, (req, res, next) => {
+    qrUpload.single('qr')(req, res, (err) => {
+        if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'QR image must be 5 MB or smaller.' : 'Could not read the uploaded image.' });
+        next();
+    });
+}, async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: 'Upload a PNG, JPG or WEBP image.' });
+        const previous = (await Shop.getShopById(req.shopId))?.payment_qr_path || null;
+        const ext = QR_MIME_EXTENSIONS[req.file.mimetype];
+        const storagePath = `shop-assets/shop-${req.shopId}/payment-qr-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+        await uploadBuffer({ storagePath, buffer: req.file.buffer, contentType: req.file.mimetype });
+        const profile = await Shop.setPaymentQr(req.shopId, storagePath, req.file.mimetype);
+        if (previous) {
+            deleteFiles([previous]).catch((e) => console.error('Old payment QR cleanup failed:', e.message));
+        }
+        res.json(profile);
+    } catch (err) {
+        console.error('Admin payment QR upload error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });

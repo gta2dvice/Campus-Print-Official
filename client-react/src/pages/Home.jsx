@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
 import Footer from '../components/Footer';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -168,11 +168,13 @@ export default function Home() {
   const totalPages = files.reduce((sum, f) => sum + ((f.pages || 1) * f.copies), 0);
 
   function calcPrice() {
+    // Same rule as NewOrder.jsx / server: B&W double-sided is per physical sheet (2 pages per sheet).
     const printingSubtotal = files.reduce((sum, f) => {
-      const rate = f?.colorMode === 'color' ? 5 : (f?.printingSide === 'double' ? 3 : 2);
       const pages = f?.pages || 1;
       const copies = f?.copies || 1;
-      return sum + (pages * copies * rate);
+      if (f?.colorMode === 'color') return sum + pages * copies * 5;
+      if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
+      return sum + pages * copies * 2;
     }, 0);
 
     const deliveryCharge = classroomDelivery ? 10 : 0;
@@ -368,7 +370,7 @@ export default function Home() {
         <div className="hero-container" id="hero">
           <header className="top-nav">
             <nav>
-              <a href="/about" className="nav-link">About Us</a>
+              <Link to="/about" className="nav-link">About Us</Link>
               <a href="#location-section" className="nav-link" onClick={(e) => { e.preventDefault(); scrollToId('location-section'); }}>Location</a>
             </nav>
           </header>
@@ -707,11 +709,14 @@ export default function Home() {
                   <div className="ptc-breakdown" id="pcBreakdown">
                     <span className="ptc-line"><span className="ptc-line-label">Total Pages</span><span className="ptc-line-val">{totalPages} pages</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
+                    {classroomDelivery && (
+                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹10</span></span>
+                    )}
                   </div>
                   <div className="ptc-divider"></div>
                   <div className="ptc-total-row">
                     <span className="ptc-total-label">Estimated Total</span>
-                    <span className={`ptc-total-amount${bump ? ' bump' : ''}`} id="pcTotalAmount">₹{basePrice + a3Extra}</span>
+                    <span className={`ptc-total-amount${bump ? ' bump' : ''}`} id="pcTotalAmount">₹{total}</span>
                   </div>
                   <p className="ptc-note">Final price calculated per page after upload. Copies can be set in the order form.</p>
                   <button className="btn btn-primary ptc-order-btn" id="ptcOrderBtn" disabled={files.length === 0} onClick={handleOrderClick}>

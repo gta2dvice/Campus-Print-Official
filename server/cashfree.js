@@ -1,5 +1,7 @@
 const { Cashfree, CFEnvironment } = require('cashfree-pg');
 
+let cashfreeClient;
+
 function isConfigured() {
     return Boolean(process.env.CASHFREE_APP_ID && process.env.CASHFREE_SECRET_KEY);
 }
@@ -20,8 +22,19 @@ function getClient() {
     if (!isConfigured()) {
         throw new Error('Cashfree is not configured');
     }
+    if (cashfreeClient) return cashfreeClient;
+
     const env = getMode() === 'production' ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX;
-    return new Cashfree(env, process.env.CASHFREE_APP_ID, process.env.CASHFREE_SECRET_KEY);
+    cashfreeClient = new Cashfree(
+        env,
+        process.env.CASHFREE_APP_ID,
+        process.env.CASHFREE_SECRET_KEY,
+        undefined,
+        undefined,
+        undefined,
+        false
+    );
+    return cashfreeClient;
 }
 
 function normalizePhone(phone) {

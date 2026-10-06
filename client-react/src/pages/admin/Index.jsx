@@ -158,7 +158,7 @@ export default function Index() {
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
             {/* Recent Orders List */}
             <div className="admin-card lg:col-span-2">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900">Recent Orders</h3>
                   <p className="text-xs text-slate-500">Incoming print requests</p>
@@ -186,18 +186,18 @@ export default function Index() {
                     <tbody>
                       {data.recentOrders.map((o) => (
                         <tr key={o.id}>
-                          <td className="font-extrabold text-slate-900">#{String(o.id).padStart(4, '0')}</td>
-                          <td className="text-slate-800 font-medium">{o.customer_email}</td>
-                          <td className="text-slate-500 font-medium">{fmtPickup(o)}</td>
-                          <td>
+                          <td data-label="Order ID" className="font-extrabold text-slate-900">#{String(o.id).padStart(4, '0')}</td>
+                          <td data-label="Customer" className="text-slate-800 font-medium">{o.customer_email}</td>
+                          <td data-label="Pickup" className="text-slate-500 font-medium">{fmtPickup(o)}</td>
+                          <td data-label="Specs">
                             <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[0.7rem] font-bold text-slate-700">
                               {o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x
                             </span>
                           </td>
-                          <td>
+                          <td data-label="Status">
                             <StatusBadge status={o.status} />
                           </td>
-                          <td className="text-right font-black text-slate-900">{fmtMoney(o.total_price)}</td>
+                          <td data-label="Amount" className="text-right font-black text-slate-900">{fmtMoney(o.total_price)}</td>
                         </tr>
                       ))}
                     </tbody>

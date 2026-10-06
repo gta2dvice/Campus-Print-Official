@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Toast from '../../components/Toast';
 import { adminApi } from '../../lib/adminHelpers';
 import '../../styles/admin-effects.css';
@@ -10,6 +10,9 @@ export default function ShopProfile() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [qrPath, setQrPath] = useState(null); // storage path; changes on every upload, so it also busts the preview cache
+  const [qrUploading, setQrUploading] = useState(false);
+  const qrInputRef = useRef(null);
 
   const [toast, setToast] = useState(null);
   function showToast(message, type = 'success') {
@@ -35,6 +38,7 @@ export default function ShopProfile() {
           closes_at: p.closes_at || '',
           is_open: !!p.is_open,
         });
+        setQrPath(p.payment_qr_path || null);
       } catch {
         if (!cancelled) showToast('Could not load shop profile.', 'error');
       } finally {
@@ -47,6 +51,38 @@ export default function ShopProfile() {
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handleQrUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      showToast('Upload a PNG, JPG or WEBP image.', 'error');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('QR image must be 5 MB or smaller.', 'error');
+      return;
+    }
+    setQrUploading(true);
+    try {
+      const body = new FormData();
+      body.append('qr', file);
+      // Empty headers so the browser sets the multipart boundary.
+      const res = await adminApi('/api/admin/shop-profile/payment-qr', { method: 'POST', headers: {}, body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.message || 'Upload failed', 'error');
+        return;
+      }
+      setQrPath(data.payment_qr_path || null);
+      showToast('Payment QR updated.');
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+    } finally {
+      setQrUploading(false);
+    }
   }
 
   async function handleSubmit(e) {
@@ -118,7 +154,7 @@ export default function ShopProfile() {
               <textarea rows={2} value={form.address} onChange={(e) => update('address', e.target.value)} className="admin-input" />
             </label>
 
-            <div className="grid grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+            <div className="grid grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4 max-[360px]:grid-cols-1">
               <label className="block space-y-1.5 text-xs font-bold text-slate-700">
                 <span>Opening Time</span>
                 <input type="time" value={form.opens_at} onChange={(e) => update('opens_at', e.target.value)} className="admin-date-input w-full" />
@@ -130,12 +166,12 @@ export default function ShopProfile() {
             </div>
 
             {/* Live Store Switch */}
-            <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
               <div>
                 <div className="text-xs font-extrabold text-slate-900">Store Acceptance Status</div>
                 <div className="text-[0.68rem] text-slate-500 font-medium">Toggle whether your shop accepts new student print orders right now</div>
               </div>
-              <label className="relative inline-flex cursor-pointer items-center">
+              <label className="relative inline-flex flex-shrink-0 cursor-pointer items-center">
                 <input
                   type="checkbox"
                   checked={form.is_open}
@@ -150,12 +186,49 @@ export default function ShopProfile() {
               <button
                 type="submit"
                 disabled={saving}
-                className="admin-btn-primary"
+                className="admin-btn-primary max-sm:w-full"
               >
                 {saving ? 'Saving Changes…' : 'Save Profile Changes'}
               </button>
             </div>
           </form>
+        )}
+      </div>
+
+      <div className="admin-card">
+        <div className="border-b border-slate-100 pb-4">
+          <h3 className="text-lg font-black text-slate-900">WhatsApp / UPI Payment QR</h3>
+          <p className="text-xs text-slate-500 font-medium">Students see this QR when they choose WhatsApp Payment. The phone number above is shown when they choose No Payment.</p>
+        </div>
+
+        {loading ? (
+          <div className="py-12 text-center text-xs font-semibold text-slate-400">Loading...</div>
+        ) : (
+          <div className="mt-6 flex flex-col items-center gap-5 sm:flex-row sm:items-start">
+            <div className="flex h-48 w-48 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2">
+              {qrPath ? (
+                <img
+                  src={`/api/admin/shop-profile/payment-qr?v=${encodeURIComponent(qrPath.split('/').pop())}`}
+                  alt="Current payment QR"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <span className="px-4 text-center text-xs font-semibold text-slate-400">No QR uploaded. WhatsApp Payment is hidden from students.</span>
+              )}
+            </div>
+            <div className="w-full space-y-3 text-center sm:text-left">
+              <p className="text-xs text-slate-600 font-medium">PNG, JPG or WEBP, up to 5 MB. Uploading a new image replaces the current QR.</p>
+              <input ref={qrInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleQrUpload} />
+              <button
+                type="button"
+                disabled={qrUploading}
+                onClick={() => qrInputRef.current?.click()}
+                className="admin-btn-primary max-sm:w-full"
+              >
+                {qrUploading ? 'Uploading…' : (qrPath ? 'Replace QR Image' : 'Upload QR Image')}
+              </button>
+            </div>
+          </div>
         )}
       </div>
       <Toast toast={toast} />
