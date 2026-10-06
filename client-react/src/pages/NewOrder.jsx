@@ -15,6 +15,7 @@ import {
   scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
+import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 
@@ -35,30 +36,22 @@ function isFileSupported(file) {
   if (file.name && ALLOWED_EXTENSIONS.test(file.name)) return true;
   return false;
 }
-const LOCATIONS = [
-  { id: 'main-gate', name: 'Main Gate', sub: 'Campus Gate 1 pickup', icon: <path d="M3 21V3h18v18M3 12h18M12 3v18" /> },
-  { id: 'red-canteen', name: 'Red Canteen', sub: 'Red Canteen pickup', icon: <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" /> },
-  {
-    id: 'hostel-gate', name: 'Hostel Gate', sub: 'Hostel entrance pickup', icon: (
-      <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
-    )
-  },
-  {
-    id: 'academic-block', name: 'Academic Block', sub: 'Academic Block pickup', icon: (
-      <><path d="M3 21h18M3 7v14M21 7v14M9 7v14M15 7v14M3 7h18M3 11h18M3 15h18" /><rect x="2" y="2" width="20" height="20" rx="2" /></>
-    )
-  },
-];
-const OFFERED_BY_TIME = {
-  '9:25 AM': ['red-canteen'],
-  '11:15 AM': ['red-canteen'],
-  '1:15 PM': ['red-canteen', 'hostel-gate'],
-  '2:05 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
-  '4:00 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
+// Card icons per location id; names, hints and availability come from the shared slot matrix.
+const LOCATION_ICONS = {
+  'main-gate': <path d="M3 21V3h18v18M3 12h18M12 3v18" />,
+  'red-canteen': <path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3" />,
+  'hostel-gate': (
+    <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></>
+  ),
+  'academic-block': (
+    <><path d="M3 21h18M3 7v14M21 7v14M9 7v14M15 7v14M3 7h18M3 11h18M3 15h18" /><rect x="2" y="2" width="20" height="20" rx="2" /></>
+  ),
 };
-const TIME_SLOTS = ['9:25 AM', '11:15 AM', '1:15 PM', '2:05 PM', '4:00 PM'];
+const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 const SLOT_CUTOFF_MINUTES = 5;
-const LIVE_SLOT_AVAILABILITY = false;
+const LIVE_SLOT_AVAILABILITY = true;
+// 5:00 PM IST — once reached, same-day booking is closed and tomorrow opens for pre-order.
+const NEXT_DAY_SWITCH_MINUTES = 17 * 60;
 
 // Campus Print only operates in India, so slot cutoffs always use IST — regardless of the
 // student's device timezone. Comparing minutes-since-midnight avoids local-Date pitfalls.
@@ -75,13 +68,17 @@ function slotMinutes(time) {
   return hour * 60 + parseInt(minStr, 10);
 }
 
-function isSlotPast(time) {
+// This is only the offline fallback used when /api/orders/slots can't be reached —
+// the server (server/slots.js) is the source of truth whenever it's reachable.
+function isPreOrderModeFallback() {
   if (!LIVE_SLOT_AVAILABILITY) return false;
-  return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
+  return nowMinutesIST() >= NEXT_DAY_SWITCH_MINUTES;
 }
 
-function isLocationOffered(locationId, time) {
-  return (OFFERED_BY_TIME[time] || []).includes(locationId);
+function isSlotPast(time) {
+  if (!LIVE_SLOT_AVAILABILITY) return false;
+  if (isPreOrderModeFallback()) return false; // tomorrow's slots are never "past" today
+  return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
 }
 
 function formatSize(bytes) {
@@ -116,6 +113,7 @@ export default function NewOrder() {
   // ── Booking modal state ──
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'review'
+  const [preOrderMode, setPreOrderMode] = useState(false); // true once same-day booking closed (after 5 PM IST) — slots shown are tomorrow's
   const [selectedLocationId, setSelectedLocationId] = useState(null);
   const [selectedLocationName, setSelectedLocationName] = useState(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
@@ -142,8 +140,11 @@ export default function NewOrder() {
           setSpiralBinding(unfinished.spiralBinding);
           setExpressDelivery(unfinished.expressDelivery);
           setClassroomDelivery(unfinished.classroomDelivery || false);
-          setSelectedLocationId(unfinished.selectedLocationId);
-          setSelectedLocationName(unfinished.selectedLocationName);
+          // A saved pairing may no longer exist in the slot matrix — keep the time, drop the location.
+          const savedPairValid = !unfinished.selectedLocationId || !unfinished.selectedTimeSlot
+            || isLocationOffered(unfinished.selectedLocationId, unfinished.selectedTimeSlot);
+          setSelectedLocationId(savedPairValid ? unfinished.selectedLocationId : null);
+          setSelectedLocationName(savedPairValid ? unfinished.selectedLocationName : null);
           setSelectedTimeSlot(unfinished.selectedTimeSlot);
         }
 
@@ -466,11 +467,13 @@ export default function NewOrder() {
   async function loadTimeSlots() {
     setSlotsLoading(true);
     let slotsData = [];
+    let preOrder = false;
     try {
       const res = await fetch('/api/orders/slots', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         slotsData = data.slots || [];
+        preOrder = !!data.preOrder;
       } else {
         showToast('Could not load available slots.', 'error');
       }
@@ -478,11 +481,13 @@ export default function NewOrder() {
       // fall through to local cutoff
     }
     if (!slotsData.length) {
+      preOrder = isPreOrderModeFallback();
       slotsData = TIME_SLOTS.map((time) => ({
         time,
         status: isSlotPast(time) ? 'past' : 'available',
       }));
     }
+    setPreOrderMode(preOrder);
     setSlots(slotsData);
     setSlotsLoading(false);
   }
@@ -517,6 +522,7 @@ export default function NewOrder() {
   }
 
   function handleLocationSelect(locId, locName) {
+    if (selectedTimeSlot && !isLocationOffered(locId, selectedTimeSlot)) return;
     setSelectedLocationId(locId);
     setSelectedLocationName(locName);
 
@@ -778,8 +784,8 @@ export default function NewOrder() {
                             borderRadius: '8px',
                             marginBottom: '0.75rem'
                           }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
+                            <div className="file-item-head">
+                              <div className="file-item-main">
                                 <div className="file-icon" style={{ fontSize: '1.5rem' }}>📄</div>
                                 <div className="file-item-info">
                                   <div className="file-item-name" style={{ fontWeight: '600' }}>{f.file.name}</div>
@@ -789,15 +795,15 @@ export default function NewOrder() {
                               <button className="file-remove" title="Remove" onClick={() => removeFile(f.key)}>✕</button>
                             </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingLeft: '2.5rem' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                            <div className="file-item-settings">
+                              <div className="file-item-row">
                                 <div className="counter" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                   <span style={{ fontSize: '0.85rem', color: '#666' }}>Copies:</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, -1)}>−</button>
                                   <span className="counter-value" style={{ minWidth: '1.5rem', textAlign: 'center' }}>{f.copies || 1}</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, 1)}>+</button>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <div className="file-item-options">
                                   <button
                                     className={`btn btn-sm ${f.printingSide === 'single' ? 'btn-primary' : 'btn-outline'}`}
                                     onClick={() => updateFilePrintingSide(f.key, 'single')}
@@ -814,9 +820,9 @@ export default function NewOrder() {
                                   </button>
                                 </div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                              <div className="file-item-row">
                                 <span style={{ fontSize: '0.85rem', color: '#666' }}>Color Mode:</span>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <div className="file-item-options">
                                   <button
                                     className={`btn btn-sm ${f.colorMode === 'bw' ? 'btn-primary' : 'btn-outline'}`}
                                     onClick={() => updateFileColorMode(f.key, 'bw')}
@@ -864,12 +870,15 @@ export default function NewOrder() {
                       <button className={toggleClass(paperSize === 'A4')} onClick={() => setPaperSize('A4')}>A4</button>
                     </div>
                   </div>
-                </div>
-
-
+                  <div className="setting-group">
+                    <span className="setting-label">Classroom Delivery</span>
+                    <div className="toggle-group" id="classroomDeliveryGroup">
+                      <button className={toggleClass(!classroomDelivery)} onClick={() => setClassroomDelivery(false)}>No (Free)</button>
+                      <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹10)</button>
+                    </div>
+                  </div>
                 </div>
               </div>
-
             </div>
 
             {/* Right: Order Summary */}
@@ -903,12 +912,13 @@ export default function NewOrder() {
               </button>
               <p className="summary-note">{summaryNote}</p>
             </div>
+          </div>
           </main>
         </div>
 
       {/* Booking flow: Time → Location → Review */}
       <div className="booking-overlay" hidden={!modalOpen} onClick={(e) => { if (e.target === e.currentTarget) closeBookingModal(); }}>
-        <div className="booking-panel booking-container" role="dialog" aria-modal="true" style={{ maxWidth: 920, padding: '2.5rem 2rem' }}>
+        <div className="booking-panel booking-container" role="dialog" aria-modal="true">
           <button className="booking-close" type="button" aria-label="Close booking" onClick={closeBookingModal}>×</button>
 
           <div className="cp-nav-steps" role="navigation" aria-label="Booking steps">
@@ -940,6 +950,11 @@ export default function NewOrder() {
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose your collection time</h2>
               <p className="location-subtitle">Select a time first. Pickup points for that slot are shown next.</p>
             </div>
+            {preOrderMode && (
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
+                🕔 Same-day booking is closed for today. You're pre-ordering for <strong>tomorrow</strong> — the times below are tomorrow's slots.
+              </div>
+            )}
             <div className="cp-slots-grid">
               {slotsLoading ? (
                 <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
@@ -952,14 +967,17 @@ export default function NewOrder() {
                 const isLimited = s.status === 'limited';
                 const isDisabled = isPast || isFull;
                 const isSelected = selectedTimeSlot === s.time;
+                // Still selectable: picking it clears the chosen location (see selectTimeSlot).
+                const notAtSelectedLocation = !!selectedLocationId && !isLocationOffered(selectedLocationId, s.time);
                 let statusLabel = 'Available';
                 if (isPast) statusLabel = 'Unavailable';
                 else if (isFull) statusLabel = 'Fully Booked';
+                else if (notAtSelectedLocation) statusLabel = `Not at ${selectedLocationName}`;
                 else if (isLimited) statusLabel = 'Limited';
                 let classes = 'cp-slot-pill';
                 if (isPast) classes += ' is-past';
                 else if (isFull) classes += ' is-full';
-                else if (isLimited) classes += ' is-limited';
+                else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
                 else classes += ' is-available';
                 if (isSelected) classes += ' is-selected';
                 return (
@@ -970,6 +988,11 @@ export default function NewOrder() {
                 );
               })}
             </div>
+            {preOrderMode && selectedTimeSlot && (
+              <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#9a3412', fontWeight: 600 }}>
+                You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot}.
+              </p>
+            )}
             <div className="cp-step-footer">
               <button type="button" className="btn btn-primary" disabled={!selectedTimeSlot} onClick={() => goToStep('location')}>
                 Continue to Location <span className="arrow-icon">→</span>
@@ -982,7 +1005,10 @@ export default function NewOrder() {
             <div className="cp-view-header">
               <span className="location-tag">📍 Collection Point</span>
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Where should we deliver your prints?</h2>
-              <p className="location-subtitle">Pickup at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+              <p className="location-subtitle">Pickup {preOrderMode ? 'tomorrow' : ''} at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+              {preOrderMode && (
+                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>📦 This is a pre-order — same-day booking for today is closed.</p>
+              )}
             </div>
             <div className="cp-cards-grid">
               {slotsLoading ? (
@@ -993,12 +1019,13 @@ export default function NewOrder() {
               ) : LOCATIONS.map((loc) => {
                 const locStatus = locationStatuses.find((l) => l.id === loc.id);
                 const status = locStatus?.status || 'unavailable';
-                const isUnavailable = status === 'unavailable' || status === 'past';
+                const isPastSlot = status === 'past';
+                const isUnavailable = status === 'unavailable' || isPastSlot;
                 const isFull = status === 'full';
                 const isLimited = status === 'limited';
                 const isDisabled = isUnavailable || isFull;
                 let statusLabel = 'Available';
-                if (isUnavailable) statusLabel = 'Unavailable';
+                if (isUnavailable) statusLabel = 'Booked';
                 else if (isFull) statusLabel = 'Fully Booked';
                 else if (isLimited) statusLabel = 'Limited';
                 let classes = 'cp-loc-card';
@@ -1043,6 +1070,11 @@ export default function NewOrder() {
               <span className="location-tag">✨ Confirm Details</span>
               <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Review your booking</h2>
               <p className="location-subtitle">Confirm pickup details before proceeding to payment.</p>
+              {preOrderMode && (
+                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>
+                  You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot || '—'}.
+                </p>
+              )}
             </div>
 
             <div className="cp-review-container">
@@ -1079,6 +1111,12 @@ export default function NewOrder() {
                     <strong className="cp-review-val">{selectedTimeSlot || '—'}</strong>
                   </div>
                   <button type="button" className="cp-inline-edit" onClick={() => goToStep('slot')}>Edit Time</button>
+                </div>
+                <div className="cp-review-row">
+                  <div>
+                    <span className="cp-review-label">Collection Day</span>
+                    <strong className="cp-review-val">{preOrderMode ? 'Tomorrow (Pre-order)' : 'Today'}</strong>
+                  </div>
                 </div>
               </div>
 

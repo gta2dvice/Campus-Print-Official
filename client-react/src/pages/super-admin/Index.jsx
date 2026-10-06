@@ -66,8 +66,8 @@ export default function Index() {
           </div>
 
           <div className="mb-5 grid grid-cols-[1fr_340px] items-start gap-5 max-[1100px]:grid-cols-1">
-            <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
-              <div className="mb-[1.1rem] flex items-center justify-between">
+            <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
+              <div className="mb-[1.1rem] flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <h2 className="text-base font-bold text-gray-900">Recent Orders</h2>
                 <a href="/super-admin/orders" className="text-[0.82rem] font-semibold text-blue-500 hover:text-blue-600 hover:underline">View All Orders →</a>
               </div>
@@ -75,7 +75,7 @@ export default function Index() {
                 <EmptyState>No orders yet.</EmptyState>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-[0.85rem]">
+                  <table className="sa-table w-full border-collapse text-[0.85rem]">
                     <thead>
                       <tr>
                         {['Order ID', 'Student', 'Shop', 'Pickup', 'Amount', 'Status'].map((h) => (
@@ -86,12 +86,12 @@ export default function Index() {
                     <tbody>
                       {data.recentOrders.map((o) => (
                         <tr key={o.id} className="hover:bg-blue-500/[0.03]">
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
-                          <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
+                          <td data-label="Order ID" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
+                          <td data-label="Student" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
+                          <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
+                          <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
+                          <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                          <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -100,14 +100,14 @@ export default function Index() {
               )}
             </div>
 
-            <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+            <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-base font-bold text-gray-900">Orders Over Time</h2>
               <p className="mt-[0.15rem] mb-3 text-[0.88rem] text-gray-600">Last 30 days</p>
               <TrendChart trend={data.orderStats.ordersOverTime} />
             </div>
           </div>
 
-          <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+          <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
             <h2 className="mb-[0.9rem] text-base font-bold text-gray-900">Needs Attention</h2>
             {attention.length === 0 ? (
               <div className="flex items-center gap-[0.6rem] p-4 text-[0.88rem] font-semibold text-emerald-500">

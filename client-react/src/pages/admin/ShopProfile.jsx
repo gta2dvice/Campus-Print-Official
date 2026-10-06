@@ -118,7 +118,7 @@ export default function ShopProfile() {
               <textarea rows={2} value={form.address} onChange={(e) => update('address', e.target.value)} className="admin-input" />
             </label>
 
-            <div className="grid grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+            <div className="grid grid-cols-2 gap-4 rounded-2xl border border-slate-100 bg-slate-50/50 p-4 max-[360px]:grid-cols-1">
               <label className="block space-y-1.5 text-xs font-bold text-slate-700">
                 <span>Opening Time</span>
                 <input type="time" value={form.opens_at} onChange={(e) => update('opens_at', e.target.value)} className="admin-date-input w-full" />
@@ -130,12 +130,12 @@ export default function ShopProfile() {
             </div>
 
             {/* Live Store Switch */}
-            <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
               <div>
                 <div className="text-xs font-extrabold text-slate-900">Store Acceptance Status</div>
                 <div className="text-[0.68rem] text-slate-500 font-medium">Toggle whether your shop accepts new student print orders right now</div>
               </div>
-              <label className="relative inline-flex cursor-pointer items-center">
+              <label className="relative inline-flex flex-shrink-0 cursor-pointer items-center">
                 <input
                   type="checkbox"
                   checked={form.is_open}
@@ -150,7 +150,7 @@ export default function ShopProfile() {
               <button
                 type="submit"
                 disabled={saving}
-                className="admin-btn-primary"
+                className="admin-btn-primary max-sm:w-full"
               >
                 {saving ? 'Saving Changes…' : 'Save Profile Changes'}
               </button>

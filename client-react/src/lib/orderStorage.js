@@ -151,6 +151,8 @@ function fileEntriesFromInput(files) {
         pages: entry.pages == null ? null : Number(entry.pages),
         estimated: !!entry.estimated,
         copies: Math.max(1, parseInt(entry.copies, 10) || 1),
+        printingSide: entry.printingSide === 'double' ? 'double' : 'single',
+        colorMode: entry.colorMode === 'color' ? 'color' : 'bw',
         blob: file,
       };
     });
@@ -275,6 +277,7 @@ export async function loadCurrentOrder() {
       printingSide: meta.printingSide === 'double' ? 'double' : 'single',
       spiralBinding: !!meta.spiralBinding,
       expressDelivery: !!meta.expressDelivery,
+      classroomDelivery: !!meta.classroomDelivery,
       selectedLocationId: meta.selectedLocationId || null,
       selectedLocationName: meta.selectedLocationName || null,
       selectedTimeSlot: meta.selectedTimeSlot || null,

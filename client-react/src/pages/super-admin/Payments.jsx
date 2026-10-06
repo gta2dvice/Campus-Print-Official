@@ -42,8 +42,8 @@ export default function Payments() {
         <StatCard number={stats ? `${stats.successRate}%` : '–'} label="Payment Success Rate" />
       </div>
 
-      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
-        <div className="mb-[1.1rem] flex items-center justify-between">
+      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
+        <div className="mb-[1.1rem] flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h2 className="text-base font-bold text-gray-900">Recent Transactions</h2>
           <a href="/super-admin/transactions" className="text-[0.82rem] font-semibold text-blue-500 hover:text-blue-600 hover:underline">View All Transactions →</a>
         </div>
@@ -55,7 +55,7 @@ export default function Payments() {
           <EmptyState>No transactions yet.</EmptyState>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[0.85rem]">
+            <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
                   {['Reference', 'Order', 'Customer', 'Amount', 'Status', 'Date'].map((h) => (
@@ -66,12 +66,12 @@ export default function Payments() {
               <tbody>
                 {tx.payments.map((p) => (
                   <tr key={p.id} className="hover:bg-blue-500/[0.03]">
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.transaction_ref}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(p.order_id).padStart(4, '0')}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.customer_email}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(p.amount)}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><PaymentBadge status={p.status} /></td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(p.created_at)}</td>
+                    <td data-label="Reference" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.transaction_ref}</td>
+                    <td data-label="Order" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(p.order_id).padStart(4, '0')}</td>
+                    <td data-label="Customer" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{p.customer_email}</td>
+                    <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(p.amount)}</td>
+                    <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><PaymentBadge status={p.status} /></td>
+                    <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(p.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

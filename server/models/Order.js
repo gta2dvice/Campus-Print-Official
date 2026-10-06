@@ -4,7 +4,7 @@ const Profile = require('./Profile');
 async function createOrder(userId, shopId, data) {
     const {
         paperSize, copies, spiralBinding, expressDelivery, totalPrice, fileCount,
-        collectionLocationId, collectionLocationName, collectionTime, totalPages,
+        collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
         guestFullName, guestPhone, guestClassroom
     } = data;
 
@@ -17,9 +17,9 @@ async function createOrder(userId, shopId, data) {
     const [result] = await pool.execute(
         `INSERT INTO orders
             (user_id, student_id, shop_id, paper_size, copies, spiral_binding, express_delivery, total_price, file_count,
-             collection_location_id, collection_location, collection_time, total_pages,
+             collection_location_id, collection_location, collection_time, collection_date, total_pages,
              guest_full_name, guest_phone, guest_classroom)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             userId || null,
             studentId,
@@ -33,6 +33,7 @@ async function createOrder(userId, shopId, data) {
             collectionLocationId || null,
             collectionLocationName || null,
             collectionTime || null,
+            collectionDate || null,
             totalPages || 0,
             guestFullName || null,
             guestPhone || null,

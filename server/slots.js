@@ -1,25 +1,26 @@
-const LOCATIONS = [
-    { id: 'main-gate', name: 'Main Gate', hint: 'Campus Gate 1 pickup' },
-    { id: 'red-canteen', name: 'Red Canteen', hint: 'Red Canteen pickup' },
-    { id: 'hostel-gate', name: 'Hostel Gate', hint: 'Hostel entrance pickup' }
-];
+// Time ↔ location availability matrix — single source of truth shared with the client
+// (client-react/src/lib/slotMatrix.json). To add or change a slot, edit only that file.
+const SLOT_MATRIX = require('../client-react/src/lib/slotMatrix.json');
 
-const TIME_SLOTS = ['9:25 AM', '11:15 AM', '1:15 PM', '2:05 PM', '4:00 PM'];
+const LOCATIONS = SLOT_MATRIX.locations;
 
-/** Location ids offered at each slot (M / R / H schedule). */
-const OFFERED_BY_TIME = {
-    '9:25 AM': ['red-canteen'],
-    '11:15 AM': ['red-canteen'],
-    '1:15 PM': ['red-canteen', 'hostel-gate'],
-    '2:05 PM': ['main-gate', 'red-canteen', 'hostel-gate'],
-    '4:00 PM': ['main-gate', 'red-canteen', 'hostel-gate']
-};
+const TIME_SLOTS = Object.keys(SLOT_MATRIX.availability);
+
+/** Location ids offered at each slot, derived from the matrix. */
+const OFFERED_BY_TIME = Object.fromEntries(
+    TIME_SLOTS.map(time => [
+        time,
+        LOCATIONS.filter(loc => SLOT_MATRIX.availability[time][loc.id] === true).map(loc => loc.id)
+    ])
+);
 
 const SLOT_CAPACITY = 6;
 const SLOT_CUTOFF_MINUTES = 5;
 // When false: ignore IST cutoff and live booking counts (full/limited).
 // Locations still follow OFFERED_BY_TIME. Set true to restore real availability.
-const LIVE_SLOT_AVAILABILITY = false;
+const LIVE_SLOT_AVAILABILITY = true;
+// 5:00 PM IST — once reached, same-day booking is closed and the next day opens for pre-order.
+const NEXT_DAY_SWITCH_MINUTES = 17 * 60;
 
 /** Baseline occupancy so availability differs per location + slot. */
 const SEED_BOOKED = {};
@@ -62,6 +63,27 @@ function nowMinutesIST(atMs = Date.now()) {
     return Math.floor((istMs % 86400000) / 60000);
 }
 
+/** True once it's past the 5:00 PM IST cutover — same-day slots are closed, tomorrow opens for pre-order. */
+function isPreOrderMode(atMs = Date.now()) {
+    if (!LIVE_SLOT_AVAILABILITY) return false;
+    return nowMinutesIST(atMs) >= NEXT_DAY_SWITCH_MINUTES;
+}
+
+/** IST calendar date (YYYY-MM-DD), optionally offset by whole days. */
+function istDateString(atMs = Date.now(), dayOffset = 0) {
+    const shifted = new Date(atMs + IST_OFFSET_MS + dayOffset * 86400000);
+    const y = shifted.getUTCFullYear();
+    const m = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(shifted.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+/** Which calendar day (IST) a new order placed right now is actually for. */
+function getOrderDateContext(atMs = Date.now()) {
+    const preOrder = isPreOrderMode(atMs);
+    return { preOrder, date: istDateString(atMs, preOrder ? 1 : 0) };
+}
+
 /** Parses a "9:25 AM" style label into minutes since midnight. */
 function slotMinutes(time) {
     const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(time.trim());
@@ -75,6 +97,7 @@ function slotMinutes(time) {
 /** Slot is closed from SLOT_CUTOFF_MINUTES before the labeled time (IST). */
 function isSlotPast(time, atMs = Date.now()) {
     if (!LIVE_SLOT_AVAILABILITY) return false;
+    if (isPreOrderMode(atMs)) return false; // these are tomorrow's slots — never "past" relative to today's clock
     const mins = slotMinutes(time);
     if (mins === null) return true;
     return nowMinutesIST(atMs) >= mins - SLOT_CUTOFF_MINUTES;
@@ -198,12 +221,16 @@ module.exports = {
     SLOT_CAPACITY,
     SLOT_CUTOFF_MINUTES,
     LIVE_SLOT_AVAILABILITY,
+    NEXT_DAY_SWITCH_MINUTES,
     OFFERED_BY_TIME,
     getLocationById,
     getLocationByName,
     nowMinutesIST,
     slotMinutes,
     isSlotPast,
+    isPreOrderMode,
+    istDateString,
+    getOrderDateContext,
     isLocationOffered,
     pickupError,
     buildTimeSlotStatuses,

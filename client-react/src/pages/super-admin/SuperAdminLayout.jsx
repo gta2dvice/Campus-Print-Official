@@ -45,6 +45,11 @@ export default function SuperAdminLayout() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const chipRef = useRef(null);
 
+  // Close the mobile drawer after navigating.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -84,7 +89,7 @@ export default function SuperAdminLayout() {
     <div className="min-h-screen bg-[linear-gradient(135deg,#f3f7fb_0%,#eaf1f7_100%)]">
       <div className="flex min-h-screen">
         <aside
-          className={`sa-sidebar fixed left-0 top-0 z-[60] flex h-screen w-[264px] flex-col overflow-y-auto border-r border-[#f0f4f8] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.06),0_2px_4px_rgba(0,0,0,0.04)] transition-transform duration-300 max-md:-translate-x-full ${
+          className={`sa-sidebar fixed left-0 top-0 z-[60] flex h-screen w-[264px] flex-col overflow-y-auto border-r border-[#f0f4f8] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.06),0_2px_4px_rgba(0,0,0,0.04)] transition-transform duration-300 max-md:max-w-[85vw] max-md:-translate-x-full ${
             sidebarOpen ? 'max-md:translate-x-0' : ''
           }`}
         >
@@ -129,17 +134,17 @@ export default function SuperAdminLayout() {
           </div>
         </aside>
 
-        <div className="flex min-h-screen flex-1 flex-col max-md:ml-0" style={{ marginLeft: '264px' }}>
-          <header className="sticky top-0 z-40 flex h-[68px] items-center justify-between border-b border-gray-300/50 bg-white/85 px-8 backdrop-blur-md max-md:px-5">
-            <div className="flex items-center gap-4">
+        <div className="ml-[264px] flex min-h-screen min-w-0 flex-1 flex-col max-md:ml-0">
+          <header className="sticky top-0 z-40 flex h-[68px] items-center justify-between gap-3 border-b border-gray-300/50 bg-white/85 px-8 backdrop-blur-md max-md:px-4">
+            <div className="flex min-w-0 items-center gap-4 max-md:gap-3">
               <button
-                className="hidden h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-gray-200 text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 max-md:flex"
+                className="hidden h-[38px] w-[38px] flex-shrink-0 items-center max-md:h-10 max-md:w-10 justify-center rounded-[10px] border border-gray-200 text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500 max-md:flex"
                 title="Menu"
                 onClick={() => setSidebarOpen(true)}
               >
                 <Icon name="menu" className="h-[18px] w-[18px]" />
               </button>
-              <h1 className="text-[1.15rem] font-bold tracking-tight text-gray-900">
+              <h1 className="truncate text-[1.15rem] font-bold tracking-tight text-gray-900 max-md:text-base">
                 {pageTitle}
               </h1>
             </div>
@@ -165,7 +170,7 @@ export default function SuperAdminLayout() {
             </div>
           </header>
 
-          <main className="mx-auto w-full max-w-[1440px] flex-1 px-8 pb-10 pt-7 max-md:px-5">
+          <main className="mx-auto w-full max-w-[1440px] flex-1 px-8 pb-10 pt-7 max-md:px-4 max-md:pt-5">
             <Outlet />
           </main>
         </div>
