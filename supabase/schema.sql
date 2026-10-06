@@ -108,6 +108,12 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id);
 ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
 
+-- Payment options (server/migrate_payment_options.js): shop's WhatsApp/UPI QR image,
+-- and payment rows for guest orders (no user account).
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_path VARCHAR(500);
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_mime VARCHAR(100);
+ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
+
 INSERT INTO shops (id, shop_name)
 SELECT 1, 'Campus Print'
 WHERE NOT EXISTS (SELECT 1 FROM shops WHERE id = 1);

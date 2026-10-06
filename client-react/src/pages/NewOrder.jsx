@@ -49,6 +49,28 @@ const LOCATION_ICONS = {
   ),
 };
 const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
+
+// Booking step 3. 'whatsapp' and 'none' are settled outside the app (POST /api/orders/payment/offline).
+const PAYMENT_OPTIONS = [
+  {
+    id: 'cashfree',
+    name: 'Cashfree Payment',
+    sub: 'Pay online now with UPI, card or netbanking',
+    icon: <><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></>,
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp Payment',
+    sub: 'Scan the shop QR with WhatsApp or any UPI app',
+    icon: <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></>,
+  },
+  {
+    id: 'none',
+    name: 'No Payment',
+    sub: 'Contact the shop for payment instructions',
+    icon: <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />,
+  },
+];
 const SLOT_CUTOFF_MINUTES = 5;
 const LIVE_SLOT_AVAILABILITY = true;
 // 5:00 PM IST — once reached, same-day booking is closed and tomorrow opens for pre-order.
@@ -80,6 +102,17 @@ function isSlotPast(time) {
   if (!LIVE_SLOT_AVAILABILITY) return false;
   if (isPreOrderModeFallback()) return false; // tomorrow's slots are never "past" today
   return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
+}
+
+// Printing cost for one file. B&W double-sided is charged per physical sheet
+// (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
+// Keep in sync with filePrintingCost() in server/routes/orders.js, which verifies the total.
+function filePrintingCost(f) {
+  const pages = f?.pages || 1;
+  const copies = f?.copies || 1;
+  if (f?.colorMode === 'color') return pages * copies * 5;
+  if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+  return pages * copies * 2;
 }
 
 function formatSize(bytes) {
@@ -114,7 +147,7 @@ export default function NewOrder() {
 
   // ── Booking modal state ──
   const [modalOpen, setModalOpen] = useState(false);
-  const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'review'
+  const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'payment' | 'review'
   const [preOrderMode, setPreOrderMode] = useState(false); // true once same-day booking closed (after 5 PM IST) — slots shown are tomorrow's
   const [selectedLocationId, setSelectedLocationId] = useState(null);
   const [selectedLocationName, setSelectedLocationName] = useState(null);
@@ -122,6 +155,9 @@ export default function NewOrder() {
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [locationStatuses, setLocationStatuses] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState(null); // 'cashfree' | 'whatsapp' | 'none'
+  const [paymentOptions, setPaymentOptions] = useState(null); // { phone, hasQr, qrVersion } from /api/orders/payment-options
+  const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const persistReadyRef = useRef(false);
   const handledReturnOrderRef = useRef(null);
@@ -409,12 +445,7 @@ export default function NewOrder() {
   function calcPrice() {
     if (!config) return { pages: 0, base: 0, a3Extra: 0, serviceCharge: 0, deliveryCharge: 0, total: 0 };
 
-    const printingSubtotal = files.reduce((sum, f) => {
-      const rate = f?.colorMode === 'color' ? 5 : (f?.printingSide === 'double' ? 3 : 2);
-      const pages = f?.pages || 1;
-      const copies = f?.copies || 1;
-      return sum + (pages * copies * rate);
-    }, 0);
+    const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
 
     const serviceCharge = 3;
     let deliveryCharge = 0;
@@ -466,6 +497,22 @@ export default function NewOrder() {
     setStep(nextStep);
     if (nextStep === 'slot') loadTimeSlots();
     if (nextStep === 'location') loadLocationOptions();
+    if (nextStep === 'payment') loadPaymentOptions();
+  }
+
+  async function loadPaymentOptions() {
+    setPaymentOptionsLoading(true);
+    let options = { phone: null, hasQr: false, qrVersion: null };
+    try {
+      const res = await fetch('/api/orders/payment-options', { credentials: 'include' });
+      if (res.ok) options = await res.json();
+    } catch {
+      // Cashfree and "No Payment" still work without these details.
+    }
+    setPaymentOptions(options);
+    // The shop may have removed its QR since it was picked.
+    setPaymentMethod((m) => (m === 'whatsapp' && !options.hasQr ? null : m));
+    setPaymentOptionsLoading(false);
   }
 
   function selectTimeSlot(time) {
@@ -598,6 +645,26 @@ export default function NewOrder() {
     }
   }
 
+  // WhatsApp/UPI QR and "No Payment": the order is placed now with a pending payment
+  // that the shop marks as paid once the money arrives.
+  async function placeOfflineOrder(method) {
+    try {
+      const formData = buildOrderFormData();
+      formData.append('paymentMethod', method);
+      const res = await fetch('/api/orders/payment/offline', { method: 'POST', credentials: 'include', body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        await finishSuccessfulOrder(data.id);
+      } else {
+        showToast(data.message || 'Failed to place order.', 'error');
+        setPaying(false);
+      }
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+      setPaying(false);
+    }
+  }
+
   async function confirmPaidOrder(cashfreeOrderId) {
     console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
     const formData = buildOrderFormData();
@@ -672,8 +739,18 @@ export default function NewOrder() {
       return;
     }
 
+    if (!paymentMethod) {
+      showToast('Please choose a payment option.', 'error');
+      goToStep('payment');
+      return;
+    }
+
     setPaying(true);
 
+    if (paymentMethod !== 'cashfree') {
+      await placeOfflineOrder(paymentMethod);
+      return;
+    }
 
     try {
       try {
@@ -849,7 +926,7 @@ export default function NewOrder() {
                         } else {
                           pagesText = `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (estimated)' : ''}`;
                         }
-                        const pdfTotal = (f.pages || 1) * (f.copies || 1) * (f.printingSide === 'double' ? 3 : 2);
+                        const pdfTotal = filePrintingCost(f);
                         return (
                           <div className="file-item" key={f.key} style={{
                             display: 'flex',
@@ -993,19 +1070,19 @@ export default function NewOrder() {
           </main>
         </div>
 
-      {/* Booking flow: Time → Location → Review */}
+      {/* Booking flow: Time → Location → Payment → Review */}
       <div className="booking-overlay" hidden={!modalOpen} onClick={(e) => { if (e.target === e.currentTarget) closeBookingModal(); }}>
         <div className="booking-panel booking-container" role="dialog" aria-modal="true">
           <button className="booking-close" type="button" aria-label="Close booking" onClick={closeBookingModal}>×</button>
 
-          <div className="cp-nav-steps" role="navigation" aria-label="Booking steps">
-            <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step === 'location' || step === 'review' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
+          <div className="cp-nav-steps cp-nav-steps--four" role="navigation" aria-label="Booking steps">
+            <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step !== 'slot' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
               <span className="step-num">01</span><span className="step-title">Time Slot</span>
             </button>
             <span className="step-arrow">→</span>
             <button
               type="button"
-              className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
+              className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'payment' || step === 'review' ? ' is-done' : ''}`}
               onClick={() => selectedTimeSlot && goToStep('location')}
             >
               <span className="step-num">02</span><span className="step-title">Location</span>
@@ -1013,10 +1090,18 @@ export default function NewOrder() {
             <span className="step-arrow">→</span>
             <button
               type="button"
-              className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
-              onClick={() => selectedLocationId && selectedTimeSlot && goToStep('review')}
+              className={`cp-nav-step${step === 'payment' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
+              onClick={() => selectedLocationId && selectedTimeSlot && goToStep('payment')}
             >
-              <span className="step-num">03</span><span className="step-title">Review</span>
+              <span className="step-num">03</span><span className="step-title">Payment</span>
+            </button>
+            <span className="step-arrow">→</span>
+            <button
+              type="button"
+              className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
+              onClick={() => selectedLocationId && selectedTimeSlot && paymentMethod && goToStep('review')}
+            >
+              <span className="step-num">04</span><span className="step-title">Review</span>
             </button>
           </div>
 
@@ -1135,13 +1220,91 @@ export default function NewOrder() {
             </div>
             <div className="cp-step-footer space-between">
               <button type="button" className="btn btn-secondary" onClick={() => goToStep('slot')}>← Back to Time Slot</button>
-              <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('review')}>
+              <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('payment')}>
+                Continue to Payment <span className="arrow-icon">→</span>
+              </button>
+            </div>
+          </section>
+
+          {/* Step 3: Payment gateway */}
+          <section className="cp-step-view" hidden={step !== 'payment'}>
+            <div className="cp-view-header">
+              <span className="location-tag">💳 Payment</span>
+              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose how you'll pay</h2>
+              <p className="location-subtitle">Total payable: <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>₹{p.total}</strong></p>
+            </div>
+            {paymentOptionsLoading && !paymentOptions ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
+                <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
+                <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading payment options...</p>
+              </div>
+            ) : (
+              <>
+                <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
+                  {PAYMENT_OPTIONS.map((opt) => {
+                    const isDisabled = opt.id === 'whatsapp' && !paymentOptions?.hasQr;
+                    const isSelected = paymentMethod === opt.id && !isDisabled;
+                    let classes = 'cp-loc-card';
+                    if (isSelected) classes += ' is-selected';
+                    if (isDisabled) classes += ' is-unavailable';
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        className={classes}
+                        disabled={isDisabled}
+                        onClick={() => setPaymentMethod(opt.id)}
+                      >
+                        <div className="cp-card-icon">
+                          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>
+                        </div>
+                        <h3 className="cp-card-title">{opt.name}</h3>
+                        <p className="cp-card-sub">{opt.sub}</p>
+                        <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {paymentMethod === 'whatsapp' && paymentOptions?.hasQr && (
+                  <div className="cp-review-box cp-payment-detail">
+                    <h3 className="cp-review-heading">Scan to pay ₹{p.total}</h3>
+                    <img
+                      className="cp-payment-qr"
+                      src={`/api/orders/payment-options/qr?v=${paymentOptions.qrVersion || ''}`}
+                      alt="Shop payment QR code"
+                    />
+                    <p className="cp-card-sub">
+                      Scan this QR with WhatsApp or any UPI app and pay <strong>₹{p.total}</strong>. Your order is placed when you continue,
+                      and the shop confirms the payment once it's received.
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === 'none' && (
+                  <div className="cp-review-box cp-payment-detail">
+                    <h3 className="cp-review-heading">Online payment is currently unavailable</h3>
+                    <p className="cp-card-sub">Contact the shop for payment instructions:</p>
+                    {paymentOptions?.phone ? (
+                      <a className="cp-payment-phone" href={`tel:${paymentOptions.phone.replace(/[^\d+]/g, '')}`}>📞 {paymentOptions.phone}</a>
+                    ) : (
+                      <p className="cp-card-sub"><strong>Please contact the shop at the pickup counter.</strong></p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            <div className="cp-step-footer space-between">
+              <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
+              <button type="button" className="btn btn-primary" disabled={!paymentMethod} onClick={() => goToStep('review')}>
                 Continue to Review <span className="arrow-icon">→</span>
               </button>
             </div>
           </section>
 
-          {/* Step 3: Review */}
+          {/* Step 4: Review */}
           <section className="cp-step-view" hidden={step !== 'review'}>
             <div className="cp-view-header">
               <span className="location-tag">✨ Confirm Details</span>
@@ -1195,6 +1358,13 @@ export default function NewOrder() {
                     <strong className="cp-review-val">{preOrderMode ? 'Tomorrow (Pre-order)' : 'Today'}</strong>
                   </div>
                 </div>
+                <div className="cp-review-row">
+                  <div>
+                    <span className="cp-review-label">Payment Method</span>
+                    <strong className="cp-review-val">{PAYMENT_OPTIONS.find((o) => o.id === paymentMethod)?.name || '—'}</strong>
+                  </div>
+                  <button type="button" className="cp-inline-edit" onClick={() => goToStep('payment')}>Edit Payment</button>
+                </div>
               </div>
 
               <div className="cp-review-box">
@@ -1231,12 +1401,12 @@ export default function NewOrder() {
             </div>
 
             <div className="cp-step-footer space-between" style={{ marginTop: '1.5rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
+              <button type="button" className="btn btn-secondary" onClick={() => goToStep('payment')}>← Back to Payment</button>
               <button type="button" className="btn btn-primary" disabled={paying} onClick={handlePay}>
                 {paying ? (
                   <><span className="loading-spinner"></span>&nbsp; Processing…</>
                 ) : (
-                  <>Proceed to Payment <span className="arrow-icon">→</span></>
+                  <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : 'Place Order'} <span className="arrow-icon">→</span></>
                 )}
               </button>
             </div>

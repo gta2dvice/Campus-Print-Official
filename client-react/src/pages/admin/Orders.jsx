@@ -25,6 +25,13 @@ const NEXT_ACTIONS_CONFIG = {
   ready: [{ status: 'completed', label: 'Mark Completed' }],
 };
 
+const PAYMENT_METHOD_LABELS = {
+  cashfree: 'Cashfree (online)',
+  simulated: 'Test checkout',
+  whatsapp: 'WhatsApp / UPI QR',
+  none: 'No payment (pay shop directly)',
+};
+
 export default function Orders() {
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -54,6 +61,7 @@ export default function Orders() {
   const [modalOrder, setModalOrder] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
+  const [markingPaid, setMarkingPaid] = useState(false);
 
   const [rejectOrderId, setRejectOrderId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -133,6 +141,25 @@ export default function Orders() {
       setModalError(err.message || 'Failed to load order');
     } finally {
       setModalLoading(false);
+    }
+  }
+
+  async function markOrderPaid() {
+    if (!modalOrder?.id) return;
+    setMarkingPaid(true);
+    try {
+      const res = await adminApi(`/api/admin/orders/${modalOrder.id}/mark-paid`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.message || 'Could not mark as paid.', 'error');
+        return;
+      }
+      setModalOrder((o) => (o ? { ...o, payment: data } : o));
+      showToast('Payment marked as received.');
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+    } finally {
+      setMarkingPaid(false);
     }
   }
 
@@ -390,6 +417,43 @@ export default function Orders() {
                         <span className="admin-modal-value text-blue-600 text-base font-black">{fmtMoney(modalOrder.total_price)}</span>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Payment Section */}
+                  <div className="admin-modal-section">
+                    <div className="admin-modal-section-title">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                      Payment
+                    </div>
+                    {modalOrder.payment ? (
+                      <div className="admin-modal-grid">
+                        <div className="admin-modal-field">
+                          <span className="admin-modal-label">Method</span>
+                          <span className="admin-modal-value">{PAYMENT_METHOD_LABELS[modalOrder.payment.method] || modalOrder.payment.method || 'N/A'}</span>
+                        </div>
+                        <div className="admin-modal-field">
+                          <span className="admin-modal-label">Status</span>
+                          <span className="admin-modal-value flex flex-wrap items-center gap-2">
+                            <StatusBadge status={modalOrder.payment.status} kind="payment" />
+                            {modalOrder.payment.status === 'pending' && (
+                              <button onClick={markOrderPaid} disabled={markingPaid} className="admin-action-btn admin-action-btn-accept max-sm:min-h-11">
+                                {markingPaid ? 'Saving…' : 'Mark Paid'}
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                        {modalOrder.payment.transaction_ref && (
+                          <div className="admin-modal-field">
+                            <span className="admin-modal-label">Transaction Ref</span>
+                            <span className="admin-modal-value break-all">{modalOrder.payment.transaction_ref}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="py-2 text-center text-xs font-semibold text-slate-400">No payment recorded.</p>
+                    )}
                   </div>
 
                   {/* Uploaded Documents Section */}

@@ -74,6 +74,9 @@ async function cleanupExpiredPdfs() {
             `SELECT storage_path FROM order_files WHERE storage_path IS NOT NULL AND file_deleted_at IS NULL`
         );
         const keep = new Set(active.map(r => r.storage_path));
+        // Shop payment QR images live in the same bucket but aren't order files — never treat them as orphans.
+        const [qrs] = await pool.query(`SELECT payment_qr_path FROM shops WHERE payment_qr_path IS NOT NULL`);
+        qrs.forEach(r => keep.add(r.payment_qr_path));
         const stale = objects.filter(obj => {
             if (!obj.path || obj.path.includes('..')) return false;
             if (keep.has(obj.path)) return false;

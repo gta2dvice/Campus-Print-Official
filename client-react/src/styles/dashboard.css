@@ -2198,3 +2198,63 @@
         transform: none;
     }
 }
+
+/* ── Booking step 3: payment option details ── */
+.cp-payment-detail {
+    align-items: center;
+    text-align: center;
+    max-width: 440px;
+    margin: -1.5rem auto 2.5rem;
+}
+
+.cp-payment-qr {
+    width: 100%;
+    max-width: 260px;
+    aspect-ratio: 1;
+    object-fit: contain;
+    background: #ffffff;
+    border: 1.5px solid rgba(59, 130, 246, 0.18);
+    border-radius: 18px;
+    padding: 0.75rem;
+}
+
+.cp-payment-phone {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.6rem 1.25rem;
+    border-radius: 9999px;
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+    font-size: 1.15rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.cp-payment-phone:hover {
+    background: rgba(59, 130, 246, 0.16);
+}
+
+@media (max-width: 840px) {
+    .cp-payment-detail {
+        margin: 0 auto 1.5rem;
+        padding: 1.25rem;
+    }
+}
+
+@media (max-width: 480px) {
+    /* The order booking flow has four steps */
+    .cp-nav-steps--four {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.3rem;
+    }
+
+    .cp-nav-steps--four .cp-nav-step {
+        font-size: 0.7rem;
+        padding: 0.5rem 0.1rem;
+    }
+
+    .cp-payment-qr {
+        max-width: 220px;
+    }
+}

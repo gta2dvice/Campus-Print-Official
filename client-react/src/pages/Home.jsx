@@ -168,11 +168,13 @@ export default function Home() {
   const totalPages = files.reduce((sum, f) => sum + ((f.pages || 1) * f.copies), 0);
 
   function calcPrice() {
+    // Same rule as NewOrder.jsx / server: B&W double-sided is per physical sheet (2 pages per sheet).
     const printingSubtotal = files.reduce((sum, f) => {
-      const rate = f?.colorMode === 'color' ? 5 : (f?.printingSide === 'double' ? 3 : 2);
       const pages = f?.pages || 1;
       const copies = f?.copies || 1;
-      return sum + (pages * copies * rate);
+      if (f?.colorMode === 'color') return sum + pages * copies * 5;
+      if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
+      return sum + pages * copies * 2;
     }, 0);
 
     const deliveryCharge = classroomDelivery ? 10 : 0;
