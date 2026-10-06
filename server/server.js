@@ -17,22 +17,58 @@ const PORT = process.env.PORT || 3000;
 
 // ── Middleware ───────────────────────────────────
 // CORS configuration
-const allowedOrigins = ['http://localhost:3000',
+function normalizeOrigin(value) {
+    if (!value) return null;
+
+    let parsed;
+    try {
+        parsed = new URL(value.trim());
+    } catch {
+        return null;
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol) ||
+        parsed.username ||
+        parsed.password ||
+        parsed.pathname !== '/' ||
+        parsed.search ||
+        parsed.hash) {
+        return null;
+    }
+
+    return parsed.origin;
+}
+
+const configuredOriginValues = [
+    process.env.FRONTEND_URL,
+    ...(process.env.CORS_ORIGINS || '').split(',')
+].map(origin => (origin || '').trim()).filter(Boolean);
+const configuredFrontendOrigins = configuredOriginValues
+    .map(normalizeOrigin)
+    .filter(Boolean);
+if (configuredFrontendOrigins.length !== configuredOriginValues.length) {
+    console.warn('[CORS_CONFIG] Ignoring invalid frontend origin configuration; use origins without paths, query strings, or credentials.');
+}
+const allowedOrigins = [
+    'http://localhost:3000',
     'http://localhost:5173',
-    process.env.FRONTEND_URL
-].filter(Boolean);
+    ...configuredFrontendOrigins
+];
 
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
+            console.warn(`[CORS_REJECTED]\norigin: ${origin}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    optionsSuccessStatus: 204,
+    preflightContinue: false
 }));
-
 function isCashfreeWebhook(req) {
     return req.originalUrl.split('?')[0] === '/api/orders/payment/webhook';
 }
