@@ -22,6 +22,30 @@ function paymentGatewayReady() {
     return cashfree.isConfigured();
 }
 
+function paymentCreateErrorDetails(error) {
+    const providerError = error?.response?.data;
+    const errorBody = providerError && typeof providerError === 'object' ? providerError : {};
+    const secrets = [
+        process.env.CASHFREE_APP_ID,
+        process.env.CASHFREE_SECRET_KEY
+    ].filter(Boolean);
+    let message = String(errorBody.message || errorBody.error_description || error?.message || 'Unknown payment error');
+    for (const secret of secrets) {
+        message = message.split(secret).join('[redacted]');
+    }
+    message = message
+        .replace(/cfsk_[a-zA-Z0-9_-]+/g, '[redacted]')
+        .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
+        .slice(0, 300);
+
+    const rawCode = errorBody.code || errorBody.error_code || error?.code || 'PAYMENT_CREATE_FAILED';
+    return {
+        status: Number.isInteger(error?.response?.status) ? error.response.status : null,
+        code: String(rawCode).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || 'PAYMENT_CREATE_FAILED',
+        message
+    };
+}
+
 // ── Order Configuration ─────────────────────
 const PRICING = {
     single: 2,
@@ -260,12 +284,55 @@ function readOrderPayload(body) {
 
 // POST /api/orders/payment/create — creates a Cashfree order and returns a payment session.
 router.post('/payment/create', async (req, res) => {
-    console.log('[Payment Debug] Received /payment/create body:', JSON.stringify(req.body, null, 2));
-    if (!paymentGatewayReady()) {
-        return res.status(503).json({ message: 'Payment gateway is not configured. Set CASHFREE_APP_ID / CASHFREE_SECRET_KEY in .env.' });
+    let stage = 'gateway_configuration';
+    const body = req.body || {};
+    let fileSettingsCount = null;
+    try {
+        const settings = typeof body.fileSettings === 'string'
+            ? JSON.parse(body.fileSettings)
+            : body.fileSettings;
+        fileSettingsCount = Array.isArray(settings) ? settings.length : null;
+    } catch {
+        fileSettingsCount = null;
+    }
+    console.info('[PAYMENT_CREATE] Request received:', {
+        hasTotalPrice: body.totalPrice != null,
+        hasFullName: Boolean(body.fullName),
+        hasPhone: Boolean(body.phone),
+        hasClassroom: Boolean(body.classroom),
+        fileSettingsCount
+    });
+
+    const gatewayConfigured = paymentGatewayReady();
+    let cashfreeEnvironment = 'unknown';
+    if (gatewayConfigured) {
+        try {
+            cashfreeEnvironment = cashfree.getMode();
+        } catch {
+            cashfreeEnvironment = 'invalid';
+        }
+    }
+    console.info('[PAYMENT_CREATE] Gateway configuration:', {
+        appIdPresent: Boolean(process.env.CASHFREE_APP_ID),
+        secretPresent: Boolean(process.env.CASHFREE_SECRET_KEY),
+        cashfreeEnvConfigured: Boolean(process.env.CASHFREE_ENV),
+        environment: cashfreeEnvironment
+    });
+
+    if (!gatewayConfigured) {
+        console.error('[PAYMENT_CREATE_FAILED]', {
+            stage,
+            code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
+            message: 'Cashfree application ID or secret key is missing.'
+        });
+        return res.status(503).json({
+            message: 'Payment gateway is not configured on the server.',
+            code: 'PAYMENT_GATEWAY_NOT_CONFIGURED'
+        });
     }
 
     try {
+        stage = 'request_validation';
         // Server-side price calculation
         const orderData = {
             fileSettings: req.body.fileSettings,
@@ -276,21 +343,50 @@ router.post('/payment/create', async (req, res) => {
         const verifiedAmount = calculateTotalPrice(orderData);
 
         if (!verifiedAmount || verifiedAmount <= 0) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'INVALID_ORDER_AMOUNT',
+                message: 'Server-side order amount is missing or invalid.'
+            });
             return res.status(400).json({ message: 'Invalid order amount' });
         }
+        console.info('[PAYMENT_CREATE] Validation passed:', {
+            stage,
+            amount: verifiedAmount,
+            fileSettingsCount
+        });
 
         const { fullName, phone, classroom } = req.body;
         if (!fullName || !phone || !classroom || !classroom.trim()) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'CUSTOMER_FIELDS_REQUIRED',
+                message: 'Required customer fields are missing.'
+            });
             return res.status(400).json({ message: 'Full Name, Phone, and Classroom/Room Number are required.' });
         }
 
         // Backend format validation for required fields
         const phoneRegex = /^[6-9][0-9]{9}$/;
         if (!phoneRegex.test(phone)) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'INVALID_CUSTOMER_PHONE',
+                message: 'Customer phone failed server-side validation.'
+            });
             return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.' });
         }
 
         if (classroom.trim().length < 2) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'INVALID_CLASSROOM',
+                message: 'Classroom/room number failed server-side validation.'
+            });
             return res.status(400).json({ message: 'Please enter a valid classroom/room number.' });
         }
 
@@ -302,26 +398,87 @@ router.post('/payment/create', async (req, res) => {
         if (batch) {
             const batchRegex = /^[0-9]{4}-[0-9]{4}$/;
             if (!batchRegex.test(batch)) {
+                console.error('[PAYMENT_CREATE_FAILED]', {
+                    stage,
+                    status: 400,
+                    code: 'INVALID_BATCH',
+                    message: 'Batch failed server-side validation.'
+                });
                 return res.status(400).json({ message: 'Enter batch in YYYY-YYYY format (e.g. 2024-2028).' });
             }
         }
         if (classSection && /^\d+$/.test(classSection)) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'INVALID_CLASS_SECTION',
+                message: 'Class/section failed server-side validation.'
+            });
             return res.status(400).json({ message: 'Enter a valid class/section (e.g. CSE-A).' });
         }
 
         // Validate Indian Phone Number
         if (!phoneRegex.test(phone)) {
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 400,
+                code: 'INVALID_CUSTOMER_PHONE',
+                message: 'Customer phone failed server-side validation.'
+            });
             return res.status(400).json({ message: 'Please provide a valid 10-digit Indian mobile number.' });
         }
 
         const User = require('../models/User');
         const userId = req.session?.userId || null;
+        stage = 'customer_lookup';
         const user = userId ? await User.findById(userId) : null;
+        console.info('[PAYMENT_CREATE] Customer data prepared:', {
+            stage,
+            authenticatedUser: Boolean(userId),
+            emailAvailable: Boolean(user?.email),
+            phoneAvailable: Boolean(phone)
+        });
 
         const cashfreeOrderId = `cp_${userId || 'guest'}_${Date.now()}`;
-        const frontend = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+        const requestOrigin = req.get('origin') || '';
+        const localFrontendOrigin = /^http:\/\/localhost(?::\d+)?$/.test(requestOrigin)
+            ? requestOrigin
+            : '';
+        const frontend = (localFrontendOrigin || process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
         const publicApi = (process.env.PUBLIC_API_URL || '').replace(/\/$/, '');
         const notifyUrl = publicApi ? `${publicApi}/api/orders/payment/webhook` : undefined;
+        const returnUrl = `${frontend}/new-order?cf_order={order_id}`;
+        let returnOrigin = 'invalid';
+        try {
+            returnOrigin = new URL(returnUrl).origin;
+        } catch {
+            // Keep diagnostics safe if a malformed return URL is configured.
+        }
+        stage = 'cashfree_order_create';
+        console.info('[PAYMENT_SUCCESS] Cashfree return URL configured:', {
+            frontendOrigin: returnOrigin,
+            returnPath: '/new-order',
+            orderIdParameter: 'cf_order'
+        });
+        const environment = cashfree.getMode();
+        const endpoint = `${environment === 'production' ? 'https://api.cashfree.com' : 'https://sandbox.cashfree.com'}/pg/orders`;
+        console.info('[PAYMENT_CREATE] Calling Cashfree:', {
+            stage,
+            endpoint,
+            environment,
+            appIdPresent: Boolean(process.env.CASHFREE_APP_ID),
+            secretPresent: Boolean(process.env.CASHFREE_SECRET_KEY),
+            cashfreeEnvConfigured: Boolean(process.env.CASHFREE_ENV),
+            orderId: cashfreeOrderId,
+            amount: verifiedAmount,
+            returnOrigin
+        });
+        console.info('[PAYMENT_CREATE] Cashfree request prepared:', {
+            orderId: cashfreeOrderId,
+            amount: verifiedAmount,
+            returnOrigin,
+            notifyUrlConfigured: Boolean(notifyUrl)
+        });
 
         const session = await cashfree.createPaymentSession({
             orderId: cashfreeOrderId,
@@ -329,23 +486,52 @@ router.post('/payment/create', async (req, res) => {
             customerId: `cust_${userId || 'guest'}_${Date.now()}`,
             customerEmail: user?.email || `${phone}@guest.campusprint.com`,
             customerPhone: phone,
-            returnUrl: `${frontend}/new-order?cf_order={order_id}`,
+            returnUrl,
             notifyUrl
         });
+        console.info('[PAYMENT_CREATE] Cashfree response received:', {
+            orderId: cashfreeOrderId,
+            paymentSessionReturned: Boolean(session.paymentSessionId),
+            orderStatus: session.orderStatus || 'unknown'
+        });
 
+        stage = 'payment_session_validation';
         if (!session.paymentSessionId) {
-            return res.status(503).json({ message: 'Could not start payment session', fallbackToSimulate: true });
+            console.error('[PAYMENT_CREATE_FAILED]', {
+                stage,
+                status: 502,
+                code: 'PAYMENT_SESSION_MISSING',
+                message: 'Cashfree response did not contain a payment session ID.',
+                orderStatus: session.orderStatus || 'unknown'
+            });
+            return res.status(502).json({
+                message: 'Cashfree did not return a payment session. Please try again.',
+                code: 'PAYMENT_SESSION_MISSING'
+            });
         }
 
+        console.info('[PAYMENT_CREATE] Payment session created:', {
+            orderId: cashfreeOrderId,
+            paymentSessionReturned: true,
+            orderStatus: session.orderStatus || 'unknown'
+        });
         res.json({
             paymentSessionId: session.paymentSessionId,
             cashfreeOrderId: session.cashfreeOrderId,
             mode: cashfree.getMode()
         });
     } catch (err) {
-        console.error('Cashfree order create error:', err.response?.data || err.message);
-        const errMsg = err.response?.data?.message || err.message || 'Payment authentication failed';
-        res.status(503).json({ message: errMsg, fallbackToSimulate: true });
+        const details = paymentCreateErrorDetails(err);
+        console.error('[PAYMENT_CREATE_FAILED]', {
+            stage,
+            status: details.status,
+            code: details.code,
+            message: details.message
+        });
+        res.status(details.status && details.status >= 400 && details.status < 600 ? details.status : 503).json({
+            message: details.message,
+            code: details.code
+        });
     }
 });
 
