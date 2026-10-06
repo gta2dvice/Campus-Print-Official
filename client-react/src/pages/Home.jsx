@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
 import Footer from '../components/Footer';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -368,7 +368,7 @@ export default function Home() {
         <div className="hero-container" id="hero">
           <header className="top-nav">
             <nav>
-              <a href="/about" className="nav-link">About Us</a>
+              <Link to="/about" className="nav-link">About Us</Link>
               <a href="#location-section" className="nav-link" onClick={(e) => { e.preventDefault(); scrollToId('location-section'); }}>Location</a>
             </nav>
           </header>
