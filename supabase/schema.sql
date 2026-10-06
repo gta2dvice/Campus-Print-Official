@@ -74,9 +74,16 @@ CREATE TABLE IF NOT EXISTS order_files (
     storage_path    TEXT NULL,
     mime_type       VARCHAR(100) NOT NULL,
     size_bytes      INTEGER NOT NULL DEFAULT 0,
+    printing_side   VARCHAR(10) NOT NULL DEFAULT 'single' CHECK (printing_side IN ('single','double')),
+    copies          INTEGER NOT NULL DEFAULT 1,
+    color_mode      VARCHAR(10) NOT NULL DEFAULT 'bw' CHECK (color_mode IN ('bw','color')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     file_deleted_at TIMESTAMPTZ NULL
 );
+
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_side VARCHAR(10) NOT NULL DEFAULT 'single';
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS copies INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw';
 
 CREATE INDEX IF NOT EXISTS idx_order_files_created_at ON order_files (created_at);
 CREATE INDEX IF NOT EXISTS idx_order_files_storage_path ON order_files (storage_path);
@@ -84,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_order_files_storage_path ON order_files (storage_
 CREATE TABLE IF NOT EXISTS payments (
     id              SERIAL PRIMARY KEY,
     order_id        INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id         INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
     shop_id         INTEGER NULL,
     amount          NUMERIC(10,2) NOT NULL DEFAULT 0.00,
     status          VARCHAR(20) NOT NULL DEFAULT 'success'
@@ -99,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_status ON payments (status);
 
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id);
+ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
 
 INSERT INTO shops (id, shop_name)
 SELECT 1, 'Campus Print'

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
 import Footer from '../components/Footer';
 import LogoLink from '../components/LogoLink';
@@ -13,25 +13,47 @@ export default function Ticket() {
   useBodyClass('ticket-page-body');
   useDocumentTitle('Collection Ticket – Campus Prints');
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const orderId = searchParams.get('id');
   const [order, setOrder] = useState(null);
+  const [ticketError, setTicketError] = useState('');
 
   useEffect(() => {
-    if (!orderId) { navigate('/'); return; }
+    if (!orderId) {
+      setTicketError('The order ID is missing from this ticket link.');
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
+        console.info('[TICKET_LOAD] Fetching ticket:', { orderId });
         const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { credentials: 'include' });
-        if (!res.ok) { if (!cancelled) navigate('/'); return; }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          console.error('[TICKET_LOAD_FAILED]', {
+            stage: 'ticket_lookup_response',
+            orderId,
+            httpStatus: res.status,
+            code: data.code || 'TICKET_LOAD_FAILED'
+          });
+          if (!cancelled) setTicketError(data.message || `Ticket lookup failed (${res.status}).`);
+          return;
+        }
         const data = await res.json();
-        if (!cancelled) setOrder(data);
-      } catch {
-        if (!cancelled) navigate('/');
+        if (!cancelled) {
+          console.info('[TICKET_LOAD] Ticket loaded:', { orderId, ticketNumberPresent: Boolean(data.ticket_number) });
+          setOrder(data);
+        }
+      } catch (error) {
+        console.error('[TICKET_LOAD_FAILED]', {
+          stage: 'ticket_lookup_request',
+          orderId,
+          errorName: error instanceof Error ? error.name : 'UnknownError'
+        });
+        if (!cancelled) setTicketError('Could not reach the server to load this ticket. Please retry.');
       }
     })();
     return () => { cancelled = true; };
-  }, [orderId, navigate]);
+  }, [orderId]);
 
   function maskPhone(phone) {
     if (!phone) return '—';
@@ -51,6 +73,18 @@ export default function Ticket() {
         <div className="booking-orb booking-orb-2"></div>
 
         <main className="ticket-main-content">
+          {ticketError ? (
+            <section className="ticket-success-header">
+              <h1 className="success-heading">Ticket unavailable</h1>
+              <p className="success-subtitle">{ticketError}</p>
+              <Link to="/" className="ticket-btn ticket-btn-primary">Back to home</Link>
+            </section>
+          ) : !order ? (
+            <section className="ticket-success-header">
+              <h1 className="success-heading">Loading your ticket…</h1>
+            </section>
+          ) : (
+            <>
 
           <section className="ticket-success-header">
             <div className="success-badge-circle">
@@ -212,6 +246,8 @@ export default function Ticket() {
             </a>
           </div>
 
+            </>
+          )}
         </main>
       </div>
       <Footer />

@@ -48,6 +48,28 @@ function paymentCreateErrorDetails(error) {
     };
 }
 
+function safeOrderError(error) {
+    const secrets = [
+        process.env.DATABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        process.env.CASHFREE_SECRET_KEY
+    ].filter(Boolean);
+    let message = String(error?.message || 'Unknown order creation error');
+    for (const secret of secrets) {
+        message = message.split(secret).join('[redacted]');
+    }
+    message = message
+        .replace(/(postgres(?:ql)?:\/\/)[^@\s]+@/gi, '$1[redacted]@')
+        .replace(/cfsk_[a-zA-Z0-9_-]+/g, '[redacted]')
+        .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
+        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted]')
+        .replace(/\b[6-9][0-9]{9}\b/g, '[redacted]');
+    return {
+        code: String(error?.code || 'ORDER_CREATE_FAILED').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64),
+        message: message.slice(0, 300)
+    };
+}
+
 // ── Order Configuration ─────────────────────
 const PRICING = {
     single: 2,
@@ -175,23 +197,48 @@ router.get('/stats', async (req, res) => {
 
 // GET /api/orders/:id — single order, owner-only (used by the collection ticket page)
 router.get('/:id', async (req, res) => {
+    let stage = 'order_lookup';
+    console.info('[TICKET_LOAD] Ticket lookup started:', { orderId: req.params.id });
     try {
         const order = await Order.getOrderById(req.params.id);
-        if (!order) return res.status(404).json({ message: 'Order not found' });
+        if (!order) {
+            console.warn('[TICKET_LOAD_FAILED]', {
+                stage,
+                orderId: req.params.id,
+                status: 404,
+                error_code: 'ORDER_NOT_FOUND',
+                message: 'No order matched the requested ticket ID.'
+            });
+            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
+        }
 
         // If it's a guest order, we show it. If it's a user order, we check session.
         if (order.user_id && req.session && req.session.userId !== order.user_id) {
             return res.status(403).json({ message: 'Not authorized to view this order' });
         }
 
+        stage = 'payment_lookup';
         const [[payment]] = await pool.query(
             `SELECT transaction_ref, method, amount FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
             [order.id]
         );
+        console.info('[TICKET_LOAD] Ticket lookup succeeded:', {
+            orderId: req.params.id,
+            paymentRecordPresent: Boolean(payment)
+        });
         res.json({ ...order, payment: payment || null });
     } catch (err) {
-        console.error('Get order error:', err);
-        res.status(500).json({ message: 'Server Error' });
+        const safeError = safeOrderError(err);
+        console.error('[TICKET_LOAD_FAILED]', {
+            stage,
+            orderId: req.params.id,
+            error_code: safeError.code,
+            message: safeError.message
+        });
+        res.status(500).json({
+            message: 'Unable to load this ticket right now. Please retry.',
+            code: 'TICKET_LOAD_FAILED'
+        });
     }
 });
 
@@ -228,17 +275,28 @@ router.get('/', async (req, res) => {
     }
 });
 
-async function persistUploadedFiles(userId, orderId, files, fileSettings) {
+async function persistUploadedFiles(userId, orderId, files, fileSettings, onStage = () => {}) {
     const stored = [];
     const settingsMap = fileSettings ? JSON.parse(fileSettings) : [];
-    const settingsById = new Map(settingsMap.map(s => [String(s.key), s]));
 
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
         const { storedName, storagePath } = buildObjectPath(userId, orderId, file.originalname);
+        onStage('file_storage_upload');
+        console.info('[ORDER_CREATE] File storage upload started:', {
+            orderId,
+            fileIndex: index + 1,
+            fileCount: files.length,
+            sizeBytes: file.size
+        });
         await uploadBuffer({
             storagePath,
             buffer: file.buffer,
             contentType: file.mimetype
+        });
+        console.info('[ORDER_CREATE] File storage upload completed:', {
+            orderId,
+            fileIndex: index + 1,
+            fileCount: files.length
         });
 
         // Find matching settings for this file
@@ -263,7 +321,16 @@ async function persistUploadedFiles(userId, orderId, files, fileSettings) {
             colorMode: setting.colorMode || 'bw'
         };
     });
+    onStage('file_metadata_insert');
+    console.info('[ORDER_CREATE] File metadata insert started:', {
+        orderId,
+        fileCount: finalFiles.length
+    });
     await OrderFile.createFiles(orderId, finalFiles);
+    console.info('[ORDER_CREATE] File metadata insert completed:', {
+        orderId,
+        fileCount: finalFiles.length
+    });
 }
 
 function readOrderPayload(body) {
@@ -613,17 +680,46 @@ router.post('/payment/simulate', upload.array('files', 10), async (req, res) => 
 
 // POST /api/orders/payment/verify — confirms Cashfree order status, then creates the print order.
 router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
-    if (!paymentGatewayReady()) return res.status(503).json({ message: 'Payment gateway is not configured.' });
+    let verificationStage = 'request_received';
     let cashfreeOrderId;
+    if (!paymentGatewayReady()) {
+        console.error('[PAYMENT_VERIFY_FAILED]', {
+            stage: 'gateway_configuration',
+            code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
+            message: 'Cashfree is not configured.'
+        });
+        return res.status(503).json({ message: 'Payment gateway is not configured.', code: 'PAYMENT_GATEWAY_NOT_CONFIGURED' });
+    }
     try {
         cashfreeOrderId = req.body.cashfree_order_id || req.body.cashfreeOrderId;
+        console.info('[PAYMENT_RETURN] Verification request received:', {
+            orderIdPresent: Boolean(cashfreeOrderId),
+            fileCount: req.files?.length || 0,
+            fileSettingsPresent: Boolean(req.body.fileSettings)
+        });
+        verificationStage = 'request_validation';
         if (!cashfreeOrderId) {
+            console.error('[PAYMENT_VERIFY_FAILED]', {
+                stage: verificationStage,
+                code: 'PAYMENT_ORDER_ID_MISSING',
+                message: 'Cashfree order ID is missing.'
+            });
             return res.status(400).json({ message: 'Missing payment order id' });
         }
         if (!req.files || req.files.length === 0) {
+            console.error('[PAYMENT_VERIFY_FAILED]', {
+                stage: verificationStage,
+                code: 'ORDER_FILES_MISSING',
+                message: 'No uploaded files were restored for verification.'
+            });
             return res.status(400).json({ message: 'Please upload at least one file to continue.' });
         }
         if (!req.body.fileSettings) {
+            console.error('[PAYMENT_VERIFY_FAILED]', {
+                stage: verificationStage,
+                code: 'FILE_SETTINGS_MISSING',
+                message: 'Print file settings are missing.'
+            });
             return res.status(400).json({ message: 'Please configure printing settings for all files.' });
         }
 
@@ -662,15 +758,34 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
             return res.status(400).json({ message: 'Please provide a valid 10-digit Indian mobile number.' });
         }
 
+        verificationStage = 'cashfree_status_verification';
+        console.info('[PAYMENT_VERIFY] Verification started:', { cashfreeOrderId });
         const cfOrder = await cashfree.fetchOrderUntilPaid(cashfreeOrderId);
+        console.info('[PAYMENT_VERIFY] Cashfree order status checked:', {
+            cashfreeOrderId,
+            paymentStatus: cfOrder.order_status || 'unknown',
+            paid: cashfree.isOrderPaid(cfOrder)
+        });
         if (!cashfree.isOrderPaid(cfOrder)) {
+            console.warn('[PAYMENT_VERIFY_FAILED]', {
+                stage: verificationStage,
+                cashfreeOrderId,
+                paymentStatus: cfOrder.order_status || 'unknown'
+            });
             return res.status(400).json({ message: 'Payment is not completed yet. Please wait or try again.' });
         }
+        console.info('[PAYMENT_VERIFY] Payment verified successfully:', { cashfreeOrderId });
 
+        verificationStage = 'ticket_creation';
+        console.info('[TICKET_CREATE] Starting ticket creation:', { cashfreeOrderId });
         const existing = await Payment.findByGatewayOrderId(cashfreeOrderId);
         if (existing && existing.order_id) {
             const prior = await Order.getOrderById(existing.order_id);
             if (prior) {
+                console.info('[TICKET_CREATE] Existing ticket found:', {
+                    cashfreeOrderId,
+                    orderId: prior.id
+                });
                 return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number });
             }
             return res.status(409).json({ message: 'This payment is already linked to an order.' });
@@ -681,6 +796,19 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
         data.guestFullName = fullName;
         data.guestPhone = phone;
         data.guestClassroom = classroom;
+        console.info('[ORDER_CREATE] Customer data validated:', {
+            cashfreeOrderId,
+            userIdPresent: Boolean(req.session?.userId),
+            namePresent: Boolean(fullName),
+            phonePresent: Boolean(phone),
+            classroomPresent: Boolean(classroom)
+        });
+        console.info('[ORDER_CREATE] Files/documents validated:', {
+            cashfreeOrderId,
+            fileCount: req.files.length,
+            fileSettingsCount: JSON.parse(req.body.fileSettings).length,
+            totalFileBytes: req.files.reduce((total, file) => total + file.size, 0)
+        });
 
         const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
         if (pickupErr) return res.status(400).json({ message: pickupErr });
@@ -698,9 +826,29 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
         }
 
         const userId = req.session?.userId || null;
+        verificationStage = 'database_insert';
+        console.info('[TICKET_CREATE] Database insert started:', { cashfreeOrderId });
         const order = await Order.createOrder(userId, DEFAULT_SHOP_ID, data);
-        await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings);
+        console.info('[TICKET_CREATE] Database insert completed:', {
+            cashfreeOrderId,
+            orderId: order.id
+        });
+        console.info('[TICKET_CREATE] Ticket/order ID generated:', {
+            cashfreeOrderId,
+            orderId: order.id,
+            ticketNumberPresent: Boolean(order.ticketNumber)
+        });
+
+        verificationStage = 'ticket_file_persistence';
+        await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings, stage => {
+            verificationStage = stage;
+        });
         const paymentId = cfOrder.cf_payment_id || cfOrder.order_id || cashfreeOrderId;
+        verificationStage = 'payment_record_creation';
+        console.info('[TICKET_CREATE] Payment record creation started:', {
+            cashfreeOrderId,
+            orderId: order.id
+        });
         await Payment.createForOrder(
             order.id,
             userId,
@@ -711,17 +859,58 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
             { status: 'success', gatewayOrderId: cashfreeOrderId }
         );
 
+        console.info('[TICKET_CREATE] Payment record created:', {
+            cashfreeOrderId,
+            orderId: order.id,
+            paymentStatus: 'success'
+        });
+        console.info('[TICKET_CREATE] Ticket created successfully:', {
+            cashfreeOrderId,
+            orderId: order.id,
+            ticketNumberPresent: Boolean(order.ticketNumber)
+        });
         res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber });
     } catch (err) {
         if (err.code === '23505' && cashfreeOrderId) {
-            const existing = await Payment.findByGatewayOrderId(cashfreeOrderId);
-            if (existing?.order_id) {
-                const prior = await Order.getOrderById(existing.order_id);
-                if (prior) return res.status(200).json({ id: prior.id, ticketNumber: prior.ticketNumber });
+            try {
+                const existing = await Payment.findByGatewayOrderId(cashfreeOrderId);
+                if (existing?.order_id) {
+                    const prior = await Order.getOrderById(existing.order_id);
+                    if (prior) {
+                        console.info('[TICKET_CREATE] Existing ticket returned after duplicate verification:', {
+                            cashfreeOrderId,
+                            orderId: prior.id
+                        });
+                        return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number });
+                    }
+                }
+            } catch (recoveryError) {
+                const recoverySafeError = safeOrderError(recoveryError);
+                console.error('[TICKET_CREATE_FAILED]', {
+                    stage: 'duplicate_recovery',
+                    cashfreeOrderId,
+                    error_code: recoverySafeError.code,
+                    message: recoverySafeError.message
+                });
             }
         }
-        console.error('Payment verify error:', err.response?.data || err.message);
-        res.status(500).json({ message: 'Server Error' });
+        const safeError = safeOrderError(err);
+        const diagnostic = {
+            cashfreeOrderId: cashfreeOrderId || 'missing',
+            stage: verificationStage,
+            error_code: safeError.code,
+            message: safeError.message
+        };
+        console.error(
+            verificationStage === 'cashfree_status_verification' ? '[PAYMENT_VERIFY_FAILED]' : '[TICKET_CREATE_FAILED]',
+            diagnostic
+        );
+        res.status(500).json({
+            message: verificationStage === 'cashfree_status_verification'
+                ? 'Cashfree payment status could not be verified. Please retry.'
+                : 'Payment status was verified, but ticket creation failed. Please contact support.',
+            code: safeError.code
+        });
     }
 });
 

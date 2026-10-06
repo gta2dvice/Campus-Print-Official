@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import Toast from '../components/Toast';
 import useToast from '../lib/useToast';
@@ -12,6 +12,7 @@ import {
   flushSaveCurrentOrder,
   loadCurrentOrder,
   removeCurrentOrder,
+  saveCurrentOrder,
   scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
@@ -91,6 +92,7 @@ let fileKeySeq = 0;
 
 export default function NewOrder() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   useBodyClass('app-body');
   useDocumentTitle('New Order – Print Campus');
   const { toast, showToast } = useToast();
@@ -122,6 +124,10 @@ export default function NewOrder() {
   const [locationStatuses, setLocationStatuses] = useState([]);
   const [paying, setPaying] = useState(false);
   const persistReadyRef = useRef(false);
+  const handledReturnOrderRef = useRef(null);
+  const confirmPaidOrderRef = useRef(null);
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
 
   useEffect(() => {
     let cancelled = false;
@@ -382,12 +388,18 @@ export default function NewOrder() {
   }
 
   async function finishSuccessfulOrder(orderId) {
+    if (!orderId) {
+      showToast('Payment was verified, but the server did not return a ticket number.', 'error');
+      setPaying(false);
+      return;
+    }
     try {
       await clearCompletedOrder();
     } catch {
       // Server order already succeeded; clearing the local draft is best-effort.
     }
     closeBookingModal();
+    console.info('[NAVIGATION] Navigating to ticket:', { orderId });
     navigate(`/ticket?id=${orderId}`);
   }
 
@@ -587,17 +599,63 @@ export default function NewOrder() {
   }
 
   async function confirmPaidOrder(cashfreeOrderId) {
+    console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
     const formData = buildOrderFormData();
     formData.append('cashfree_order_id', cashfreeOrderId);
     const verifyRes = await fetch('/api/orders/payment/verify', { method: 'POST', credentials: 'include', body: formData });
-    const verifyData = await verifyRes.json();
-    if (verifyRes.ok) {
+    const verifyData = await verifyRes.json().catch(() => ({}));
+    if (verifyRes.ok && verifyData.id) {
+      console.info('[PAYMENT_VERIFY] Backend returned created ticket:', {
+        cashfreeOrderId,
+        orderId: verifyData.id,
+        hasTicketNumber: Boolean(verifyData.ticketNumber)
+      });
       await finishSuccessfulOrder(verifyData.id);
+      return true;
+    }
+    console.error('[PAYMENT_VERIFY_FAILED]', {
+      stage: 'verification_response',
+      cashfreeOrderId,
+      httpStatus: verifyRes.status,
+      code: verifyData.code || 'PAYMENT_VERIFICATION_FAILED'
+    });
+    const errorCode = verifyData.code ? ` (${verifyData.code})` : '';
+    showToast(
+      `${verifyData.message || 'Payment could not be confirmed or the ticket could not be generated. Please contact support.'}${errorCode}`,
+      'error'
+    );
+    setPaying(false);
+    return false;
+  }
+  confirmPaidOrderRef.current = confirmPaidOrder;
+
+  const returnedCashfreeOrderId = searchParams.get('cf_order') || searchParams.get('order_id');
+  useEffect(() => {
+    if (loading || !returnedCashfreeOrderId || handledReturnOrderRef.current === returnedCashfreeOrderId) return;
+    handledReturnOrderRef.current = returnedCashfreeOrderId;
+    console.info('[PAYMENT_RETURN] Cashfree return received:', {
+      cashfreeOrderId: returnedCashfreeOrderId,
+      restoredFileCount: files.length
+    });
+    if (!files.length) {
+      console.error('[PAYMENT_RETURN_FAILED]', {
+        stage: 'restore_pending_order',
+        cashfreeOrderId: returnedCashfreeOrderId
+      });
+      showToast('Payment returned successfully, but the saved order files could not be restored. Please contact support.', 'error');
       return;
     }
-    showToast(verifyData.message || 'Payment could not be confirmed. If money was deducted, contact support.', 'error');
-    setPaying(false);
-  }
+    setPaying(true);
+    confirmPaidOrderRef.current(returnedCashfreeOrderId).catch((error) => {
+      console.error('[PAYMENT_RETURN_FAILED]', {
+        stage: 'verification_request',
+        cashfreeOrderId: returnedCashfreeOrderId,
+        errorName: error instanceof Error ? error.name : 'UnknownError'
+      });
+      showToastRef.current('Payment verification could not reach the server. Please retry or contact support.', 'error');
+      setPaying(false);
+    });
+  }, [loading, returnedCashfreeOrderId, files.length]);
 
   async function handlePay() {
     if (!selectedLocationId || !selectedTimeSlot) {
@@ -618,6 +676,25 @@ export default function NewOrder() {
 
 
     try {
+      try {
+        await saveCurrentOrder({
+          meta: {
+            guestDetails,
+            paperSize,
+            spiralBinding,
+            expressDelivery,
+            classroomDelivery,
+            selectedLocationId,
+            selectedLocationName,
+            selectedTimeSlot,
+          },
+          files,
+        });
+      } catch (error) {
+        showToast(storageErrorMessage(error), 'error');
+        setPaying(false);
+        return;
+      }
       const createRes = await fetch('/api/orders/payment/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

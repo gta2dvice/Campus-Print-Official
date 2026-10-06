@@ -26,8 +26,12 @@ async function initDb() {
     }
     console.log('✅ Supabase Postgres schema applied');
 
+    await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_side VARCHAR(10) NOT NULL DEFAULT 'single'`);
+    await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS copies INTEGER NOT NULL DEFAULT 1`);
+    await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw'`);
     await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id)`);
+    await pool.query(`ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL`);
 
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_PASSWORD;
