@@ -76,7 +76,7 @@ export default function Shops() {
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center gap-[0.6rem]">
+      <div className="sa-filter-bar mb-5 flex flex-wrap items-center gap-[0.6rem]">
         <input
           type="text"
           value={search}
@@ -98,7 +98,7 @@ export default function Shops() {
         <button onClick={resetFilters} className="rounded-full border border-gray-200 px-[1.1rem] py-2 text-[0.85rem] font-semibold text-gray-600 transition hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">Reset</button>
       </div>
 
-      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+      <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
         {loading ? (
           <Loading />
         ) : error ? (
@@ -107,7 +107,7 @@ export default function Shops() {
           <EmptyState>No shops match your filters.</EmptyState>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[0.85rem]">
+            <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
                   {['Shop', 'Owner', 'Status', 'Approval', 'Orders', 'Earnings', 'Actions'].map((h) => (
@@ -118,13 +118,13 @@ export default function Shops() {
               <tbody>
                 {data.shops.map((s) => (
                   <tr key={s.id} className="hover:bg-blue-500/[0.03]">
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.shop_name}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.owner_email || '—'}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><ActiveBadge isActive={s.is_active} /></td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><ApprovalBadge status={s.approval_status} /></td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.total_orders}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(s.total_earnings)}</td>
-                    <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]">
+                    <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.shop_name}</td>
+                    <td data-label="Owner" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.owner_email || '—'}</td>
+                    <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><ActiveBadge isActive={s.is_active} /></td>
+                    <td data-label="Approval" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><ApprovalBadge status={s.approval_status} /></td>
+                    <td data-label="Orders" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{s.total_orders}</td>
+                    <td data-label="Earnings" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(s.total_earnings)}</td>
+                    <td data-label="Actions" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]">
                       <button onClick={() => setOpenShopId(s.id)} className="ml-1 rounded-full border border-gray-200 px-[0.7rem] py-[0.32rem] text-[0.72rem] font-semibold text-gray-600 hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">View</button>
                       {s.approval_status === 'pending' && (
                         <button onClick={() => approveShop(s.id)} className="ml-1 rounded-full bg-emerald-500 px-[0.7rem] py-[0.32rem] text-[0.72rem] font-semibold text-white hover:bg-emerald-600">Approve</button>
@@ -191,7 +191,7 @@ function ShopModal({ shopId, onClose }) {
           <h4 className="mb-3 mt-5 text-[0.9rem] font-bold text-gray-900">Recent Orders</h4>
           {shop.recentOrders.length ? (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[0.85rem]">
+              <table className="sa-table w-full border-collapse text-[0.85rem]">
                 <thead>
                   <tr>
                     {['Order ID', 'Status', 'Amount', 'Date'].map((h) => (
@@ -202,10 +202,10 @@ function ShopModal({ shopId, onClose }) {
                 <tbody>
                   {shop.recentOrders.map((o) => (
                     <tr key={o.id}>
-                      <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
-                      <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
-                      <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
-                      <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
+                      <td data-label="Order ID" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
+                      <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
+                      <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                      <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -18,7 +18,7 @@ export default function PaymentGateway() {
   }, []);
 
   return (
-    <div className="max-w-[560px] rounded-[18px] border border-gray-300/50 bg-white/90 p-6 shadow-sm backdrop-blur-md">
+    <div className="max-w-[560px] rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
       <h2 className="mb-[1.1rem] text-base font-bold text-gray-900">Gateway Status</h2>
       {error ? (
         <ErrorState>Couldn't load gateway status. {error}</ErrorState>

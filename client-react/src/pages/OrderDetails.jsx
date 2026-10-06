@@ -45,10 +45,10 @@ export default function OrderDetails() {
     const STATUS_LABELS = { pending: 'Pending', accepted: 'Accepted', printing: 'Printing', ready: 'Ready', completed: 'Completed', rejected: 'Rejected', cancelled: 'Cancelled' };
 
     return (
-        <div className="app-layout" style={{ position: 'relative', justifyContent: 'center', alignItems: 'center', padding: '2rem' }}>
+        <div className="app-layout order-details-page">
             <LogoLink />
-            <div className="order-details-card" style={{ maxWidth: '500px', width: '100%', background: 'white', borderRadius: '1rem', padding: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', color: '#333' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div className="order-details-card" style={{ maxWidth: '500px', width: '100%', background: 'white', borderRadius: '1rem', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', color: '#333' }}>
+                <div className="order-details-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                     <h2 style={{ margin: 0 }}>Order #{order.ticket_number || order.id}</h2>
                     <span className={`status-badge status-${order.status}`}>{STATUS_LABELS[order.status] || order.status}</span>
                 </div>

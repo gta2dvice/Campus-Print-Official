@@ -114,14 +114,14 @@ export default function Transactions() {
               <tbody>
                 {data.payments.map((p) => (
                   <tr key={p.transaction_ref}>
-                    <td className="font-mono text-xs font-bold text-slate-900">{p.transaction_ref}</td>
-                    <td className="font-bold text-blue-600">#{String(p.order_id).padStart(4, '0')}</td>
-                    <td className="font-medium text-slate-800">{p.customer_email}</td>
-                    <td className="font-black text-slate-900">{fmtMoney(p.amount)}</td>
-                    <td>
+                    <td data-label="Transaction Ref" className="font-mono text-xs font-bold text-slate-900">{p.transaction_ref}</td>
+                    <td data-label="Order ID" className="font-bold text-blue-600">#{String(p.order_id).padStart(4, '0')}</td>
+                    <td data-label="Customer Email" className="font-medium text-slate-800">{p.customer_email}</td>
+                    <td data-label="Amount" className="font-black text-slate-900">{fmtMoney(p.amount)}</td>
+                    <td data-label="Payment Status">
                       <StatusBadge status={p.status} kind="payment" />
                     </td>
-                    <td className="text-right text-xs text-slate-400 font-medium">{fmtDate(p.created_at)}</td>
+                    <td data-label="Date & Time" className="text-right text-xs text-slate-400 font-medium">{fmtDate(p.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

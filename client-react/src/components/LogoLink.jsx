@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 export default function LogoLink({ className = '', style = {} }) {
   return (
-    <Link to="/" className={`logo-link ${className}`} style={{
+    <Link to="/" className={`logo-link logo-link--floating ${className}`} style={{
       position: 'absolute',
       top: '2rem',
       left: '2rem',

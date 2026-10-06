@@ -19,3 +19,93 @@
 .sa-animate-in {
   animation: sa-fade-in 0.18s ease;
 }
+
+/* ==========================================================================
+   MOBILE (phones). Desktop/tablet layouts are untouched.
+   ========================================================================== */
+@media (max-width: 640px) {
+  /* Filter bar: full-width search/select, dates side by side, equal buttons */
+  .sa-filter-bar > input[type="text"],
+  .sa-filter-bar > select {
+    flex: 1 1 100%;
+  }
+  .sa-filter-bar > input[type="date"] {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .sa-filter-bar > button {
+    flex: 1 1 0;
+    min-height: 44px;
+  }
+  .sa-filter-bar > input,
+  .sa-filter-bar > select {
+    font-size: 16px; /* stops iOS zoom on focus */
+    min-height: 44px;
+  }
+
+  /* Tables become stacked cards; each cell shows its column name from data-label */
+  .sa-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .sa-table,
+  .sa-table tbody,
+  .sa-table tr,
+  .sa-table td {
+    display: block;
+    width: 100%;
+  }
+  .sa-table tr {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 0.2rem 0.9rem;
+    margin-bottom: 0.75rem;
+  }
+  .sa-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .sa-table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px dashed #e5e7eb;
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .sa-table td:last-child {
+    border-bottom: none;
+  }
+  .sa-table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    max-width: 45%;
+    text-align: left;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9ca3af;
+  }
+  /* Action cells (View / Approve / Deactivate) */
+  .sa-table td:has(button) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+  .sa-table td:has(button)::before {
+    margin-right: auto;
+  }
+  .sa-table td button {
+    min-height: 36px;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+}

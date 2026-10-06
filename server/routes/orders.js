@@ -100,7 +100,8 @@ router.get('/slots', async (req, res) => {
             }
             return res.json({
                 time,
-                locations: slots.buildLocationStatusesForTime(time, countsByLocation)
+                locations: slots.buildLocationStatusesForTime(time, countsByLocation),
+                ...slots.getOrderDateContext()
             });
         }
 
@@ -125,7 +126,7 @@ router.get('/slots', async (req, res) => {
             return res.json({ location, slots: slots.buildSlotStatuses(locationId, countsByTime) });
         }
 
-        res.json({ slots: slots.buildTimeSlotStatuses() });
+        res.json({ slots: slots.buildTimeSlotStatuses(), ...slots.getOrderDateContext() });
     } catch (err) {
         console.error('Slots error:', err);
         res.status(500).json({ message: 'Server Error' });
@@ -250,7 +251,10 @@ function readOrderPayload(body) {
         totalPrice: Number(body.totalPrice),
         collectionLocationId: body.collectionLocationId || null,
         collectionLocationName: body.collectionLocation || null,
-        collectionTime: body.collectionTime || null
+        collectionTime: body.collectionTime || null,
+        // Derived from the server's own clock, not trusted from the client, so a pre-order
+        // placed after 5 PM IST is always correctly recorded against tomorrow's date.
+        collectionDate: slots.getOrderDateContext().date
     };
 }
 

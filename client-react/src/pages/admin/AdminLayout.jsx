@@ -78,6 +78,11 @@ export default function AdminLayout() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const chipRef = useRef(null);
 
+  // Close the mobile drawer after navigating.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, location.search]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -231,9 +236,9 @@ export default function AdminLayout() {
       {/* Main Content Wrapper */}
       <div className="admin-main-wrapper">
         <header className="admin-header">
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-4 max-md:gap-3">
             <button
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 md:hidden"
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 md:hidden"
               onClick={() => setSidebarOpen(true)}
               title="Toggle Navigation"
             >
@@ -244,7 +249,7 @@ export default function AdminLayout() {
             <h1 className="admin-header-title">{pageTitle}</h1>
           </div>
 
-          <div className="flex items-center gap-4" ref={chipRef}>
+          <div className="flex flex-shrink-0 items-center gap-4" ref={chipRef}>
             {/* Live Indicator */}
             <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 max-sm:hidden">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />

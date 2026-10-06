@@ -95,7 +95,7 @@ export default function Settings() {
             <button
               type="submit"
               disabled={submitting}
-              className="admin-btn-primary"
+              className="admin-btn-primary max-sm:w-full"
             >
               {submitting ? 'Updating Password…' : 'Update Password'}
             </button>
