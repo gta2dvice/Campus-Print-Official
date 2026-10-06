@@ -36,6 +36,8 @@ function paymentCreateErrorDetails(error) {
     message = message
         .replace(/cfsk_[a-zA-Z0-9_-]+/g, '[redacted]')
         .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
+        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted]')
+        .replace(/\b[6-9][0-9]{9}\b/g, '[redacted]')
         .slice(0, 300);
 
     const rawCode = errorBody.code || errorBody.error_code || error?.code || 'PAYMENT_CREATE_FAILED';
