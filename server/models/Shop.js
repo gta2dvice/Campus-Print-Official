@@ -56,6 +56,11 @@ async function updateShop(id, data) {
     return getShopById(id);
 }
 
+async function setPaymentQr(id, storagePath, mimeType) {
+    await pool.execute('UPDATE shops SET payment_qr_path = ?, payment_qr_mime = ? WHERE id = ?', [storagePath, mimeType, id]);
+    return getShopById(id);
+}
+
 async function setApprovalStatus(id, status) {
     await pool.execute('UPDATE shops SET approval_status = ? WHERE id = ?', [status, id]);
     return getShopById(id);
@@ -83,6 +88,7 @@ module.exports = {
     getShopByOwner,
     listShops,
     updateShop,
+    setPaymentQr,
     setApprovalStatus,
     setActive,
     getPlatformShopStats

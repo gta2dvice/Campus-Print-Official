@@ -4,11 +4,12 @@ const router = express.Router();
 const Order = require('../models/Order');
 const OrderFile = require('../models/OrderFile');
 const Payment = require('../models/Payment');
+const Shop = require('../models/Shop');
 const { upload } = require('../middleware/upload');
 const { detectPages } = require('../pageDetect');
 const slots = require('../slots');
 const pool = require('../db');
-const { uploadBuffer, buildObjectPath } = require('../storage');
+const { uploadBuffer, buildObjectPath, downloadFile } = require('../storage');
 const cashfree = require('../cashfree');
 const { requireProfile } = require('../middleware/roleAuth');
 
@@ -31,14 +32,26 @@ const PRICING = {
     classroomDelivery: 10
 };
 
+/**
+ * Printing cost for one file. B&W double-sided is charged per physical sheet
+ * (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
+ * Keep in sync with filePrintingCost() in client-react/src/pages/NewOrder.jsx and Home.jsx.
+ */
+function filePrintingCost(f) {
+    const pages = Number(f.pages) || 0;
+    const copies = Number(f.copies) || 1;
+    if (f.colorMode === 'color') return pages * copies * 5;
+    if (f.printingSide === 'double') return Math.ceil(pages / 2) * copies * PRICING.double;
+    return pages * copies * PRICING.single;
+}
+
 function calculateTotalPrice(data) {
     const fileSettings = data.fileSettings ? JSON.parse(data.fileSettings) : [];
     let printingCost = 0;
 
     if (fileSettings.length > 0) {
         fileSettings.forEach(f => {
-            const rate = f.colorMode === 'color' ? 5 : (f.printingSide === 'double' ? 3 : 2);
-            printingCost += (Number(f.pages) || 0) * (Number(f.copies) || 1) * rate;
+            printingCost += filePrintingCost(f);
         });
     } else {
         return 0; // No files, no cost
@@ -143,6 +156,37 @@ router.get('/stats', async (req, res) => {
         res.json(stats);
     } catch (err) {
         console.error('Stats error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// GET /api/orders/payment-options — public: what the payment step shows (shop phone, QR availability)
+router.get('/payment-options', async (req, res) => {
+    try {
+        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
+        res.json({
+            phone: shop?.phone || null,
+            hasQr: !!shop?.payment_qr_path,
+            // Path changes on every upload, so it doubles as a cache-buster for the image URL.
+            qrVersion: shop?.payment_qr_path ? encodeURIComponent(shop.payment_qr_path.split('/').pop()) : null
+        });
+    } catch (err) {
+        console.error('Payment options error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// GET /api/orders/payment-options/qr — public: the shop's WhatsApp/UPI QR image (bucket is private)
+router.get('/payment-options/qr', async (req, res) => {
+    try {
+        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
+        if (!shop?.payment_qr_path) return res.status(404).json({ message: 'No payment QR configured' });
+        const buffer = await downloadFile(shop.payment_qr_path);
+        res.setHeader('Content-Type', shop.payment_qr_mime || 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.send(buffer);
+    } catch (err) {
+        console.error('Payment QR error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });
@@ -350,7 +394,11 @@ router.post('/payment/create', async (req, res) => {
 });
 
 // POST /api/orders/payment/simulate — TEMP stand-in or fallback when Cashfree keys fail.
-router.post('/payment/simulate', upload.array('files', 10), async (req, res) => {
+/**
+ * Validates a guest order request, creates the order + its files, and records the payment row.
+ * Shared by the test checkout (/payment/simulate) and offline payments (/payment/offline).
+ */
+async function createGuestOrder(req, res, payment) {
     try {
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ message: 'Please upload at least one file to continue.' });
@@ -413,14 +461,30 @@ router.post('/payment/simulate', upload.array('files', 10), async (req, res) => 
         const userId = req.session?.userId || null;
         const order = await Order.createOrder(userId, DEFAULT_SHOP_ID, data);
         await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings);
-        const simulatedRef = `TXN-SIM-${Date.now()}`;
-        await Payment.createForOrder(order.id, userId, DEFAULT_SHOP_ID, data.totalPrice || 0, 'simulated', simulatedRef);
+        await Payment.createForOrder(order.id, userId, DEFAULT_SHOP_ID, data.totalPrice || 0, payment.method, payment.transactionRef, { status: payment.status });
 
         res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber });
     } catch (err) {
-        console.error('Simulated payment error:', err);
+        console.error(`${payment.method} order error:`, err);
         res.status(500).json({ message: 'Server Error' });
     }
+}
+
+router.post('/payment/simulate', upload.array('files', 10), (req, res) =>
+    createGuestOrder(req, res, { method: 'simulated', transactionRef: `TXN-SIM-${Date.now()}`, status: 'success' })
+);
+
+// Payment methods chosen in the booking flow that are settled outside the app. The order is
+// created right away with a pending payment; the shop admin marks it paid once money arrives.
+const OFFLINE_PAYMENT_METHODS = ['whatsapp', 'none'];
+
+// POST /api/orders/payment/offline — WhatsApp/UPI QR or "pay the shop directly"
+router.post('/payment/offline', upload.array('files', 10), (req, res) => {
+    const method = req.body.paymentMethod;
+    if (!OFFLINE_PAYMENT_METHODS.includes(method)) {
+        return res.status(400).json({ message: 'Unknown payment method.' });
+    }
+    return createGuestOrder(req, res, { method, transactionRef: null, status: 'pending' });
 });
 
 // POST /api/orders/payment/verify — confirms Cashfree order status, then creates the print order.

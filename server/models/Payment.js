@@ -37,7 +37,24 @@ async function updateByGatewayOrderId(gatewayOrderId, { status, transactionRef }
 }
 
 async function refundForOrder(orderId) {
-    await pool.execute(`UPDATE payments SET status = 'refunded' WHERE order_id = ?`, [orderId]);
+    // Only money actually received can be refunded; an unpaid (pending) WhatsApp / pay-at-shop order stays pending.
+    await pool.execute(`UPDATE payments SET status = 'refunded' WHERE order_id = ? AND status = 'success'`, [orderId]);
+}
+
+async function findByOrderId(orderId) {
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
+        [orderId]
+    );
+    return rows[0] || null;
+}
+
+/** Marks an order's pending (offline) payment as received. Returns null when nothing was pending. */
+async function markPaidForOrder(orderId) {
+    const payment = await findByOrderId(orderId);
+    if (!payment || payment.status !== 'pending') return null;
+    await pool.execute(`UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ?`, [payment.id]);
+    return findByOrderId(orderId);
 }
 
 async function listPayments({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20 } = {}) {
@@ -88,4 +105,4 @@ async function getPlatformPaymentStats() {
     return result;
 }
 
-module.exports = { createForOrder, refundForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
+module.exports = { createForOrder, refundForOrder, findByOrderId, markPaidForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
