@@ -53,7 +53,9 @@ const adapter = {
     execute: run,
     query: run,
     connect: () => pool.connect(),
-    end: () => pool.end()
+    end: () => pool.end(),
+    // Raw pg pool for libraries that need one (the session store).
+    pool
 };
 
 module.exports = adapter;

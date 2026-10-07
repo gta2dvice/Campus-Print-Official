@@ -120,7 +120,16 @@ WHERE NOT EXISTS (SELECT 1 FROM shops WHERE id = 1);
 
 SELECT setval('shops_id_seq', GREATEST((SELECT MAX(id) FROM shops), 1));
 
+-- express-session store (connect-pg-simple). The server also creates this on boot (server/sessionStore.js).
+CREATE TABLE IF NOT EXISTS "session" (
+    "sid" varchar NOT NULL COLLATE "default" PRIMARY KEY,
+    "sess" json NOT NULL,
+    "expire" timestamp(6) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+
 -- App traffic uses the Express backend (service role / database URL), not the anon key.
+ALTER TABLE "session" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shops ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;

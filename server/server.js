@@ -11,9 +11,15 @@ const adminRoutes = require('./routes/admin');
 const superAdminRoutes = require('./routes/superAdmin');
 const internalRoutes = require('./routes/internal');
 const { cleanupExpiredPdfs } = require('./jobs/cleanupExpiredPdfs');
+const { createSessionStore, ensureSessionTable } = require('./sessionStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Render (and Vercel's /api proxy in front of it) terminates HTTPS before Express sees the
+// request. Trusting the first proxy hop lets Express read X-Forwarded-Proto, so it knows
+// the connection is HTTPS. Without this, express-session never sends the Secure cookie.
+app.set('trust proxy', 1);
 
 // ── Middleware ───────────────────────────────────
 // CORS configuration
@@ -94,6 +100,7 @@ app.use((req, res, next) => {
 
 // Session
 app.use(session({
+    store: createSessionStore(session),
     secret: process.env.SESSION_SECRET || 'campus-print-secret',
     resave: false,
     saveUninitialized: false,
@@ -137,7 +144,8 @@ if (fs.existsSync(CLIENT_INDEX)) {
 }
 
 // ── Start Server ─────────────────────────────────
-app.listen(PORT, () => {
+// Create/secure the session table before taking traffic; still start if the DB is briefly unreachable.
+ensureSessionTable().catch(err => console.error('Session table setup error:', err.message)).finally(() => app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
     const hour = 60 * 60 * 1000;
     setInterval(() => {
@@ -146,4 +154,4 @@ app.listen(PORT, () => {
             .catch(err => console.error('PDF cleanup error:', err.message));
     }, hour);
     cleanupExpiredPdfs().catch(err => console.error('Initial PDF cleanup error:', err.message));
-});
+}));
