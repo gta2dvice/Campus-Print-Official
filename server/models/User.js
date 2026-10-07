@@ -1,6 +1,8 @@
 const pool = require('../db');
 const bcrypt = require('bcryptjs');
 
+const ADMIN_ROLES = ['shop_admin', 'super_admin'];
+
 async function createUser(email, password) {
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.execute(
@@ -50,8 +52,13 @@ async function upsertSupabaseUser({ supabaseUid, email }) {
     );
     if (emailRows[0]) {
         user = emailRows[0];
+        // Admin accounts sign in to /admin and /super-admin with their password, so keep it;
+        // only student accounts move over to Supabase-only login.
+        const keepsPassword = ADMIN_ROLES.includes(user.role);
         await pool.execute(
-            'UPDATE users SET supabase_uid = ?, password = NULL WHERE id = ?',
+            keepsPassword
+                ? 'UPDATE users SET supabase_uid = ? WHERE id = ?'
+                : 'UPDATE users SET supabase_uid = ?, password = NULL WHERE id = ?',
             [supabaseUid, user.id]
         );
         user.supabase_uid = supabaseUid;

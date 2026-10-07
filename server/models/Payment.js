@@ -37,7 +37,7 @@ async function updateByGatewayOrderId(gatewayOrderId, { status, transactionRef }
 }
 
 async function refundForOrder(orderId) {
-    // Only money actually received can be refunded; an unpaid (pending) WhatsApp / pay-at-shop order stays pending.
+    // Only money actually received can be refunded; an unpaid (pending) QR / pay-at-shop order stays pending.
     await pool.execute(`UPDATE payments SET status = 'refunded' WHERE order_id = ? AND status = 'success'`, [orderId]);
 }
 

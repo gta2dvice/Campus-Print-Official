@@ -197,8 +197,8 @@ export default function ShopProfile() {
 
       <div className="admin-card">
         <div className="border-b border-slate-100 pb-4">
-          <h3 className="text-lg font-black text-slate-900">WhatsApp / UPI Payment QR</h3>
-          <p className="text-xs text-slate-500 font-medium">Students see this QR when they choose WhatsApp Payment. The phone number above is shown when they choose No Payment.</p>
+          <h3 className="text-lg font-black text-slate-900">QR Payment</h3>
+          <p className="text-xs text-slate-500 font-medium">Students see this QR when they choose QR Payment. The phone number above is shown when they choose No Payment.</p>
         </div>
 
         {loading ? (
@@ -213,7 +213,7 @@ export default function ShopProfile() {
                   className="h-full w-full object-contain"
                 />
               ) : (
-                <span className="px-4 text-center text-xs font-semibold text-slate-400">No QR uploaded. WhatsApp Payment is hidden from students.</span>
+                <span className="px-4 text-center text-xs font-semibold text-slate-400">No QR uploaded. QR Payment is unavailable to students.</span>
               )}
             </div>
             <div className="w-full space-y-3 text-center sm:text-left">

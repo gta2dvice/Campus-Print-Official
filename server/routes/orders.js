@@ -224,7 +224,7 @@ router.get('/payment-options', async (req, res) => {
     }
 });
 
-// GET /api/orders/payment-options/qr — public: the shop's WhatsApp/UPI QR image (bucket is private)
+// GET /api/orders/payment-options/qr — public: the shop's QR Payment image (bucket is private)
 router.get('/payment-options/qr', async (req, res) => {
     try {
         const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
@@ -733,7 +733,7 @@ router.post('/payment/simulate', upload.array('files', 10), (req, res) =>
 // created right away with a pending payment; the shop admin marks it paid once money arrives.
 const OFFLINE_PAYMENT_METHODS = ['whatsapp', 'none'];
 
-// POST /api/orders/payment/offline — WhatsApp/UPI QR or "pay the shop directly"
+// POST /api/orders/payment/offline — QR Payment ('whatsapp') or "pay the shop directly"
 router.post('/payment/offline', upload.array('files', 10), (req, res) => {
     const method = req.body.paymentMethod;
     if (!OFFLINE_PAYMENT_METHODS.includes(method)) {

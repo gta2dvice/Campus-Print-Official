@@ -148,7 +148,7 @@ router.post('/orders/:id/reject', requireShopAdmin, async (req, res) => {
     }
 });
 
-// Marks a WhatsApp / pay-at-shop order's pending payment as received.
+// Marks a QR / pay-at-shop order's pending payment as received.
 router.post('/orders/:id/mark-paid', requireShopAdmin, async (req, res) => {
     try {
         const order = await Order.getOrderById(req.params.id, req.shopId);
@@ -241,7 +241,7 @@ router.get('/shop-profile/payment-qr', requireShopAdmin, async (req, res) => {
     }
 });
 
-// WhatsApp/UPI payment QR shown to students in the booking flow's payment step.
+// QR Payment image shown to students in the booking flow's payment step.
 router.post('/shop-profile/payment-qr', requireShopAdmin, (req, res, next) => {
     qrUpload.single('qr')(req, res, (err) => {
         if (err) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'QR image must be 5 MB or smaller.' : 'Could not read the uploaded image.' });

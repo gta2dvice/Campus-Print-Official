@@ -50,7 +50,7 @@ const LOCATION_ICONS = {
 };
 const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 
-// Booking step 3. 'whatsapp' and 'none' are settled outside the app (POST /api/orders/payment/offline).
+// Booking step 3. 'whatsapp' (shown as QR Payment) and 'none' are settled outside the app (POST /api/orders/payment/offline).
 const PAYMENT_OPTIONS = [
   {
     id: 'cashfree',
@@ -60,8 +60,8 @@ const PAYMENT_OPTIONS = [
   },
   {
     id: 'whatsapp',
-    name: 'WhatsApp Payment',
-    sub: 'Scan the shop QR with WhatsApp or any UPI app',
+    name: 'QR Payment',
+    sub: 'Scan the shop QR with any UPI app',
     icon: <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></>,
   },
   {
@@ -645,7 +645,7 @@ export default function NewOrder() {
     }
   }
 
-  // WhatsApp/UPI QR and "No Payment": the order is placed now with a pending payment
+  // QR Payment and "No Payment": the order is placed now with a pending payment
   // that the shop marks as paid once the money arrives.
   async function placeOfflineOrder(method) {
     try {
@@ -1277,7 +1277,7 @@ export default function NewOrder() {
                       alt="Shop payment QR code"
                     />
                     <p className="cp-card-sub">
-                      Scan this QR with WhatsApp or any UPI app and pay <strong>₹{p.total}</strong>. Your order is placed when you continue,
+                      Scan this QR with any UPI app and pay <strong>₹{p.total}</strong>. Your order is placed when you continue,
                       and the shop confirms the payment once it's received.
                     </p>
                   </div>
