@@ -37,6 +37,7 @@ export default function Home() {
   useDocumentTitle('Print Campus - Skip Queue');
   const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
+  const [lastTicketToken, setLastTicketToken] = useState('');
   const heroTextRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -56,6 +57,20 @@ export default function Home() {
     selectedLocationName: null,
     selectedTimeSlot: null,
   });
+
+  useEffect(() => {
+    try {
+      const pendingPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
+      if (pendingPayment?.cashfreeOrderId) {
+        navigate(`/new-order?cf_order=${encodeURIComponent(pendingPayment.cashfreeOrderId)}`, { replace: true });
+        return;
+      }
+      const ticketToken = localStorage.getItem('cp_last_ticket') || '';
+      if (/^[a-f0-9]{64}$/i.test(ticketToken)) setLastTicketToken(ticketToken);
+    } catch {
+      localStorage.removeItem('cp_pending_payment');
+    }
+  }, [navigate]);
 
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
@@ -388,6 +403,13 @@ export default function Home() {
                 See Services &amp; Pricing
               </button>
             </div>
+            {lastTicketToken && (
+              <p>
+                <Link className="btn btn-secondary" to={`/ticket?token=${encodeURIComponent(lastTicketToken)}`}>
+                  Recover your last ticket
+                </Link>
+              </p>
+            )}
           </div>
 
           <div className="scroll-arrow" id="scrollArrow" onClick={() => scrollToId('main-content')}>

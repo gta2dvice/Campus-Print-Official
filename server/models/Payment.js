@@ -73,13 +73,13 @@ async function listPayments({ search = '', status = '', shopId = null, dateFrom 
     const [rows] = await pool.query(
         `SELECT p.*, u.email AS customer_email, s.shop_name
          FROM payments p
-         JOIN users u ON u.id = p.user_id
+         LEFT JOIN users u ON u.id = p.user_id
          LEFT JOIN shops s ON s.id = p.shop_id
          ${whereClause} ORDER BY p.created_at DESC LIMIT ? OFFSET ?`,
         [...params, limit, offset]
     );
     const [[{ count }]] = await pool.query(
-        `SELECT COUNT(*) AS count FROM payments p JOIN users u ON u.id = p.user_id ${whereClause}`,
+        `SELECT COUNT(*) AS count FROM payments p LEFT JOIN users u ON u.id = p.user_id ${whereClause}`,
         params
     );
     return { payments: rows, total: count, page, limit };

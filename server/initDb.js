@@ -31,7 +31,29 @@ async function initDb() {
     await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw'`);
     await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_internal_order ON payments (order_id) WHERE gateway_order_id IS NOT NULL`);
     await pool.query(`ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'PAID'`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS ticket_access_token_hash CHAR(64)`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_full_name VARCHAR(255)`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(30)`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_classroom VARCHAR(100)`);
+    await pool.query(`ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL`);
+    await pool.query(`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_user_id_fkey`);
+    await pool.query(
+        `ALTER TABLE orders ADD CONSTRAINT orders_user_id_fkey
+         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL`
+    );
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_ticket_number ON orders (ticket_number) WHERE ticket_number IS NOT NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_ticket_access_token_hash ON orders (ticket_access_token_hash) WHERE ticket_access_token_hash IS NOT NULL`);
+    try {
+        await pool.query(
+            `ALTER TABLE orders ADD CONSTRAINT orders_payment_status_check
+             CHECK (payment_status IN ('PAYMENT_PENDING', 'PAID', 'PAYMENT_FAILED'))`
+        );
+    } catch (error) {
+        if (error.code !== '42710') throw error;
+    }
 
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_PASSWORD;

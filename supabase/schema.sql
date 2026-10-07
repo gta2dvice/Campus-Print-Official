@@ -40,7 +40,7 @@ ALTER TABLE users
 
 CREATE TABLE IF NOT EXISTS orders (
     id                      SERIAL PRIMARY KEY,
-    user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id                 INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
     shop_id                 INTEGER NULL REFERENCES shops(id) ON DELETE SET NULL,
     status                  VARCHAR(20) NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('pending','accepted','printing','ready','completed','rejected','cancelled')),
@@ -55,16 +55,37 @@ CREATE TABLE IF NOT EXISTS orders (
     collection_location_id  VARCHAR(50) NULL,
     collection_location     VARCHAR(100) NULL,
     collection_time         VARCHAR(20) NULL,
+    collection_date         DATE NULL,
     ticket_number           VARCHAR(20) NULL,
     total_pages             INTEGER NULL,
     printing_side           VARCHAR(10) NOT NULL DEFAULT 'single' CHECK (printing_side IN ('single','double')),
+    guest_full_name         VARCHAR(255) NULL,
+    guest_phone             VARCHAR(30) NULL,
+    guest_classroom         VARCHAR(100) NULL,
+    payment_status          VARCHAR(20) NOT NULL DEFAULT 'PAID'
+                            CHECK (payment_status IN ('PAYMENT_PENDING','PAID','PAYMENT_FAILED')),
+    ticket_access_token_hash CHAR(64) NULL,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS collection_date DATE;
+ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_user_id_fkey;
+ALTER TABLE orders
+    ADD CONSTRAINT orders_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'PAID';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ticket_access_token_hash CHAR(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_full_name VARCHAR(255);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(30);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_classroom VARCHAR(100);
 
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at);
 CREATE INDEX IF NOT EXISTS idx_orders_shop_id ON orders (shop_id);
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_ticket_number ON orders (ticket_number) WHERE ticket_number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_ticket_access_token_hash ON orders (ticket_access_token_hash) WHERE ticket_access_token_hash IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS order_files (
     id              SERIAL PRIMARY KEY,
@@ -106,13 +127,12 @@ CREATE INDEX IF NOT EXISTS idx_payments_status ON payments (status);
 
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_internal_order ON payments (order_id) WHERE gateway_order_id IS NOT NULL;
 ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
 
--- Payment options (server/migrate_payment_options.js): shop's QR Payment image,
--- and payment rows for guest orders (no user account).
+-- Payment options: the shop's QR Payment image and payment rows for guest orders.
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_path VARCHAR(500);
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_mime VARCHAR(100);
-ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
 
 INSERT INTO shops (id, shop_name)
 SELECT 1, 'Campus Print'
