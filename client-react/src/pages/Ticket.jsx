@@ -15,6 +15,7 @@ export default function Ticket() {
   const [searchParams] = useSearchParams();
   const ticketToken = searchParams.get('token');
   const orderId = searchParams.get('id');
+  const ticketTokenParam = searchParams.get('token');
   const [order, setOrder] = useState(null);
   const [ticketError, setTicketError] = useState('');
 
@@ -26,11 +27,12 @@ export default function Ticket() {
     let cancelled = false;
     (async () => {
       try {
-        const endpoint = ticketToken
-          ? `/api/orders/ticket/${encodeURIComponent(ticketToken)}`
-          : `/api/orders/${encodeURIComponent(orderId)}`;
-        console.info('[TICKET_LOAD] Fetching ticket:', { secureTokenProvided: Boolean(ticketToken), orderId: ticketToken ? undefined : orderId });
-        const res = await fetch(endpoint, { credentials: 'include' });
+        console.info('[TICKET_LOAD] Fetching ticket:', { orderId });
+        // The ticket is access-controlled: present the signed ticket token when
+        // we have one (fresh order or recovery). Without it, a recovery session
+        // cookie (set after OTP) must authorize the request.
+        const tokenQuery = ticketTokenParam ? `?token=${encodeURIComponent(ticketTokenParam)}` : '';
+        const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}${tokenQuery}`, { credentials: 'include' });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           console.error('[TICKET_LOAD_FAILED]', {
@@ -57,13 +59,7 @@ export default function Ticket() {
       }
     })();
     return () => { cancelled = true; };
-  }, [orderId, ticketToken]);
-
-  function maskPhone(phone) {
-    if (!phone) return '—';
-    if (phone.length < 10) return phone;
-    return `${phone.slice(0, 3)}****${phone.slice(-3)}`;
-  }
+  }, [orderId, ticketTokenParam]);
 
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
 
@@ -152,7 +148,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">PHONE</span>
-                    <span className="info-value">{maskPhone(order?.guest_phone)}</span>
+                    <span className="info-value">{order?.guest_phone || '—'}</span>
                   </div>
                 </div>
 

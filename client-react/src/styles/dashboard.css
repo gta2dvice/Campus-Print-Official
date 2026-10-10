@@ -1526,6 +1526,59 @@
     transform: translateY(-3px);
 }
 
+/* ── Payment cards: reliability badge + explanation (visible, not a tooltip) ── */
+.cp-pay-badge {
+    display: inline-block;
+    margin: 0.1rem 0 0.4rem;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #166534;
+    background: #dcfce7;
+    border: 1px solid #86efac;
+    border-radius: 9999px;
+    white-space: nowrap;
+}
+
+.cp-pay-reliability {
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.35;
+    margin: 0 0 0.35rem;
+}
+
+.cp-pay-reliability--best { color: #15803d; }
+.cp-pay-reliability--mid { color: #1d4ed8; }
+.cp-pay-reliability--manual { color: #b45309; }
+
+.cp-pay-desc {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: #4b5563;
+    margin: 0;
+    max-width: 24ch;
+}
+
+.cp-pay-desc strong { color: #1f2937; }
+
+/* The recommended (Cashfree) card reads as the primary choice, but not oversized. */
+.cp-pay-recommended {
+    border-color: #22c55e;
+    box-shadow: 0 0 0 1.5px rgba(34, 197, 94, 0.45), 0 14px 32px -10px rgba(34, 197, 94, 0.3);
+}
+
+.cp-pay-recommended:hover {
+    border-color: #16a34a;
+    box-shadow: 0 0 0 1.5px rgba(34, 197, 94, 0.55), 0 18px 38px -10px rgba(34, 197, 94, 0.35);
+}
+
+/* Keep the recommended ring from fighting the blue selected ring when chosen. */
+.cp-pay-recommended.is-selected {
+    border-color: #16a34a;
+    box-shadow: 0 16px 40px rgba(34, 197, 94, 0.28), 0 0 0 2px #16a34a;
+}
+
 .cp-card-icon {
     width: 56px;
     height: 56px;
@@ -2192,6 +2245,14 @@
     .cp-loc-status-tag {
         margin-top: 0.4rem;
     }
+
+    /* Payment cards carry more rows than location cards (badge + reliability +
+       description), so the icon's span-3 no longer covers them — keep every text
+       item in the right column and pin the icon top-left to avoid overlap. */
+    .cp-pay-card { align-items: start; }
+    .cp-pay-card > * { grid-column: 2; }
+    .cp-pay-card .cp-card-icon { grid-column: 1; grid-row: 1; align-self: start; }
+    .cp-pay-card .cp-loc-status-tag { margin-top: 0.5rem; }
 
     .cp-loc-card:hover,
     .cp-loc-card.is-selected {

@@ -3,33 +3,32 @@ const pool = require('../db');
 async function createFiles(orderId, files) {
     if (!files || files.length === 0) return [];
     const ids = [];
-    await pool.transaction(async tx => {
-        for (const f of files) {
-            const [result] = await tx.execute(
-                `INSERT INTO order_files (order_id, original_name, stored_name, storage_path, mime_type, size_bytes, printing_side, copies, color_mode)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 RETURNING id`,
-                [
-                    orderId,
-                    f.originalname,
-                    f.storedName || f.filename,
-                    f.storagePath || null,
-                    f.mimetype,
-                    f.size || 0,
-                    f.printingSide || 'single',
-                    f.copies || 1,
-                    f.colorMode || 'bw'
-                ]
-            );
-            ids.push(result.insertId);
-        }
-    });
+    for (const f of files) {
+        const [result] = await pool.execute(
+            `INSERT INTO order_files (order_id, original_name, stored_name, storage_path, mime_type, size_bytes, printing_side, copies, color_mode, file_type, page_count)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                orderId,
+                f.originalname,
+                f.storedName || f.filename,
+                f.storagePath || null,
+                f.mimetype,
+                f.size || 0,
+                f.printingSide || 'single',
+                f.copies || 1,
+                f.colorMode || 'bw',
+                f.fileType || null,
+                f.pageCount || null
+            ]
+        );
+        ids.push(result.insertId);
+    }
     return ids;
 }
 
 async function getFilesByOrder(orderId) {
     const [rows] = await pool.execute(
-        `SELECT id, order_id, original_name, mime_type, size_bytes, created_at, file_deleted_at
+        `SELECT id, order_id, original_name, mime_type, size_bytes, file_type, page_count, printing_side, copies, color_mode, created_at, file_deleted_at
          FROM order_files WHERE order_id = ?`,
         [orderId]
     );
