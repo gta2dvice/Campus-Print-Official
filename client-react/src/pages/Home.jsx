@@ -24,7 +24,32 @@ const STUDENTS = [
   { name: 'Vartika', branch: 'CSE AI-ML', color: '56, 189, 248', review: 'Upload system is smooth and no more long queues.' },
 ];
 
-const ALLOWED_TYPES = ['application/pdf'];
+const ALLOWED_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+];
+const ALLOWED_EXTENSIONS = /\.(pdf|docx|doc|pptx|ppt|xlsx|xls|png|jpg|jpeg)$/i;
+const ACCEPT_ATTR = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png';
+const SUPPORTED_LABEL = 'PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, JPG, PNG';
+
+function isSupportedFile(file) {
+  if (!file) return false;
+  if (file.type && ALLOWED_TYPES.includes(file.type.toLowerCase())) return true;
+  if (file.name && ALLOWED_EXTENSIONS.test(file.name)) return true;
+  return false;
+}
+
+function isImageFile(file) {
+  return (file.type && file.type.startsWith('image/')) || /\.(png|jpg|jpeg)$/i.test(file?.name || '');
+}
 
 function smoothScrollToElement(target) {
   if (!target) return;
@@ -89,15 +114,16 @@ export default function Home() {
         alert('Max 10 files allowed.');
         break;
       }
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        alert(`${file.name}: only PDF files are allowed.`);
+      if (!isSupportedFile(file)) {
+        alert(`${file.name}: unsupported type. Supported: ${SUPPORTED_LABEL}.`);
         continue;
       }
       if (file.size > MAX_FILE_BYTES) {
         alert(`${file.name}: files must be 20 MB or smaller.`);
         continue;
       }
-      const clientPages = await countPdfPagesClient(file);
+      // Images are one page; PDFs get a client-side guess; other docs are counted by the server.
+      const clientPages = isImageFile(file) ? 1 : await countPdfPagesClient(file);
       accepted.push({
         key: Math.random(),
         file,
@@ -371,7 +397,7 @@ export default function Home() {
           <header className="top-nav">
             <nav>
               <Link to="/about" className="nav-link">About Us</Link>
-              <a href="#location-section" className="nav-link" onClick={(e) => { e.preventDefault(); scrollToId('location-section'); }}>Location</a>
+              <Link to="/orders" className="nav-link">Orders</Link>
             </nav>
           </header>
 
@@ -428,7 +454,7 @@ export default function Home() {
                     <span className="detail-icon">📞</span>
                     <div>
                       <strong>Contact</strong>
-                      <p>+91 9457311377<br />kartikedivye@gmail.com</p>
+                      <p>+91 9457311377<br />printcampus@college.edu</p>
                     </div>
                   </div>
                 </div>
@@ -445,7 +471,7 @@ export default function Home() {
                     <div className="pin-pulse"></div>
                   </div>
                   <p className="map-label">Print Campus<br /><span>Main Academic Block</span></p>
-                  <a href="https://maps.app.goo.gl/5xF6EL14PGSuvids6" target="_blank" rel="noreferrer" className="btn btn-primary map-btn">
+                  <a href="https://maps.app.goo.gl/CV2jsxgn5Jkpvqkk7" target="_blank" rel="noreferrer" className="btn btn-primary map-btn">
                     Open in Maps →
                   </a>
                 </div>
@@ -608,15 +634,15 @@ export default function Home() {
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf"
+                    accept={ACCEPT_ATTR}
                     style={{ display: 'none' }}
                     onChange={(e) => { addFiles([...e.target.files]); e.target.value = ''; }}
                   />
                   <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📄</div>
-                  <h3 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0' }}>Upload Your PDFs</h3>
-                  <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1rem' }}>Drag &amp; drop your PDF files here or click to browse</p>
-                  <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>+ Choose PDF Files</button>
-                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>You can upload multiple PDFs</p>
+                  <h3 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0' }}>Upload Your Files</h3>
+                  <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1rem' }}>Drag &amp; drop your files here or click to browse</p>
+                  <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>+ Choose Files</button>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>{SUPPORTED_LABEL}</p>
                 </div>
 
                 {files.length > 0 && (
@@ -641,10 +667,10 @@ export default function Home() {
                       }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
-                            <span style={{ fontSize: '1.2rem' }}>📄</span>
+                            <span style={{ fontSize: '1.2rem' }}>{isImageFile(f.file) ? '🖼️' : '📄'}</span>
                             <div>
                               <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>{f.file.name}</div>
-                              <div style={{ fontSize: '0.8rem', color: '#666' }}>{formatSize(f.file.size)} · {f.pages === null ? 'Detecting...' : `${f.pages} pages`}</div>
+                              <div style={{ fontSize: '0.8rem', color: '#666' }}>{formatSize(f.file.size)} · {f.pages === null ? 'Detecting…' : `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (estimated)' : ''}`}</div>
                             </div>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

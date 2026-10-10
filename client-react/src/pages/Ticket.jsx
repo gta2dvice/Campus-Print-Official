@@ -14,6 +14,7 @@ export default function Ticket() {
   useDocumentTitle('Collection Ticket – Campus Prints');
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get('id');
+  const ticketTokenParam = searchParams.get('token');
   const [order, setOrder] = useState(null);
   const [ticketError, setTicketError] = useState('');
 
@@ -26,7 +27,11 @@ export default function Ticket() {
     (async () => {
       try {
         console.info('[TICKET_LOAD] Fetching ticket:', { orderId });
-        const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { credentials: 'include' });
+        // The ticket is access-controlled: present the signed ticket token when
+        // we have one (fresh order or recovery). Without it, a recovery session
+        // cookie (set after OTP) must authorize the request.
+        const tokenQuery = ticketTokenParam ? `?token=${encodeURIComponent(ticketTokenParam)}` : '';
+        const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}${tokenQuery}`, { credentials: 'include' });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           console.error('[TICKET_LOAD_FAILED]', {
@@ -53,13 +58,7 @@ export default function Ticket() {
       }
     })();
     return () => { cancelled = true; };
-  }, [orderId]);
-
-  function maskPhone(phone) {
-    if (!phone) return '—';
-    if (phone.length < 10) return phone;
-    return `${phone.slice(0, 3)}****${phone.slice(-3)}`;
-  }
+  }, [orderId, ticketTokenParam]);
 
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
 
@@ -148,7 +147,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">PHONE</span>
-                    <span className="info-value">{maskPhone(order?.guest_phone)}</span>
+                    <span className="info-value">{order?.guest_phone || '—'}</span>
                   </div>
                 </div>
 

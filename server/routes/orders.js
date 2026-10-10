@@ -7,11 +7,75 @@ const Payment = require('../models/Payment');
 const Shop = require('../models/Shop');
 const { upload } = require('../middleware/upload');
 const { detectPages } = require('../pageDetect');
+const fileTypes = require('../fileTypes');
+const upiQr = require('../upiQr');
+
+// Pay via UPI QR: how long a generated QR stays valid before the user must refresh.
+const UPI_QR_TTL_MS = 15 * 60 * 1000;
 const slots = require('../slots');
 const pool = require('../db');
 const { uploadBuffer, buildObjectPath, downloadFile } = require('../storage');
 const cashfree = require('../cashfree');
 const { requireProfile } = require('../middleware/roleAuth');
+const { sendStoredFile } = require('../sendStoredFile');
+const ticketToken = require('../ticketToken');
+const RecoveryOtp = require('../models/RecoveryOtp');
+const otpService = require('../services/otp');
+const { normalizePhone, maskPhone } = require('../phone');
+const { rateLimit } = require('../middleware/rateLimit');
+const {
+    establishRecoverySession,
+    requireRecoverySession,
+    isAuthorizedForOrder
+} = require('../middleware/recoveryAuth');
+
+// ── Rate limiters for recovery / ticket / document endpoints ────────────────
+const WINDOW_15_MIN = 15 * 60 * 1000;
+const lookupLimiter = rateLimit({ prefix: 'rec-lookup', windowMs: WINDOW_15_MIN, max: 5, key: (req) => normalizePhone(req.body?.phone) || '' });
+const verifyLimiter = rateLimit({ prefix: 'rec-verify', windowMs: WINDOW_15_MIN, max: 10, key: (req) => normalizePhone(req.body?.phone) || '' });
+const historyLimiter = rateLimit({ prefix: 'rec-history', windowMs: WINDOW_15_MIN, max: 60 });
+const ticketLimiter = rateLimit({ prefix: 'rec-ticket', windowMs: WINDOW_15_MIN, max: 120 });
+const documentLimiter = rateLimit({ prefix: 'rec-doc', windowMs: WINDOW_15_MIN, max: 120 });
+// Higher cap: the UPI QR screen polls payment-status ~every 5s while waiting.
+const pollLimiter = rateLimit({ prefix: 'poll-status', windowMs: WINDOW_15_MIN, max: 240 });
+
+// Maps the internal payment row status to a UI-facing label.
+function paymentStatusLabel(status) {
+    switch (String(status || '').toLowerCase()) {
+        case 'success': return 'PAID';
+        case 'pending': return 'PENDING';
+        case 'failed': return 'FAILED';
+        case 'refunded': return 'REFUNDED';
+        default: return 'PENDING';
+    }
+}
+
+// Ticket is collectable once the shop has it ready/completed.
+function ticketStatusLabel(orderStatus) {
+    return ['ready', 'completed'].includes(String(orderStatus || '').toLowerCase()) ? 'READY' : 'GENERATING';
+}
+
+// Safe, recovery-facing view of an order. No credentials, no internal-only fields,
+// no raw files. Includes a per-order ticket token so "View Ticket" works without
+// re-verifying OTP. Phone is intentionally omitted here (masked where needed).
+function toRecoveryOrderSummary(order) {
+    const paymentStatus = paymentStatusLabel(order.payment_status);
+    return {
+        ticketId: order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`,
+        orderId: order.id,
+        paymentStatus,
+        orderStatus: String(order.status || '').toUpperCase(),
+        ticketStatus: ticketStatusLabel(order.status),
+        collectionLocation: order.collection_location || null,
+        collectionTime: order.collection_time || null,
+        collectionDate: order.collection_date || null,
+        amount: Number(order.total_price) || 0,
+        fileCount: order.file_count || 0,
+        createdAt: order.created_at,
+        // Only hand back a ticket token for orders that actually have a confirmed ticket.
+        ticketToken: paymentStatus === 'PAID' ? ticketToken.sign(order.id) : null
+    };
+}
 
 // In-memory upload just for page-count detection — nothing here touches disk.
 const detectUpload = multer({
@@ -93,26 +157,93 @@ function filePrintingCost(f) {
     return pages * copies * PRICING.single;
 }
 
-function calculateTotalPrice(data) {
-    const fileSettings = data.fileSettings ? JSON.parse(data.fileSettings) : [];
+// Upper bound on a user-declared page count (for file types we can't count
+// server-side) so a tampered/huge value can't produce an absurd charge.
+const MAX_DECLARED_PAGES = 2000;
+
+// Sums the trusted amount from SERVER-RESOLVED files. Rates and the
+// service/delivery rules are unchanged from the previous implementation.
+function priceResolved(resolvedFiles, { collectionLocationId, classroomDelivery }) {
+    if (!resolvedFiles || resolvedFiles.length === 0) return 0;
     let printingCost = 0;
-
-    if (fileSettings.length > 0) {
-        fileSettings.forEach(f => {
-            printingCost += filePrintingCost(f);
-        });
-    } else {
-        return 0; // No files, no cost
-    }
-
+    for (const f of resolvedFiles) printingCost += filePrintingCost(f);
     const serviceCharge = PRICING.serviceCharge;
     let deliveryCharge = 0;
-    if (data.collectionLocationId === 'hostel-gate') {
+    if (collectionLocationId === 'hostel-gate') {
         deliveryCharge = PRICING.hostelSurcharge;
-    } else if (data.classroomDelivery === 'true' || data.classroomDelivery === true) {
+    } else if (classroomDelivery === 'true' || classroomDelivery === true) {
         deliveryCharge = PRICING.classroomDelivery;
     }
     return printingCost + serviceCharge + deliveryCharge;
+}
+
+/**
+ * The single source of truth for amount + per-file data. Validates each
+ * uploaded file's type (extension + magic bytes), derives the page count from
+ * the actual bytes where reliable, and — only for types with no reliable
+ * server-side count — falls back to the user-declared count (clamped ≥1), which
+ * the shop confirms at processing. The frontend NEVER dictates the amount.
+ *
+ * Throws an Error with .code / .httpStatus for an invalid upload.
+ * Returns { resolved, amount }.
+ */
+async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocationId, classroomDelivery }) {
+    if (!files || files.length === 0) {
+        const e = new Error('Please upload at least one file to continue.');
+        e.code = 'NO_FILES'; e.httpStatus = 400; throw e;
+    }
+    let settings = [];
+    try {
+        settings = fileSettingsRaw
+            ? (typeof fileSettingsRaw === 'string' ? JSON.parse(fileSettingsRaw) : fileSettingsRaw)
+            : [];
+    } catch {
+        settings = [];
+    }
+
+    const resolved = [];
+    for (const [idx, file] of files.entries()) {
+        const type = fileTypes.resolveFileType(file.originalname, file.mimetype);
+        if (!type) {
+            const e = new Error(`Unsupported file type: ${file.originalname}`);
+            e.code = 'UNSUPPORTED_FILE_TYPE'; e.httpStatus = 400; throw e;
+        }
+        if (!fileTypes.validateMagic(file.buffer, type.family)) {
+            const e = new Error(`${file.originalname} does not look like a valid ${type.label} file.`);
+            e.code = 'FILE_CONTENT_MISMATCH'; e.httpStatus = 400; throw e;
+        }
+
+        const det = await detectPages(file);
+        const setting = settings[idx] || {};
+        let pages;
+        let estimated;
+        if (!det.estimated && det.pages >= 1) {
+            // Reliable server-side count — ignore any client-sent page value.
+            pages = det.pages;
+            estimated = false;
+        } else {
+            // No reliable count: use the user-declared count, clamped to a sane range.
+            const declared = parseInt(setting.pages, 10);
+            pages = Math.max(1, Math.min(MAX_DECLARED_PAGES, Number.isFinite(declared) ? declared : 1));
+            estimated = true;
+        }
+
+        resolved.push({
+            file,
+            originalname: file.originalname,
+            mimetype: type.mime,
+            size: file.size,
+            fileType: type.label,
+            pages,
+            estimated,
+            copies: Math.max(1, parseInt(setting.copies, 10) || 1),
+            printingSide: setting.printingSide === 'double' ? 'double' : 'single',
+            colorMode: setting.colorMode === 'color' ? 'color' : 'bw'
+        });
+    }
+
+    const amount = priceResolved(resolved, { collectionLocationId, classroomDelivery });
+    return { resolved, amount };
 }
 
 // @route  GET /api/orders/config
@@ -214,6 +345,7 @@ router.get('/payment-options', async (req, res) => {
         const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
         res.json({
             phone: shop?.phone || null,
+            upi: shop?.payment_upi || null,
             hasQr: !!shop?.payment_qr_path,
             // Path changes on every upload, so it doubles as a cache-buster for the image URL.
             qrVersion: shop?.payment_qr_path ? encodeURIComponent(shop.payment_qr_path.split('/').pop()) : null
@@ -239,8 +371,85 @@ router.get('/payment-options/qr', async (req, res) => {
     }
 });
 
-// GET /api/orders/:id — single order, owner-only (used by the collection ticket page)
-router.get('/:id', async (req, res) => {
+// ── Guest order recovery (phone → OTP → recovery session) ───────────────────
+// These are declared before GET '/:id' so '/lookup', '/verify-recovery' and
+// '/history' are never swallowed by the ':id' route.
+
+// POST /api/orders/lookup — start recovery: validate phone, issue an OTP.
+// Always responds generically; it never reveals whether orders exist for a phone.
+router.post('/lookup', lookupLimiter, async (req, res) => {
+    try {
+        const phone = normalizePhone(req.body?.phone);
+        if (!phone) {
+            return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.', code: 'INVALID_PHONE' });
+        }
+
+        const otp = await RecoveryOtp.createOtp(phone);
+        const { devOtp } = await otpService.sendOtp(phone, otp);
+        RecoveryOtp.cleanupExpired().catch(() => {});
+
+        const response = {
+            message: 'If this number has placed orders, a verification code has been sent.',
+            phoneMasked: maskPhone(phone),
+            // The OTP is echoed back ONLY outside production (no SMS provider wired yet).
+            otpDeliveryConfigured: !otpService.isProduction()
+        };
+        if (devOtp) {
+            response.devOtp = devOtp;
+            response.devNote = 'Development mode: OTP shown for testing only. Never returned in production.';
+        }
+        return res.json(response);
+    } catch (err) {
+        console.error('[RECOVERY_LOOKUP_FAILED]', err.message);
+        return res.status(500).json({ message: 'Unable to start recovery right now. Please retry.' });
+    }
+});
+
+// POST /api/orders/verify-recovery — verify OTP, open a short-lived recovery session.
+router.post('/verify-recovery', verifyLimiter, async (req, res) => {
+    try {
+        const phone = normalizePhone(req.body?.phone);
+        const otp = String(req.body?.otp || '').trim();
+        if (!phone) {
+            return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.', code: 'INVALID_PHONE' });
+        }
+        if (!/^[0-9]{6}$/.test(otp)) {
+            return res.status(400).json({ message: 'Enter the 6-digit verification code.', code: 'INVALID_OTP' });
+        }
+
+        const result = await RecoveryOtp.verifyOtp(phone, otp);
+        if (!result.ok) {
+            const msg = result.reason === 'locked'
+                ? 'Too many incorrect attempts. Request a new code.'
+                : 'That code is invalid or has expired. Please try again.';
+            return res.status(400).json({ message: msg, code: 'OTP_VERIFICATION_FAILED' });
+        }
+
+        establishRecoverySession(req, phone);
+        return res.json({ verified: true, phoneMasked: maskPhone(phone) });
+    } catch (err) {
+        console.error('[RECOVERY_VERIFY_FAILED]', err.message);
+        return res.status(500).json({ message: 'Unable to verify right now. Please retry.' });
+    }
+});
+
+// GET /api/orders/history — orders for the verified recovery session's phone.
+router.get('/history', historyLimiter, requireRecoverySession, async (req, res) => {
+    try {
+        const orders = await Order.getGuestOrdersByPhone(req.recoveryPhone);
+        return res.json({
+            phoneMasked: maskPhone(req.recoveryPhone),
+            orders: orders.map(toRecoveryOrderSummary)
+        });
+    } catch (err) {
+        console.error('[RECOVERY_HISTORY_FAILED]', err.message);
+        return res.status(500).json({ message: 'Unable to load your orders right now. Please retry.' });
+    }
+});
+
+// GET /api/orders/:id — single order ticket. Requires recovery session (matching
+// guest_phone), a valid ticket token for this order, or account ownership.
+router.get('/:id', ticketLimiter, async (req, res) => {
     let stage = 'order_lookup';
     console.info('[TICKET_LOAD] Ticket lookup started:', { orderId: req.params.id });
     try {
@@ -256,9 +465,13 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
         }
 
-        // If it's a guest order, we show it. If it's a user order, we check session.
-        if (order.user_id && req.session && req.session.userId !== order.user_id) {
-            return res.status(403).json({ message: 'Not authorized to view this order' });
+        // A bare order id is never sufficient: require token / recovery session / ownership.
+        if (!isAuthorizedForOrder(req, order)) {
+            console.warn('[TICKET_LOAD_DENIED]', { orderId: req.params.id, status: 403 });
+            return res.status(403).json({
+                message: 'This ticket link is no longer valid. Recover your order from the Orders page.',
+                code: 'TICKET_NOT_AUTHORIZED'
+            });
         }
 
         stage = 'payment_lookup';
@@ -270,7 +483,8 @@ router.get('/:id', async (req, res) => {
             orderId: req.params.id,
             paymentRecordPresent: Boolean(payment)
         });
-        res.json({ ...order, payment: payment || null });
+        // Never ship the full phone number to the client; the ticket shows a mask.
+        res.json({ ...order, guest_phone: maskPhone(order.guest_phone), payment: payment || null });
     } catch (err) {
         const safeError = safeOrderError(err);
         console.error('[TICKET_LOAD_FAILED]', {
@@ -286,6 +500,101 @@ router.get('/:id', async (req, res) => {
     }
 });
 
+// GET /api/orders/:id/payment-status — recovery-authorized payment reconcile.
+// Reads the DB (source of truth updated by the Cashfree webhook) and, if still
+// pending with a gateway order id, does a READ-ONLY Cashfree re-check (same
+// sandbox/production config as everywhere else — no new/ production requests,
+// no order creation). Never flips a payment to failed from the frontend's view.
+router.get('/:id/payment-status', pollLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
+        if (!isAuthorizedForOrder(req, order)) {
+            return res.status(403).json({ message: 'Not authorized for this order.', code: 'TICKET_NOT_AUTHORIZED' });
+        }
+
+        let payment = await Payment.findByOrderId(order.id);
+        if (payment && payment.status === 'pending' && payment.gateway_order_id && paymentGatewayReady()) {
+            try {
+                const cfOrder = await cashfree.fetchOrder(payment.gateway_order_id);
+                if (cashfree.isOrderPaid(cfOrder)) {
+                    payment = await Payment.updateByGatewayOrderId(payment.gateway_order_id, { status: 'success' });
+                }
+            } catch (reconcileErr) {
+                // Non-fatal: fall back to the stored status. Do NOT mark failed here.
+                console.warn('[PAYMENT_STATUS_RECONCILE]', safeOrderError(reconcileErr).message);
+            }
+        }
+
+        // A still-pending UPI QR whose QR window has lapsed is reported EXPIRED (the
+        // DB row stays 'pending' so the order remains payable via a refreshed QR).
+        let paymentStatus = paymentStatusLabel(payment?.status);
+        if (payment && payment.status === 'pending' && payment.qr_expires_at
+            && new Date(payment.qr_expires_at).getTime() < Date.now()) {
+            paymentStatus = 'EXPIRED';
+        }
+
+        return res.json({
+            orderId: order.id,
+            ticketId: order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`,
+            paymentStatus,
+            paymentReference: payment?.payment_reference || null,
+            ticketStatus: ticketStatusLabel(order.status),
+            ticketToken: payment && payment.status === 'success' ? ticketToken.sign(order.id) : null
+        });
+    } catch (err) {
+        console.error('[PAYMENT_STATUS_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Unable to check payment status right now. Please retry.' });
+    }
+});
+
+// GET /api/orders/:id/documents — authorized document list (metadata only, no binaries).
+router.get('/:id/documents', documentLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
+        if (!isAuthorizedForOrder(req, order)) {
+            return res.status(403).json({ message: 'Not authorized for this order.', code: 'TICKET_NOT_AUTHORIZED' });
+        }
+
+        const files = await OrderFile.getFilesByOrder(order.id);
+        const documents = files.map(f => ({
+            fileId: f.id,
+            name: f.original_name,
+            sizeBytes: f.size_bytes,
+            // Uploaded PDFs are purged after 24h; surface that instead of a dead link.
+            expired: Boolean(f.file_deleted_at),
+            createdAt: f.created_at
+        }));
+        return res.json({ orderId: order.id, documents });
+    } catch (err) {
+        console.error('[DOCUMENTS_LIST_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Unable to load documents right now. Please retry.' });
+    }
+});
+
+// GET /api/orders/:id/documents/:fileId — stream one document, authorized for THIS order.
+// Changing :id or :fileId to another order's values fails authorization / ownership.
+router.get('/:id/documents/:fileId', documentLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
+        if (!isAuthorizedForOrder(req, order)) {
+            return res.status(403).json({ message: 'Not authorized for this order.', code: 'TICKET_NOT_AUTHORIZED' });
+        }
+
+        const file = await OrderFile.getFileById(req.params.fileId);
+        // The file must belong to this exact order — blocks IDOR via a mismatched file id.
+        if (!file || String(file.order_id) !== String(order.id)) {
+            return res.status(404).json({ message: 'File not found', code: 'FILE_NOT_FOUND' });
+        }
+        return await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
+    } catch (err) {
+        console.error('[DOCUMENT_FETCH_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Unable to load this document right now. Please retry.' });
+    }
+});
+
 // POST /api/orders/detect-pages — auto-detects page count per uploaded file (PDF/DOCX get a
 // real count; images are always 1; anything else falls back to a flagged 1-page estimate).
 router.post('/detect-pages', detectUpload.array('files', 10), async (req, res) => {
@@ -295,8 +604,21 @@ router.post('/detect-pages', detectUpload.array('files', 10), async (req, res) =
             return res.status(400).json({ message: 'No files uploaded for page detection.' });
         }
         const results = await Promise.all(files.map(async (f) => {
+            const type = fileTypes.resolveFileType(f.originalname, f.mimetype);
+            if (!type || !fileTypes.validateMagic(f.buffer, type.family)) {
+                return { name: f.originalname, fileType: null, mimeType: f.mimetype, pages: null, estimated: true, unsupported: true };
+            }
             const { pages, estimated } = await detectPages(f);
-            return { name: f.originalname, pages, estimated };
+            // For estimated types (no reliable server count) the UI shows an
+            // editable page-count field; `estimated` drives that, `pages` is the
+            // ≥1 starting value.
+            return {
+                name: f.originalname,
+                fileType: type.label,
+                mimeType: type.mime,
+                pages,
+                estimated
+            };
         }));
         res.json({ files: results });
     } catch (err) {
@@ -319,52 +641,45 @@ router.get('/', async (req, res) => {
     }
 });
 
-async function persistUploadedFiles(userId, orderId, files, fileSettings, onStage = () => {}) {
-    const stored = [];
-    const settingsMap = fileSettings ? JSON.parse(fileSettings) : [];
+// Persists the SERVER-RESOLVED files (from resolveAndPriceFiles): uploads each
+// buffer under a generated path and stores its authoritative type + page count.
+async function persistUploadedFiles(userId, orderId, resolvedFiles, onStage = () => {}) {
+    const finalFiles = [];
 
-    for (const [index, file] of files.entries()) {
-        const { storedName, storagePath } = buildObjectPath(userId, orderId, file.originalname);
+    for (const [index, rf] of resolvedFiles.entries()) {
+        const { storedName, storagePath } = buildObjectPath(userId, orderId, rf.originalname);
         onStage('file_storage_upload');
         console.info('[ORDER_CREATE] File storage upload started:', {
             orderId,
             fileIndex: index + 1,
-            fileCount: files.length,
-            sizeBytes: file.size
+            fileCount: resolvedFiles.length,
+            sizeBytes: rf.size
         });
         await uploadBuffer({
             storagePath,
-            buffer: file.buffer,
-            contentType: file.mimetype
+            buffer: rf.file.buffer,
+            contentType: rf.mimetype
         });
         console.info('[ORDER_CREATE] File storage upload completed:', {
             orderId,
             fileIndex: index + 1,
-            fileCount: files.length
+            fileCount: resolvedFiles.length
         });
 
-        // Find matching settings for this file
-        // Note: files array from multer doesn't have keys, but we can match by order/index
-        // Actually, it's better to pass settings indexed by the order they come in.
-        stored.push({
-            originalname: file.originalname,
+        finalFiles.push({
+            originalname: rf.originalname,
             storedName,
             storagePath,
-            mimetype: file.mimetype,
-            size: file.size
+            mimetype: rf.mimetype,
+            size: rf.size,
+            fileType: rf.fileType,
+            pageCount: rf.pages,
+            printingSide: rf.printingSide,
+            copies: rf.copies,
+            colorMode: rf.colorMode
         });
     }
-    // This needs refinement to link settings to files.
-    // Since multer.array('files') preserves order, we can zip them.
-    const finalFiles = stored.map((s, idx) => {
-        const setting = settingsMap[idx] || {};
-        return {
-            ...s,
-            printingSide: setting.printingSide || 'single',
-            copies: setting.copies || 1,
-            colorMode: setting.colorMode || 'bw'
-        };
-    });
+
     onStage('file_metadata_insert');
     console.info('[ORDER_CREATE] File metadata insert started:', {
         orderId,
@@ -396,7 +711,9 @@ function readOrderPayload(body) {
 }
 
 // POST /api/orders/payment/create — creates a Cashfree order and returns a payment session.
-router.post('/payment/create', async (req, res) => {
+// Multipart: the actual files are sent so the backend can derive the trusted
+// amount from their real content (never from a client-supplied price).
+router.post('/payment/create', upload.array('files', 10), async (req, res) => {
     let stage = 'gateway_configuration';
     const body = req.body || {};
     let fileSettingsCount = null;
@@ -446,14 +763,23 @@ router.post('/payment/create', async (req, res) => {
 
     try {
         stage = 'request_validation';
-        // Server-side price calculation
-        const orderData = {
-            fileSettings: req.body.fileSettings,
-            printingSide: req.body.printingSide,
-            totalPages: req.body.totalPages,
-            collectionLocationId: req.body.collectionLocationId
-        };
-        const verifiedAmount = calculateTotalPrice(orderData);
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ message: 'Please upload at least one file to continue.', code: 'NO_FILES' });
+        }
+        // Trusted, content-derived amount. Page counts come from the actual file
+        // bytes (or a user-declared count for types we can't count); the
+        // client-sent totalPrice is ignored entirely.
+        let verifiedAmount;
+        try {
+            const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+                collectionLocationId: req.body.collectionLocationId,
+                classroomDelivery: req.body.classroomDelivery
+            });
+            verifiedAmount = priced.amount;
+        } catch (resolveErr) {
+            console.error('[PAYMENT_CREATE_FAILED]', { stage, code: resolveErr.code || 'FILE_VALIDATION_FAILED', message: resolveErr.message });
+            return res.status(resolveErr.httpStatus || 400).json({ message: resolveErr.message, code: resolveErr.code || 'FILE_VALIDATION_FAILED' });
+        }
 
         if (!verifiedAmount || verifiedAmount <= 0) {
             console.error('[PAYMENT_CREATE_FAILED]', {
@@ -701,24 +1027,30 @@ async function createGuestOrder(req, res, payment) {
         const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
         if (pickupErr) return res.status(400).json({ message: pickupErr });
 
-        // Server-side price calculation to prevent tampering
-        const verifiedPrice = calculateTotalPrice({
-            ...data,
-            fileSettings: req.body.fileSettings
-        });
-        data.totalPrice = verifiedPrice;
+        // Server-side, content-derived price + resolved files (ignores any client price).
+        let resolved;
+        try {
+            const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+                collectionLocationId: data.collectionLocationId,
+                classroomDelivery: req.body.classroomDelivery
+            });
+            resolved = priced.resolved;
+            data.totalPrice = priced.amount;
+        } catch (resolveErr) {
+            return res.status(resolveErr.httpStatus || 400).json({ message: resolveErr.message, code: resolveErr.code || 'FILE_VALIDATION_FAILED' });
+        }
 
-        data.fileCount = req.files.length;
+        data.fileCount = resolved.length;
         data.guestFullName = fullName;
         data.guestPhone = phone;
         data.guestClassroom = classroom;
 
         const userId = req.session?.userId || null;
         const order = await Order.createOrder(userId, DEFAULT_SHOP_ID, data);
-        await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings);
+        await persistUploadedFiles(userId, order.id, resolved);
         await Payment.createForOrder(order.id, userId, DEFAULT_SHOP_ID, data.totalPrice || 0, payment.method, payment.transactionRef, { status: payment.status });
 
-        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber });
+        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber, ticketToken: ticketToken.sign(order.id) });
     } catch (err) {
         console.error(`${payment.method} order error:`, err);
         res.status(500).json({ message: 'Server Error' });
@@ -731,15 +1063,169 @@ router.post('/payment/simulate', upload.array('files', 10), (req, res) =>
 
 // Payment methods chosen in the booking flow that are settled outside the app. The order is
 // created right away with a pending payment; the shop admin marks it paid once money arrives.
-const OFFLINE_PAYMENT_METHODS = ['whatsapp', 'none'];
+// Note: 'none' is intentionally NOT here — that option is now the Personal WhatsApp flow, a
+// manual order handled entirely over chat that must never create an order/ticket here.
+const OFFLINE_PAYMENT_METHODS = ['whatsapp'];
 
-// POST /api/orders/payment/offline — QR Payment ('whatsapp') or "pay the shop directly"
+// POST /api/orders/payment/offline — QR Payment ('whatsapp'); settled outside the app
 router.post('/payment/offline', upload.array('files', 10), (req, res) => {
     const method = req.body.paymentMethod;
     if (!OFFLINE_PAYMENT_METHODS.includes(method)) {
         return res.status(400).json({ message: 'Unknown payment method.' });
     }
     return createGuestOrder(req, res, { method, transactionRef: null, status: 'pending' });
+});
+
+// Shared validation for a guest order submission (files + customer fields + pickup).
+// Returns { data, resolved, amount } or sends an error response and returns null.
+async function validateAndPriceGuestSubmission(req, res) {
+    if (!req.files || req.files.length === 0) {
+        res.status(400).json({ message: 'Please upload at least one file to continue.' });
+        return null;
+    }
+    if (!req.body.fileSettings) {
+        res.status(400).json({ message: 'Please configure printing settings for all files.' });
+        return null;
+    }
+    const { fullName, phone, classroom, batch, classSection } = req.body;
+    if (!fullName || !phone || !classroom || !classroom.trim()) {
+        res.status(400).json({ message: 'Full Name, Phone, and Classroom/Room Number are required.' });
+        return null;
+    }
+    if (!/^[6-9][0-9]{9}$/.test(phone)) {
+        res.status(400).json({ message: 'Enter a valid 10-digit mobile number.' });
+        return null;
+    }
+    if (classroom.trim().length < 2) {
+        res.status(400).json({ message: 'Please enter a valid classroom/room number.' });
+        return null;
+    }
+    if (batch && !/^[0-9]{4}-[0-9]{4}$/.test(batch)) {
+        res.status(400).json({ message: 'Enter batch in YYYY-YYYY format (e.g. 2024-2028).' });
+        return null;
+    }
+    if (classSection && /^\d+$/.test(classSection)) {
+        res.status(400).json({ message: 'Enter a valid class/section (e.g. CSE-A).' });
+        return null;
+    }
+
+    const data = readOrderPayload(req.body);
+    const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
+    if (pickupErr) { res.status(400).json({ message: pickupErr }); return null; }
+
+    let resolved;
+    let amount;
+    try {
+        const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+            collectionLocationId: data.collectionLocationId,
+            classroomDelivery: req.body.classroomDelivery
+        });
+        resolved = priced.resolved;
+        amount = priced.amount;
+    } catch (e) {
+        res.status(e.httpStatus || 400).json({ message: e.message, code: e.code || 'FILE_VALIDATION_FAILED' });
+        return null;
+    }
+    if (!amount || amount <= 0) { res.status(400).json({ message: 'Invalid order amount' }); return null; }
+
+    data.totalPrice = amount;
+    data.fileCount = resolved.length;
+    data.guestFullName = fullName;
+    data.guestPhone = phone;
+    data.guestClassroom = classroom;
+    return { data, resolved, amount };
+}
+
+// POST /api/orders/payment/upi-qr — Pay via UPI QR (order-first, manual verification).
+// Creates the order PENDING, persists a secure payment reference, and returns a dynamic
+// UPI QR encoding the DB amount + reference. It NEVER marks the order paid — confirmation
+// is manual (a shop admin marks it paid once the UPI transfer is verified).
+router.post('/payment/upi-qr', upload.array('files', 10), async (req, res) => {
+    try {
+        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
+        if (!shop?.payment_upi) {
+            return res.status(503).json({ message: 'UPI payments are not set up. Please choose another method.', code: 'UPI_NOT_CONFIGURED' });
+        }
+
+        const validated = await validateAndPriceGuestSubmission(req, res);
+        if (!validated) return undefined; // response already sent
+        const { data, resolved, amount } = validated;
+
+        const userId = req.session?.userId || null;
+        const order = await Order.createOrder(userId, DEFAULT_SHOP_ID, data);
+        await persistUploadedFiles(userId, order.id, resolved);
+
+        const reference = upiQr.generatePaymentReference(order.id);
+        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
+        await Payment.createForOrder(order.id, userId, DEFAULT_SHOP_ID, amount, 'upi_qr', reference, {
+            status: 'pending', paymentReference: reference, qrExpiresAt
+        });
+
+        const upiUrl = upiQr.buildUpiUri({
+            vpa: shop.payment_upi,
+            payeeName: shop.shop_name || 'Campus Print',
+            amount,
+            reference,
+            note: `Campus Print ${order.ticketNumber}`
+        });
+        const qrDataUrl = await upiQr.generateQrDataUrl(upiUrl);
+
+        return res.status(201).json({
+            success: true,
+            id: order.id,
+            orderId: order.ticketNumber,
+            ticketNumber: order.ticketNumber,
+            amount,
+            paymentReference: reference,
+            qrDataUrl,
+            upiUrl,
+            expiresAt: qrExpiresAt.toISOString(),
+            ticketToken: ticketToken.sign(order.id)
+        });
+    } catch (err) {
+        const safe = safeOrderError(err);
+        console.error('[UPI_QR_CREATE_FAILED]', safe.message);
+        return res.status(500).json({ message: 'Could not start UPI payment. Please retry.', code: safe.code });
+    }
+});
+
+// POST /api/orders/payment/upi-qr/:id/refresh — regenerate the QR for an existing unpaid
+// order (same order + reference; never creates a new order). Authorized by ticket token / session.
+router.post('/payment/upi-qr/:id/refresh', ticketLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
+        if (!isAuthorizedForOrder(req, order)) {
+            return res.status(403).json({ message: 'Not authorized for this order.', code: 'TICKET_NOT_AUTHORIZED' });
+        }
+        const payment = await Payment.findByOrderId(order.id);
+        if (!payment || payment.method !== 'upi_qr') {
+            return res.status(400).json({ message: 'No UPI payment for this order.' });
+        }
+        if (payment.status === 'success') {
+            return res.status(409).json({ message: 'This order is already paid.', code: 'ALREADY_PAID' });
+        }
+        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
+        if (!shop?.payment_upi) {
+            return res.status(503).json({ message: 'UPI payments are not set up.', code: 'UPI_NOT_CONFIGURED' });
+        }
+
+        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
+        await Payment.refreshQrExpiry(order.id, qrExpiresAt);
+        const reference = payment.payment_reference;
+        const upiUrl = upiQr.buildUpiUri({
+            vpa: shop.payment_upi,
+            payeeName: shop.shop_name || 'Campus Print',
+            amount: Number(payment.amount),
+            reference,
+            note: `Campus Print ${order.ticket_number || order.id}`
+        });
+        const qrDataUrl = await upiQr.generateQrDataUrl(upiUrl);
+        return res.json({ success: true, amount: Number(payment.amount), paymentReference: reference, qrDataUrl, upiUrl, expiresAt: qrExpiresAt.toISOString() });
+    } catch (err) {
+        console.error('[UPI_QR_REFRESH_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Could not refresh the QR. Please retry.' });
+    }
 });
 
 // POST /api/orders/payment/verify — confirms Cashfree order status, then creates the print order.
@@ -850,7 +1336,7 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
                     cashfreeOrderId,
                     orderId: prior.id
                 });
-                return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number });
+                return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number, ticketToken: ticketToken.sign(prior.id) });
             }
             return res.status(409).json({ message: 'This payment is already linked to an order.' });
         }
@@ -877,16 +1363,24 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
         const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
         if (pickupErr) return res.status(400).json({ message: pickupErr });
 
-        // Final amount verification before creating the order
-        const expectedPrice = calculateTotalPrice({
-            ...data,
-            fileSettings: req.body.fileSettings
-        });
+        // Re-derive the trusted amount from the actual uploaded files and confirm
+        // the amount Cashfree collected matches it. The client-sent price is never trusted.
+        let resolved;
+        let expectedPrice;
+        try {
+            const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+                collectionLocationId: data.collectionLocationId,
+                classroomDelivery: req.body.classroomDelivery
+            });
+            resolved = priced.resolved;
+            expectedPrice = priced.amount;
+        } catch (resolveErr) {
+            return res.status(resolveErr.httpStatus || 400).json({ message: resolveErr.message, code: resolveErr.code || 'FILE_VALIDATION_FAILED' });
+        }
+        data.totalPrice = expectedPrice;
+        data.fileCount = resolved.length;
         if (!cashfree.amountsMatch(cfOrder.order_amount, expectedPrice)) {
             return res.status(400).json({ message: 'Payment amount does not match the order requirements.' });
-        }
-        if (!cashfree.amountsMatch(cfOrder.order_amount, data.totalPrice)) {
-            return res.status(400).json({ message: 'Payment amount does not match this order.' });
         }
 
         const userId = req.session?.userId || null;
@@ -904,7 +1398,7 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
         });
 
         verificationStage = 'ticket_file_persistence';
-        await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings, stage => {
+        await persistUploadedFiles(userId, order.id, resolved, stage => {
             verificationStage = stage;
         });
         const paymentId = cfOrder.cf_payment_id || cfOrder.order_id || cashfreeOrderId;
@@ -933,7 +1427,7 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
             orderId: order.id,
             ticketNumberPresent: Boolean(order.ticketNumber)
         });
-        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber });
+        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber, ticketToken: ticketToken.sign(order.id) });
     } catch (err) {
         if (err.code === '23505' && cashfreeOrderId) {
             try {
@@ -945,7 +1439,7 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
                             cashfreeOrderId,
                             orderId: prior.id
                         });
-                        return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number });
+                        return res.status(200).json({ id: prior.id, ticketNumber: prior.ticket_number, ticketToken: ticketToken.sign(prior.id) });
                     }
                 }
             } catch (recoveryError) {

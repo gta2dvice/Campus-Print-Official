@@ -68,6 +68,29 @@ async function getOrdersByUser(userId) {
     return rows;
 }
 
+// Guest order recovery: all orders for a normalized phone, newest first, each
+// with its latest payment status. Primary key stays orders.id; guest_phone is
+// only an indexed lookup field (one phone → many orders).
+async function getGuestOrdersByPhone(phone) {
+    const [rows] = await pool.execute(
+        `SELECT o.*,
+                pay.status          AS payment_status,
+                pay.method          AS payment_method,
+                pay.transaction_ref AS payment_ref,
+                pay.gateway_order_id AS payment_gateway_order_id
+         FROM orders o
+         LEFT JOIN LATERAL (
+             SELECT status, method, transaction_ref, gateway_order_id
+             FROM payments WHERE order_id = o.id ORDER BY id DESC LIMIT 1
+         ) pay ON true
+         WHERE o.guest_phone = ?
+         ORDER BY o.created_at DESC
+         LIMIT 50`,
+        [phone]
+    );
+    return rows;
+}
+
 async function getOrderStats(userId) {
     const [rows] = await pool.execute(
         'SELECT status, COUNT(*) AS count FROM orders WHERE user_id = ? GROUP BY status',
@@ -293,6 +316,7 @@ module.exports = {
     createOrder,
     getOrderForUser,
     getOrdersByUser,
+    getGuestOrdersByPhone,
     getOrderStats,
     VALID_STATUSES,
     ALLOWED_TRANSITIONS,

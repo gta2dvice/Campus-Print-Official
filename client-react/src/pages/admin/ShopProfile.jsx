@@ -6,7 +6,7 @@ import '../../styles/admin-effects.css';
 export default function ShopProfile() {
   const [form, setForm] = useState({
     shop_name: '', owner_name: '', phone: '', email: '', address: '',
-    opens_at: '', closes_at: '', is_open: false,
+    opens_at: '', closes_at: '', is_open: false, payment_upi: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,6 +37,7 @@ export default function ShopProfile() {
           opens_at: p.opens_at || '',
           closes_at: p.closes_at || '',
           is_open: !!p.is_open,
+          payment_upi: p.payment_upi || '',
         });
         setQrPath(p.payment_qr_path || null);
       } catch {
@@ -100,6 +101,7 @@ export default function ShopProfile() {
           opens_at: form.opens_at || null,
           closes_at: form.closes_at || null,
           is_open: form.is_open,
+          payment_upi: form.payment_upi.trim(),
         }),
       });
       if (!res.ok) {
@@ -146,6 +148,11 @@ export default function ShopProfile() {
               <label className="block space-y-1.5 text-xs font-bold text-slate-700">
                 <span>Contact Email</span>
                 <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} className="admin-input" />
+              </label>
+              <label className="block space-y-1.5 text-xs font-bold text-slate-700">
+                <span>Payment UPI ID / Number</span>
+                <input type="text" value={form.payment_upi} onChange={(e) => update('payment_upi', e.target.value)} className="admin-input" placeholder="e.g. campusprint@okicici" />
+                <span className="block text-[10px] font-medium text-slate-500">Shown (and copyable) in the Personal WhatsApp order flow.</span>
               </label>
             </div>
 

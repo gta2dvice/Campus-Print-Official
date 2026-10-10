@@ -4,12 +4,32 @@ async function createForOrder(orderId, userId, shopId, amount, method = 'manual'
     const ref = transactionRef || `TXN-${String(orderId).padStart(6, '0')}`;
     const status = extra.status || 'success';
     const gatewayOrderId = extra.gatewayOrderId || null;
+    const paymentReference = extra.paymentReference || null;
+    const qrExpiresAt = extra.qrExpiresAt || null;
     const [result] = await pool.execute(
-        `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, transaction_ref, gateway_order_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [orderId, userId, shopId, amount, status, method, ref, gatewayOrderId]
+        `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, transaction_ref, gateway_order_id, payment_reference, qr_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [orderId, userId, shopId, amount, status, method, ref, gatewayOrderId, paymentReference, qrExpiresAt]
     );
-    return { id: result.insertId, transaction_ref: ref };
+    return { id: result.insertId, transaction_ref: ref, payment_reference: paymentReference };
+}
+
+async function findByReference(paymentReference) {
+    if (!paymentReference) return null;
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE payment_reference = ? ORDER BY id DESC LIMIT 1`,
+        [paymentReference]
+    );
+    return rows[0] || null;
+}
+
+// Refreshes the QR expiry for an unpaid payment (reuses the same order/reference).
+async function refreshQrExpiry(orderId, qrExpiresAt) {
+    await pool.execute(
+        `UPDATE payments SET qr_expires_at = ?, updated_at = NOW() WHERE order_id = ? AND status = 'pending'`,
+        [qrExpiresAt, orderId]
+    );
+    return findByOrderId(orderId);
 }
 
 async function findByGatewayOrderId(gatewayOrderId) {
@@ -53,7 +73,11 @@ async function findByOrderId(orderId) {
 async function markPaidForOrder(orderId) {
     const payment = await findByOrderId(orderId);
     if (!payment || payment.status !== 'pending') return null;
-    await pool.execute(`UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ?`, [payment.id]);
+    // Guarded update: only the still-pending row flips, so repeat calls are idempotent.
+    await pool.execute(
+        `UPDATE payments SET status = 'success', paid_at = NOW(), updated_at = NOW() WHERE id = ? AND status = 'pending'`,
+        [payment.id]
+    );
     return findByOrderId(orderId);
 }
 
@@ -105,4 +129,4 @@ async function getPlatformPaymentStats() {
     return result;
 }
 
-module.exports = { createForOrder, refundForOrder, findByOrderId, markPaidForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
+module.exports = { createForOrder, refundForOrder, findByOrderId, markPaidForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId, findByReference, refreshQrExpiry };
