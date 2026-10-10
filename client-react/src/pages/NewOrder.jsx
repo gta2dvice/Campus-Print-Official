@@ -16,7 +16,6 @@ import {
   loadCurrentOrder,
   removeCurrentOrder,
   saveCurrentOrder,
-  scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
@@ -154,6 +153,7 @@ let fileKeySeq = 0;
 export default function NewOrder() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const returnedCashfreeOrderId = searchParams.get('cf_order') || searchParams.get('order_id');
   useBodyClass('app-body');
   useDocumentTitle('New Order – Print Campus');
   const { toast, showToast } = useToast();
@@ -197,6 +197,7 @@ export default function NewOrder() {
   const persistReadyRef = useRef(false);
   const handledReturnOrderRef = useRef(null);
   const confirmPaidOrderRef = useRef(null);
+  const recoverPaymentRef = useRef(null);
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
 
@@ -206,6 +207,15 @@ export default function NewOrder() {
       try {
         const unfinished = await loadCurrentOrder();
         if (cancelled) return;
+
+        let savedPayment = null;
+        try {
+          savedPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
+        } catch {
+          savedPayment = null;
+        }
+        const pendingCashfreeOrderId = returnedCashfreeOrderId || savedPayment?.cashfreeOrderId || '';
+        if (pendingCashfreeOrderId) setRecoveryOrderId(pendingCashfreeOrderId);
 
         if (unfinished) {
           if (unfinished.files?.length) {
@@ -257,7 +267,7 @@ export default function NewOrder() {
         const res = await fetch('/api/auth/status', { credentials: 'include' });
         const data = await res.json();
 
-        if (!data.isLoggedIn && !savedGuest) {
+        if (!data.isLoggedIn && !savedGuest && !pendingCashfreeOrderId) {
           navigate('/');
           return;
         }
@@ -272,7 +282,8 @@ export default function NewOrder() {
         const configRes = await fetch('/api/orders/config', { credentials: 'include' });
         if (configRes.ok) setConfig(await configRes.json());
       } catch {
-        if (!localStorage.getItem('cp_guest_details')) {
+        if (!localStorage.getItem('cp_guest_details') && !returnedCashfreeOrderId &&
+            !localStorage.getItem('cp_pending_payment')) {
           navigate('/');
         }
         return;
@@ -288,7 +299,7 @@ export default function NewOrder() {
       persistReadyRef.current = false;
       flushSaveCurrentOrder().catch(() => {});
     };
-  }, [navigate]);
+  }, [navigate, returnedCashfreeOrderId]);
 
   useEffect(() => {
     // Temporarily disabled to diagnose runtime crash
@@ -466,6 +477,12 @@ export default function NewOrder() {
       return;
     }
     try {
+      localStorage.setItem('cp_last_ticket', ticketToken);
+      localStorage.removeItem('cp_pending_payment');
+    } catch {
+      // The secure ticket link remains available in the current response.
+    }
+    try {
       await clearCompletedOrder();
     } catch {
       // Server order already succeeded; clearing the local draft is best-effort.
@@ -640,8 +657,8 @@ export default function NewOrder() {
     formData.append('totalPages', p.pages);
     const totalCopies = files.reduce((sum, f) => sum + f.copies, 0);
     formData.append('copies', totalCopies);
-    formData.append('spiralBinding', 'false');
-    formData.append('expressDelivery', 'false');
+    formData.append('spiralBinding', spiralBinding);
+    formData.append('expressDelivery', expressDelivery);
     formData.append('classroomDelivery', classroomDelivery);
     formData.append('totalPrice', p.total);
     formData.append('collectionLocationId', selectedLocationId);
@@ -697,7 +714,9 @@ export default function NewOrder() {
       } else {
         showToast(data.message || 'Failed to place order.', 'error');
         setPaying(false);
+        return;
       }
+      await finishSuccessfulOrder(data.ticketToken);
     } catch {
       showToast('Connection error. Please try again.', 'error');
       setPaying(false);
@@ -706,15 +725,16 @@ export default function NewOrder() {
 
   async function confirmPaidOrder(cashfreeOrderId) {
     console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
-    const formData = buildOrderFormData();
-    formData.append('cashfree_order_id', cashfreeOrderId);
-    const verifyRes = await fetch('/api/orders/payment/verify', { method: 'POST', credentials: 'include', body: formData });
+    const verifyRes = await fetch('/api/orders/payment/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ cashfree_order_id: cashfreeOrderId })
+    });
     const verifyData = await verifyRes.json().catch(() => ({}));
-    if (verifyRes.ok && verifyData.id) {
+    if (verifyData.status === 'PAID' && verifyData.ticketToken) {
       console.info('[PAYMENT_VERIFY] Backend returned created ticket:', {
-        cashfreeOrderId,
-        orderId: verifyData.id,
-        hasTicketNumber: Boolean(verifyData.ticketNumber)
+        ticketNumberPresent: Boolean(verifyData.ticketNumber)
       });
       await finishSuccessfulOrder(verifyData.id, verifyData.ticketToken);
       return true;
@@ -725,43 +745,49 @@ export default function NewOrder() {
       httpStatus: verifyRes.status,
       code: verifyData.code || 'PAYMENT_VERIFICATION_FAILED'
     });
-    const errorCode = verifyData.code ? ` (${verifyData.code})` : '';
-    showToast(
-      `${verifyData.message || 'Payment could not be confirmed or the ticket could not be generated. Please contact support.'}${errorCode}`,
-      'error'
-    );
-    setPaying(false);
-    return false;
+    throw new Error(verifyData.message || 'Payment verification could not reach the server.');
   }
   confirmPaidOrderRef.current = confirmPaidOrder;
 
-  const returnedCashfreeOrderId = searchParams.get('cf_order') || searchParams.get('order_id');
-  useEffect(() => {
-    if (loading || !returnedCashfreeOrderId || handledReturnOrderRef.current === returnedCashfreeOrderId) return;
-    handledReturnOrderRef.current = returnedCashfreeOrderId;
-    console.info('[PAYMENT_RETURN] Cashfree return received:', {
-      cashfreeOrderId: returnedCashfreeOrderId,
-      restoredFileCount: files.length
-    });
-    if (!files.length) {
-      console.error('[PAYMENT_RETURN_FAILED]', {
-        stage: 'restore_pending_order',
-        cashfreeOrderId: returnedCashfreeOrderId
-      });
-      showToast('Payment returned successfully, but the saved order files could not be restored. Please contact support.', 'error');
-      return;
-    }
+  async function recoverPayment(cashfreeOrderId) {
+    if (!cashfreeOrderId) return;
     setPaying(true);
-    confirmPaidOrderRef.current(returnedCashfreeOrderId).catch((error) => {
+    setPaymentMessage('Checking payment status with Cashfree…');
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const status = await confirmPaidOrderRef.current(cashfreeOrderId);
+        if (status === 'PAID' || status === 'PAYMENT_FAILED') return;
+      } catch (error) {
+        setPaymentMessage('Payment confirmation pending. Check your connection and retry; do not pay again.');
+        console.warn('[PAYMENT_VERIFY_RETRY]', {
+          cashfreeOrderId,
+          attempt: attempt + 1,
+          errorName: error instanceof Error ? error.name : 'UnknownError'
+        });
+      }
+      if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    setPaymentMessage('Payment confirmation is still pending. You can safely close this page and retry later.');
+    setPaying(false);
+  }
+  recoverPaymentRef.current = recoverPayment;
+
+  useEffect(() => {
+    if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
+    handledReturnOrderRef.current = recoveryOrderId;
+    console.info('[PAYMENT_RETURN] Cashfree return received:', {
+      cashfreeOrderId: recoveryOrderId
+    });
+    recoverPaymentRef.current(recoveryOrderId).catch((error) => {
       console.error('[PAYMENT_RETURN_FAILED]', {
         stage: 'verification_request',
-        cashfreeOrderId: returnedCashfreeOrderId,
+        cashfreeOrderId: recoveryOrderId,
         errorName: error instanceof Error ? error.name : 'UnknownError'
       });
-      showToastRef.current('Payment verification could not reach the server. Please retry or contact support.', 'error');
+      setPaymentMessage('Payment confirmation pending. Retry when your connection is available.');
       setPaying(false);
     });
-  }, [loading, returnedCashfreeOrderId, files.length]);
+  }, [loading, recoveryOrderId]);
 
   async function handlePay() {
     if (!selectedLocationId || !selectedTimeSlot) {
@@ -820,18 +846,24 @@ export default function NewOrder() {
       });
 
       const createData = await createRes.json().catch(() => ({}));
-
-      if (createRes.status === 503 || createData.fallbackToSimulate) {
-        showToast('Payment gateway unavailable. Using test checkout...', 'info');
-        await runSimulatedPayment();
-        return;
-      }
-
       if (!createRes.ok) {
-        showToast(createData.message || 'Could not start payment session. Using test checkout...', 'info');
-        await runSimulatedPayment();
+        const code = createData.code ? ` (${createData.code})` : '';
+        showToast(`${createData.message || 'Could not start payment session.'}${code}`, 'error');
+        setPaying(false);
         return;
       }
+
+      if (!createData.paymentSessionId || !createData.cashfreeOrderId) {
+        showToast('The payment service returned an incomplete session. Please try again.', 'error');
+        setPaying(false);
+        return;
+      }
+      localStorage.setItem('cp_pending_payment', JSON.stringify({
+        cashfreeOrderId: createData.cashfreeOrderId,
+        createdAt: Date.now()
+      }));
+      setRecoveryOrderId(createData.cashfreeOrderId);
+      setPaymentMessage('Complete payment in Cashfree. Your ticket will be created even if you close checkout.');
 
       const started = Date.now();
       while (typeof window.Cashfree !== 'function' && Date.now() - started < 8000) {
@@ -847,14 +879,30 @@ export default function NewOrder() {
         mode: createData.mode === 'production' ? 'production' : 'sandbox',
       });
 
-      await cashfreeCheckout.checkout({
-        paymentSessionId: createData.paymentSessionId,
-        redirectTarget: '_modal',
+      console.info('[PAYMENT_SUCCESS] Opening Cashfree checkout:', {
+        cashfreeOrderId: createData.cashfreeOrderId,
+        mode: createData.mode
       });
-
-      await confirmPaidOrder(createData.cashfreeOrderId);
-    } catch {
-      showToast('Connection error. Please try again.', 'error');
+      try {
+        const checkoutResult = await cashfreeCheckout.checkout({
+          paymentSessionId: createData.paymentSessionId,
+          redirectTarget: '_modal',
+        });
+        console.info('[PAYMENT_RETURN] Cashfree checkout returned control:', {
+          cashfreeOrderId: createData.cashfreeOrderId,
+          hasError: Boolean(checkoutResult?.error),
+          hasPaymentDetails: Boolean(checkoutResult?.paymentDetails)
+        });
+      } catch (checkoutError) {
+        console.warn('[PAYMENT_RETURN] Cashfree checkout closed or returned an error; checking server payment status:', {
+          cashfreeOrderId: createData.cashfreeOrderId,
+          errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
+        });
+      }
+      await recoverPayment(createData.cashfreeOrderId);
+    } catch (error) {
+      const details = error instanceof Error ? error.message : 'Could not reach the payment service.';
+      setPaymentMessage(`Payment confirmation pending. ${details} Retry without submitting payment again.`);
       setPaying(false);
     }
   }
@@ -963,6 +1011,21 @@ export default function NewOrder() {
         <DashboardSidebar userName={displayName} />
 
         <main className="main-content">
+          {paymentMessage && (
+            <div role="status" aria-live="polite" style={{ marginBottom: '1rem', padding: '1rem', borderRadius: '0.75rem', background: '#eff6ff' }}>
+              <p style={{ margin: 0 }}>{paymentMessage}</p>
+              {!paying && recoveryOrderId && (
+                <button
+                  type="button"
+                  className="ticket-btn ticket-btn-outline"
+                  style={{ marginTop: '0.75rem' }}
+                  onClick={() => recoverPaymentRef.current(recoveryOrderId)}
+                >
+                  Check payment again
+                </button>
+              )}
+            </div>
+          )}
           <a href="/dashboard" className="back-link">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
             Back to Dashboard

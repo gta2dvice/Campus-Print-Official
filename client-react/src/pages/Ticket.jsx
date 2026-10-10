@@ -13,14 +13,15 @@ export default function Ticket() {
   useBodyClass('ticket-page-body');
   useDocumentTitle('Collection Ticket – Campus Prints');
   const [searchParams] = useSearchParams();
+  const ticketToken = searchParams.get('token');
   const orderId = searchParams.get('id');
   const ticketTokenParam = searchParams.get('token');
   const [order, setOrder] = useState(null);
   const [ticketError, setTicketError] = useState('');
 
   useEffect(() => {
-    if (!orderId) {
-      setTicketError('The order ID is missing from this ticket link.');
+    if (!ticketToken && !orderId) {
+      setTicketError('The secure ticket link is missing.');
       return;
     }
     let cancelled = false;
@@ -36,7 +37,7 @@ export default function Ticket() {
           const data = await res.json().catch(() => ({}));
           console.error('[TICKET_LOAD_FAILED]', {
             stage: 'ticket_lookup_response',
-            orderId,
+            orderId: ticketToken ? undefined : orderId,
             httpStatus: res.status,
             code: data.code || 'TICKET_LOAD_FAILED'
           });
@@ -45,13 +46,13 @@ export default function Ticket() {
         }
         const data = await res.json();
         if (!cancelled) {
-          console.info('[TICKET_LOAD] Ticket loaded:', { orderId, ticketNumberPresent: Boolean(data.ticket_number) });
+          console.info('[TICKET_LOAD] Ticket loaded:', { ticketNumberPresent: Boolean(data.ticket_number) });
           setOrder(data);
         }
       } catch (error) {
         console.error('[TICKET_LOAD_FAILED]', {
           stage: 'ticket_lookup_request',
-          orderId,
+          orderId: ticketToken ? undefined : orderId,
           errorName: error instanceof Error ? error.name : 'UnknownError'
         });
         if (!cancelled) setTicketError('Could not reach the server to load this ticket. Please retry.');
