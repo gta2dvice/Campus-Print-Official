@@ -39,14 +39,12 @@ export default function Footer() {
                                 <Link to="/new-order">New Order</Link>
                                 <Link to="/dashboard">My Orders</Link>
                                 <Link to="/dashboard">My Dashboard</Link>
-                                <a href="mailto:printcampus@college.edu">Contact</a>
                             </>
                         ) : (
                             <>
                                 <Link to="/">Home</Link>
                                 <Link to="/login">Login</Link>
                                 <Link to="/register">Register</Link>
-                                <a href="mailto:printcampus@college.edu">Contact</a>
                             </>
                         )}
                     </div>
@@ -54,7 +52,7 @@ export default function Footer() {
                         <h4>Connect</h4>
                         <a href="https://instagram.com" target="_blank" rel="noreferrer">Instagram</a>
                         <a href="https://linkedin.com" target="_blank" rel="noreferrer">LinkedIn</a>
-                        <a href="mailto:printcampus@college.edu">Email Us</a>
+                        <a href="mailto:ayjn15@gmail.com">Email Us</a>
                     </div>
                 </div>
             </div>
