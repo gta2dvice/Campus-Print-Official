@@ -11,6 +11,7 @@ const adminRoutes = require('./routes/admin');
 const superAdminRoutes = require('./routes/superAdmin');
 const internalRoutes = require('./routes/internal');
 const { cleanupExpiredPdfs } = require('./jobs/cleanupExpiredPdfs');
+const { retryPendingTickets } = require('./services/ticketService');
 const { createSessionStore, ensureSessionTable } = require('./sessionStore');
 
 const app = express();
@@ -154,4 +155,12 @@ ensureSessionTable().catch(err => console.error('Session table setup error:', er
             .catch(err => console.error('PDF cleanup error:', err.message));
     }, hour);
     cleanupExpiredPdfs().catch(err => console.error('Initial PDF cleanup error:', err.message));
+
+    // Recovery sweep: paid orders whose ticket wasn't issued yet (ticket_status
+    // GENERATION_PENDING). Status checks and ticket views also retry on demand.
+    const runTicketSweep = () => retryPendingTickets()
+        .then(result => { if (result.pending) console.log('Ticket recovery sweep:', result); })
+        .catch(err => console.error('Ticket recovery sweep error:', err.message));
+    setInterval(runTicketSweep, 5 * 60 * 1000);
+    runTicketSweep();
 }));

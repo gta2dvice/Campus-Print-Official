@@ -43,6 +43,7 @@ export default function Footer() {
                         ) : (
                             <>
                                 <Link to="/">Home</Link>
+                                <Link to="/orders">My Orders</Link>
                                 <Link to="/login">Login</Link>
                                 <Link to="/register">Register</Link>
                             </>

@@ -105,6 +105,11 @@ CREATE TABLE IF NOT EXISTS order_files (
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_side VARCHAR(10) NOT NULL DEFAULT 'single';
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS copies INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw';
+-- Multi-format support: the resolved logical type (PDF/DOCX/…) and the
+-- page count used for pricing (server-detected, or user-declared for types we
+-- can't count server-side).
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS file_type VARCHAR(10) NULL;
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS page_count INTEGER NULL;
 
 CREATE INDEX IF NOT EXISTS idx_order_files_created_at ON order_files (created_at);
 CREATE INDEX IF NOT EXISTS idx_order_files_storage_path ON order_files (storage_path);
@@ -127,12 +132,40 @@ CREATE INDEX IF NOT EXISTS idx_payments_status ON payments (status);
 
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_id ON payments (gateway_order_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_order_internal_order ON payments (order_id) WHERE gateway_order_id IS NOT NULL;
 ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
 
--- Payment options: the shop's QR Payment image and payment rows for guest orders.
+-- UPI QR payment method: secure per-attempt reference, QR expiry, and paid timestamp.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(40);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_expires_at TIMESTAMPTZ;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_payment_reference ON payments (payment_reference);
+
+-- Payment options (server/migrate_payment_options.js): shop's QR Payment image,
+-- and payment rows for guest orders (no user account).
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_path VARCHAR(500);
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_qr_mime VARCHAR(100);
+-- UPI ID / payment number shown in the Personal WhatsApp manual-order flow.
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_upi VARCHAR(100);
+ALTER TABLE payments ALTER COLUMN user_id DROP NOT NULL;
+
+-- Shared payment finalizer (server/migrate_payment_finalization.js): ticket lifecycle
+-- PENDING_PAYMENT → GENERATION_PENDING (paid, ticket not issued yet; recoverable) → READY,
+-- canonical payment method on the order, and payment attempts (many per order,
+-- at most one successful).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ticket_status VARCHAR(30) NOT NULL DEFAULT 'PENDING_PAYMENT';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(20);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS currency VARCHAR(3) NOT NULL DEFAULT 'INR';
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_ticket_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_ticket_status_check
+    CHECK (ticket_status IN ('PENDING_PAYMENT', 'GENERATION_PENDING', 'READY'));
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_payment_method_check;
+ALTER TABLE orders ADD CONSTRAINT orders_payment_method_check
+    CHECK (payment_method IS NULL OR payment_method IN ('CASHFREE', 'UPI_QR', 'WHATSAPP', 'PAY_AT_SHOP', 'SIMULATED'));
+DROP INDEX IF EXISTS idx_payments_gateway_order_internal_order;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_one_success_per_order ON payments (order_id) WHERE status = 'success';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_success_transaction_ref ON payments (method, transaction_ref) WHERE status = 'success' AND transaction_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_ticket_generation_pending ON orders (id) WHERE ticket_status = 'GENERATION_PENDING';
 
 INSERT INTO shops (id, shop_name)
 SELECT 1, 'Campus Print'
@@ -175,3 +208,41 @@ CREATE TABLE IF NOT EXISTS student_profiles (
 CREATE INDEX IF NOT EXISTS idx_student_profiles_user_id ON student_profiles (user_id);
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES student_profiles(id) ON DELETE SET NULL;
+
+-- ── Guest orders & phone-based order recovery ───────────────────────────────
+-- Guest checkout stores the customer directly on the order (no user account).
+-- These columns are written by server/models/Order.js; declared here so a fresh
+-- `npm run init-db` produces a schema that matches the running application.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_full_name VARCHAR(255) NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone     VARCHAR(20)  NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_classroom VARCHAR(100) NULL;
+
+-- Guest orders have no user_id. The primary key stays orders.id (unchanged);
+-- phone is only an indexed lookup field — one phone can own many orders.
+ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_guest_phone ON orders (guest_phone);
+
+-- Short-lived OTPs for guest order recovery. The OTP itself is never stored in
+-- plaintext (HMAC hash only). Rows are disposable and periodically cleaned up.
+CREATE TABLE IF NOT EXISTS order_recovery_otps (
+    id          SERIAL PRIMARY KEY,
+    phone       VARCHAR(20)  NOT NULL,
+    otp_hash    VARCHAR(255) NOT NULL,
+    attempts    INTEGER      NOT NULL DEFAULT 0,
+    expires_at  TIMESTAMPTZ  NOT NULL,
+    consumed_at TIMESTAMPTZ  NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_phone ON order_recovery_otps (phone);
+CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_expires_at ON order_recovery_otps (expires_at);
+
+-- Fixed-window rate-limit counters. DB-backed so limits hold on serverless
+-- (Vercel), where per-process in-memory counters would not persist.
+CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket       VARCHAR(255) PRIMARY KEY,
+    count        INTEGER      NOT NULL DEFAULT 0,
+    window_start TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE order_recovery_otps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;

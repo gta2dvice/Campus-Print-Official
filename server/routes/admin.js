@@ -8,6 +8,7 @@ const OrderFile = require('../models/OrderFile');
 const Shop = require('../models/Shop');
 const Payment = require('../models/Payment');
 const { requireShopAdmin } = require('../middleware/roleAuth');
+const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { sendStoredFile } = require('../sendStoredFile');
 const { uploadBuffer, deleteFiles, downloadFile } = require('../storage');
 
@@ -148,21 +149,35 @@ router.post('/orders/:id/reject', requireShopAdmin, async (req, res) => {
     }
 });
 
-// Marks a QR / pay-at-shop order's pending payment as received.
+// Shop admin confirms a UPI QR / manual payment was received.
 router.post('/orders/:id/mark-paid', requireShopAdmin, async (req, res) => {
     try {
         const order = await Order.getOrderById(req.params.id, req.shopId);
         if (!order) return res.status(404).json({ message: 'Order not found' });
-        const confirmed = await Order.confirmOfflinePayment(order.id);
-        if (!confirmed) return res.status(400).json({ message: 'This order has no pending payment.' });
+        // UPI QR / manual payments have no gateway to query: the admin's confirmation
+        // is the verification. It goes through the same finalizer as Cashfree.
+        const pending = await Order.getAdminConfirmablePayment(order.id);
+        if (!pending) return res.status(400).json({ message: 'This order has no pending payment to confirm.' });
+        const result = await processSuccessfulPayment(order.id, {
+            paymentId: pending.id,
+            method: pending.method,
+            amount: pending.amount,
+            currency: pending.currency,
+            source: 'admin_mark_paid'
+        });
         const payment = await Payment.findByOrderId(order.id);
         res.json({
             status: payment.status,
             method: payment.method,
             transaction_ref: payment.transaction_ref,
-            ticket_number: confirmed.ticketNumber
+            payment_status: 'PAID',
+            ticket_status: result.ticketStatus,
+            ticket_number: result.ticketNumber
         });
     } catch (err) {
+        if (err.code === 'PAYMENT_AMOUNT_MISMATCH') {
+            return res.status(409).json({ message: 'Payment amount does not match the order. Not marked paid.' });
+        }
         console.error('Admin mark paid error:', err);
         res.status(500).json({ message: 'Server Error' });
     }

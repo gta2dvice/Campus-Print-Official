@@ -1,15 +1,24 @@
 const pool = require('../db');
 
-async function createForOrder(orderId, userId, shopId, amount, method = 'manual', transactionRef = null, extra = {}) {
-    const ref = transactionRef || `TXN-${String(orderId).padStart(6, '0')}`;
-    const status = extra.status || 'success';
-    const gatewayOrderId = extra.gatewayOrderId || null;
-    const [result] = await pool.execute(
-        `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, transaction_ref, gateway_order_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [orderId, userId, shopId, amount, status, method, ref, gatewayOrderId]
+// Payment rows are created by models/Order.js (with their order) and only ever
+// marked successful by services/paymentFinalizer.js.
+
+async function findByReference(paymentReference) {
+    if (!paymentReference) return null;
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE payment_reference = ? ORDER BY id DESC LIMIT 1`,
+        [paymentReference]
     );
-    return { id: result.insertId, transaction_ref: ref };
+    return rows[0] || null;
+}
+
+// Refreshes the QR expiry for an unpaid payment (reuses the same order/reference).
+async function refreshQrExpiry(orderId, qrExpiresAt) {
+    await pool.execute(
+        `UPDATE payments SET qr_expires_at = ?, updated_at = NOW() WHERE order_id = ? AND status = 'pending'`,
+        [qrExpiresAt, orderId]
+    );
+    return findByOrderId(orderId);
 }
 
 async function findByGatewayOrderId(gatewayOrderId) {
@@ -19,21 +28,6 @@ async function findByGatewayOrderId(gatewayOrderId) {
         [gatewayOrderId]
     );
     return rows[0] || null;
-}
-
-async function updateByGatewayOrderId(gatewayOrderId, { status, transactionRef } = {}) {
-    const fields = [];
-    const params = [];
-    if (status) { fields.push('status = ?'); params.push(status); }
-    if (transactionRef) { fields.push('transaction_ref = ?'); params.push(transactionRef); }
-    if (fields.length === 0) return findByGatewayOrderId(gatewayOrderId);
-    fields.push('updated_at = NOW()');
-    params.push(gatewayOrderId);
-    await pool.execute(
-        `UPDATE payments SET ${fields.join(', ')} WHERE gateway_order_id = ?`,
-        params
-    );
-    return findByGatewayOrderId(gatewayOrderId);
 }
 
 async function refundForOrder(orderId) {
@@ -97,4 +91,4 @@ async function getPlatformPaymentStats() {
     return result;
 }
 
-module.exports = { createForOrder, refundForOrder, findByOrderId, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
+module.exports = { refundForOrder, findByOrderId, listPayments, getPlatformPaymentStats, findByGatewayOrderId, findByReference, refreshQrExpiry };
