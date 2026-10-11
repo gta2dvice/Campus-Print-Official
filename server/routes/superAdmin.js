@@ -214,6 +214,36 @@ router.get('/orders/:id', requireSuperAdmin, async (req, res) => {
     }
 });
 
+const PAYMENT_PENDING_MESSAGE = 'Payment for this order is not confirmed yet, so it cannot be accepted.';
+
+// Accept = the order is printed and moves straight to Completed (Ready for Pickup).
+router.post('/orders/:id/accept', requireSuperAdmin, async (req, res) => {
+    try {
+        const result = await Order.updateStatus(req.params.id, 'completed');
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error === 'payment_pending') return res.status(409).json({ message: PAYMENT_PENDING_MESSAGE });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
+        res.json(result.order);
+    } catch (err) {
+        console.error('Super admin accept order error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+router.post('/orders/:id/reject', requireSuperAdmin, async (req, res) => {
+    try {
+        const { reason } = req.body || {};
+        const result = await Order.updateStatus(req.params.id, 'rejected', reason);
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
+        await Payment.refundForOrder(req.params.id);
+        res.json(result.order);
+    } catch (err) {
+        console.error('Super admin reject order error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
 // Owner confirms a UPI QR / manual payment was received (they can see the customer
 // total to check the transfer). Goes through the same finalizer as Cashfree.
 router.post('/orders/:id/mark-paid', requireSuperAdmin, async (req, res) => {
@@ -265,10 +295,10 @@ router.get('/orders/:orderId/documents/:fileId', requireSuperAdmin, async (req, 
         if (!file || String(file.order_id) !== String(req.params.orderId)) {
             return res.status(404).json({ message: 'File not found' });
         }
-        await sendStoredFile(res, file, { download: !!req.query.download });
+        await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
     } catch (err) {
-        console.error('Super admin document access error:', err);
-        res.status(500).json({ message: 'Server Error' });
+        console.error('Super admin document access error:', err.message);
+        res.status(500).json({ message: 'Could not load this file right now. Please retry.', code: 'FILE_LOAD_FAILED' });
     }
 });
 

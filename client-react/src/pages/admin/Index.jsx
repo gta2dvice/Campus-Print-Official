@@ -150,8 +150,7 @@ export default function Index() {
           <div className="admin-stats-grid">
             <StatCard icon="doc" color="blue" number={data.totalOrders} label="Total Orders" sub="This Month" />
             <StatCard icon="clock" color="amber" number={c.pending} label="Pending Orders" sub="Needs Action" />
-            <StatCard icon="printer" color="purple" number={c.accepted + c.printing} label="In Progress" sub="Accepted + Printing" />
-            <StatCard icon="checkcircle" color="green" number={c.completed} label="Completed Orders" sub="This Month" />
+            <StatCard icon="checkcircle" color="green" number={c.completed} label="Completed Orders" sub="Ready for Pickup" />
             <StatCard icon="wallet" color="green" number={fmtMoney(data.earningsToday)} label="Today's Printing Earnings" sub={`${data.ordersToday} Orders Today`} />
           </div>
 

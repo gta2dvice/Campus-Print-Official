@@ -67,6 +67,8 @@ router.post('/logout', (req, res) => {
 // whitelists order fields and replaces the customer total with the printer's
 // printing amount. Campus Print's extra charges never leave the server here.
 
+const PAYMENT_PENDING_MESSAGE = 'Payment for this order is not confirmed yet, so it cannot be accepted.';
+
 // ── Dashboard ─────────────────────────────────────
 
 router.get('/dashboard', requireShopAdmin, async (req, res) => {
@@ -117,8 +119,9 @@ router.patch('/orders/:id/status', requireShopAdmin, async (req, res) => {
         }
         const result = await Order.updateStatus(req.params.id, status, reason, req.shopId);
         if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error === 'payment_pending') return res.status(409).json({ message: PAYMENT_PENDING_MESSAGE });
         if (result.error === 'invalid_transition') {
-            return res.status(400).json({ message: `Cannot move order from ${result.from} to ${result.to}` });
+            return res.status(409).json({ message: `Cannot move order from ${result.from} to ${result.to}`, status: result.from });
         }
         if (status === 'rejected' || status === 'cancelled') {
             await Payment.refundForOrder(req.params.id);
@@ -130,10 +133,13 @@ router.patch('/orders/:id/status', requireShopAdmin, async (req, res) => {
     }
 });
 
+// Accept = the order is printed and moves straight to Completed (Ready for Pickup).
 router.post('/orders/:id/accept', requireShopAdmin, async (req, res) => {
     try {
-        const result = await Order.updateStatus(req.params.id, 'accepted', null, req.shopId);
-        if (result.error) return res.status(400).json({ message: 'Unable to accept this order' });
+        const result = await Order.updateStatus(req.params.id, 'completed', null, req.shopId);
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error === 'payment_pending') return res.status(409).json({ message: PAYMENT_PENDING_MESSAGE });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
         res.json(toPrinterOrder(result.order));
     } catch (err) {
         console.error('Admin accept order error:', err);
@@ -145,7 +151,8 @@ router.post('/orders/:id/reject', requireShopAdmin, async (req, res) => {
     try {
         const { reason } = req.body;
         const result = await Order.updateStatus(req.params.id, 'rejected', reason, req.shopId);
-        if (result.error) return res.status(400).json({ message: 'Unable to reject this order' });
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
         await Payment.refundForOrder(req.params.id);
         res.json(toPrinterOrder(result.order));
     } catch (err) {
@@ -168,10 +175,10 @@ router.get('/orders/:orderId/documents/:fileId', requireShopAdmin, async (req, r
         if (!file || String(file.order_id) !== String(req.params.orderId)) {
             return res.status(404).json({ message: 'File not found' });
         }
-        await sendStoredFile(res, file, { download: !!req.query.download });
+        await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
     } catch (err) {
-        console.error('Admin document access error:', err);
-        res.status(500).json({ message: 'Server Error' });
+        console.error('Admin document access error:', err.message);
+        res.status(500).json({ message: 'Could not load this file right now. Please retry.', code: 'FILE_LOAD_FAILED' });
     }
 });
 

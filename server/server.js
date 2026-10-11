@@ -10,7 +10,6 @@ const orderRoutes = require('./routes/orders');
 const adminRoutes = require('./routes/admin');
 const superAdminRoutes = require('./routes/superAdmin');
 const internalRoutes = require('./routes/internal');
-const { cleanupExpiredPdfs } = require('./jobs/cleanupExpiredPdfs');
 const { retryPendingTickets } = require('./services/ticketService');
 const { createSessionStore, ensureSessionTable } = require('./sessionStore');
 
@@ -148,13 +147,9 @@ if (fs.existsSync(CLIENT_INDEX)) {
 // Create/secure the session table before taking traffic; still start if the DB is briefly unreachable.
 ensureSessionTable().catch(err => console.error('Session table setup error:', err.message)).finally(() => app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    const hour = 60 * 60 * 1000;
-    setInterval(() => {
-        cleanupExpiredPdfs()
-            .then(result => console.log('PDF cleanup:', result))
-            .catch(err => console.error('PDF cleanup error:', err.message));
-    }, hour);
-    cleanupExpiredPdfs().catch(err => console.error('Initial PDF cleanup error:', err.message));
+    // Automatic deletion of uploaded files is intentionally OFF (future scope):
+    // admins must be able to preview / download order files. The cleanup job
+    // (jobs/cleanupExpiredPdfs.js) is kept but is not scheduled anywhere.
 
     // Recovery sweep: paid orders whose ticket wasn't issued yet (ticket_status
     // GENERATION_PENDING). Status checks and ticket views also retry on demand.
