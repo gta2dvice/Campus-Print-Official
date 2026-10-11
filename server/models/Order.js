@@ -142,6 +142,49 @@ async function failPayment(gatewayOrderId) {
     });
 }
 
+// Payment methods settled outside the app; only a shop admin can confirm them.
+const OFFLINE_PAYMENT_METHODS = ['whatsapp', 'none'];
+
+// Orders the shop works with: paid orders, plus offline orders still awaiting the
+// admin's payment confirmation. Unpaid Cashfree checkouts stay hidden.
+const SHOP_VISIBLE_ORDER = `(o.payment_status = 'PAID' OR (o.payment_status = 'PAYMENT_PENDING' AND EXISTS (
+    SELECT 1 FROM payments op
+    WHERE op.order_id = o.id AND op.status = 'pending'
+      AND op.method IN (${OFFLINE_PAYMENT_METHODS.map(m => `'${m}'`).join(', ')}))))`;
+
+/**
+ * Shop admin confirms an offline payment was received. Locks the order and its
+ * latest payment so concurrent clicks settle once; only then is the order PAID
+ * and given a ticket number. Returns null when there is no pending offline payment.
+ */
+async function confirmOfflinePayment(orderId) {
+    return pool.transaction(async tx => {
+        const [rows] = await tx.query(
+            `SELECT o.id, o.ticket_number, p.id AS payment_id, p.status AS payment_status, p.method
+             FROM orders o JOIN payments p ON p.order_id = o.id
+             WHERE o.id = ?
+             ORDER BY p.id DESC LIMIT 1
+             FOR UPDATE OF o, p`,
+            [orderId]
+        );
+        const row = rows[0];
+        if (!row || row.payment_status !== 'pending' || !OFFLINE_PAYMENT_METHODS.includes(row.method)) {
+            return null;
+        }
+
+        const ticketNumber = `CP-${String(row.id).padStart(3, '0')}`;
+        await tx.execute(
+            `UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ? AND status = 'pending'`,
+            [row.payment_id]
+        );
+        await tx.execute(
+            `UPDATE orders SET payment_status = 'PAID', ticket_number = COALESCE(ticket_number, ?) WHERE id = ?`,
+            [ticketNumber, row.id]
+        );
+        return { id: row.id, ticketNumber: row.ticket_number || ticketNumber };
+    });
+}
+
 async function getOrderForUser(orderId, userId) {
     const [rows] = await pool.execute(
         `SELECT o.*, u.email AS customer_email, p.full_name, p.phone_number, p.class_room_number
@@ -198,7 +241,7 @@ const ALLOWED_TRANSITIONS = {
 
 async function listOrders({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC' } = {}) {
     const offset = (page - 1) * limit;
-    const where = ["o.payment_status = 'PAID'"];
+    const where = [SHOP_VISIBLE_ORDER];
     const params = [];
 
     if (shopId) {
@@ -256,7 +299,7 @@ async function getOrderById(orderId, shopId = null) {
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.id = ? AND o.payment_status = 'PAID' ${shopFilter}`,
+         WHERE o.id = ? AND ${SHOP_VISIBLE_ORDER} ${shopFilter}`,
         params
     );
     return rows[0] || null;
@@ -268,7 +311,7 @@ async function getOrderByTicketTokenHash(tokenHash) {
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.ticket_access_token_hash = ? AND o.payment_status = 'PAID'`,
+         WHERE o.ticket_access_token_hash = ? AND ${SHOP_VISIBLE_ORDER}`,
         [tokenHash]
     );
     return rows[0] || null;
@@ -425,6 +468,7 @@ module.exports = {
     listOrders,
     getOrderById,
     getOrderByTicketTokenHash,
+    confirmOfflinePayment,
     updateStatus,
     getDashboardStats,
     getEarnings,
