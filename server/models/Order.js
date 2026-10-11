@@ -1,16 +1,45 @@
 const pool = require('../db');
 const Profile = require('./Profile');
 
-async function createOrder(userId, shopId, data, options = {}) {
-    return createOrderRecord(userId, shopId, data, options);
-}
+// Canonical payment method stored on the order, keyed by the legacy lowercase
+// payments.method value. Cashfree and UPI QR are the student-facing methods;
+// WHATSAPP / PAY_AT_SHOP are legacy manual orders; SIMULATED is dev-only.
+const ORDER_PAYMENT_METHOD = {
+    cashfree: 'CASHFREE',
+    upi_qr: 'UPI_QR',
+    whatsapp: 'WHATSAPP',
+    none: 'PAY_AT_SHOP',
+    simulated: 'SIMULATED'
+};
 
-async function createOrderRecord(userId, shopId, data, options) {
+// Payments a shop admin may confirm by hand (no gateway can verify them).
+const ADMIN_CONFIRMABLE_METHODS = ['upi_qr', 'whatsapp', 'none'];
+
+// Orders the shop works with: paid orders, plus manual-payment orders still awaiting
+// the admin's confirmation. Unpaid / failed Cashfree checkouts stay hidden.
+const SHOP_VISIBLE_ORDER = `(o.payment_status = 'PAID' OR (o.payment_status = 'PAYMENT_PENDING' AND EXISTS (
+    SELECT 1 FROM payments op
+    WHERE op.order_id = o.id AND op.status = 'pending'
+      AND op.method IN (${ADMIN_CONFIRMABLE_METHODS.map(m => `'${m}'`).join(', ')}))))`;
+
+/**
+ * Creates ONE internal order together with its first payment attempt, atomically.
+ * Every order starts PAYMENT_PENDING with no ticket; it only becomes PAID (and gets
+ * a ticket) through services/paymentFinalizer.
+ *
+ * payment: { method, gatewayOrderId?, qrExpiresAt?, referenceFor?(orderId) }
+ *   referenceFor builds an order-scoped payment reference (UPI QR) inside the
+ *   same transaction; it is stored as both payment_reference and transaction_ref.
+ * Returns { id, paymentId, paymentReference }.
+ */
+async function createOrder(userId, shopId, data, { payment, ticketTokenHash = null }) {
     const {
         paperSize, copies, spiralBinding, expressDelivery, totalPrice, fileCount,
         collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
         guestFullName, guestPhone, guestClassroom
     } = data;
+    const orderPaymentMethod = ORDER_PAYMENT_METHOD[payment.method];
+    if (!orderPaymentMethod) throw new Error(`Unknown payment method: ${payment.method}`);
 
     let studentId = null;
     if (userId) {
@@ -24,8 +53,9 @@ async function createOrderRecord(userId, shopId, data, options) {
             (user_id, student_id, shop_id, paper_size, copies, spiral_binding, express_delivery, total_price, file_count,
              collection_location_id, collection_location, collection_time, total_pages,
              collection_date,
-             guest_full_name, guest_phone, guest_classroom, payment_status, ticket_access_token_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             guest_full_name, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
+             ticket_access_token_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?)
          RETURNING id`,
             [
                 userId || null,
@@ -45,41 +75,81 @@ async function createOrderRecord(userId, shopId, data, options) {
                 guestFullName || null,
                 guestPhone || null,
                 guestClassroom || null,
-                options.paymentStatus || 'PAID',
-                options.ticketTokenHash || null
+                orderPaymentMethod,
+                ticketTokenHash
             ]
         );
         const id = result.insertId;
-        const ticketNumber = options.paymentStatus === 'PAYMENT_PENDING'
-            ? null
-            : `CP-${String(id).padStart(3, '0')}`;
-        if (ticketNumber) {
-            await tx.execute('UPDATE orders SET ticket_number = ? WHERE id = ?', [ticketNumber, id]);
-        }
-        if (options.gatewayOrderId) {
-            await tx.execute(
-                `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, gateway_order_id)
-                 VALUES (?, ?, ?, ?, 'pending', 'cashfree', ?)`,
-                [id, userId || null, shopId, totalPrice, options.gatewayOrderId]
-            );
-        }
-        return { id, ticketNumber };
+        const paymentReference = payment.referenceFor ? payment.referenceFor(id) : null;
+        const paymentId = await insertPaymentAttempt(tx, id, userId, shopId, totalPrice, {
+            ...payment,
+            paymentReference,
+            transactionRef: paymentReference
+        });
+        return { id, paymentId, paymentReference };
     });
 }
 
-async function createPaymentIntent(userId, shopId, data, { gatewayOrderId, ticketTokenHash }) {
-    return createOrderRecord(userId, shopId, data, {
-        paymentStatus: 'PAYMENT_PENDING',
-        ticketTokenHash,
-        gatewayOrderId
+async function insertPaymentAttempt(tx, orderId, userId, shopId, amount, payment) {
+    const [result] = await tx.execute(
+        `INSERT INTO payments
+            (order_id, user_id, shop_id, amount, currency, status, method, transaction_ref,
+             gateway_order_id, payment_reference, qr_expires_at)
+         VALUES (?, ?, ?, ?, 'INR', 'pending', ?, ?, ?, ?, ?)
+         RETURNING id`,
+        [
+            orderId,
+            userId || null,
+            shopId,
+            amount || 0,
+            payment.method,
+            payment.transactionRef || null,
+            payment.gatewayOrderId || null,
+            payment.paymentReference || null,
+            payment.qrExpiresAt || null
+        ]
+    );
+    return result.insertId;
+}
+
+/**
+ * Adds a new Cashfree attempt to an existing unpaid order (retry after a failed
+ * or abandoned checkout) — the order, its files and amount stay the same.
+ * Returns null when the order is already paid or still has an open attempt.
+ */
+async function addCashfreeAttempt(orderId, { gatewayOrderId, ticketTokenHash }) {
+    return pool.transaction(async tx => {
+        const [orderRows] = await tx.query(
+            `SELECT id, user_id, shop_id, total_price, payment_status FROM orders WHERE id = ? FOR UPDATE`,
+            [orderId]
+        );
+        const order = orderRows[0];
+        if (!order || order.payment_status === 'PAID') return null;
+        const [open] = await tx.query(
+            `SELECT 1 FROM payments WHERE order_id = ? AND status IN ('pending', 'success') LIMIT 1`,
+            [orderId]
+        );
+        if (open.length) return null;
+
+        const paymentId = await insertPaymentAttempt(tx, order.id, order.user_id, order.shop_id, order.total_price, {
+            method: 'cashfree',
+            gatewayOrderId
+        });
+        // The ticket link is derived from the attempt that ends up paying.
+        await tx.execute(
+            `UPDATE orders SET payment_status = 'PAYMENT_PENDING', ticket_access_token_hash = ? WHERE id = ?`,
+            [ticketTokenHash, order.id]
+        );
+        return { id: order.id, paymentId, amount: Number(order.total_price) };
     });
 }
 
 async function getPaymentIntentByGatewayOrderId(gatewayOrderId) {
     const [rows] = await pool.execute(
-        `SELECT p.id AS payment_id, p.order_id, p.amount AS payment_amount, p.status AS payment_status,
-                p.transaction_ref, p.gateway_order_id, o.total_price, o.payment_status AS order_payment_status,
-                o.ticket_number, o.ticket_access_token_hash, o.user_id, o.guest_full_name
+        `SELECT p.id AS payment_id, p.order_id, p.amount AS payment_amount, p.currency AS payment_currency,
+                p.status AS payment_status, p.transaction_ref, p.gateway_order_id,
+                o.total_price, o.payment_status AS order_payment_status, o.ticket_status,
+                o.ticket_number, o.ticket_access_token_hash, o.user_id, o.guest_full_name, o.guest_phone
          FROM payments p
          JOIN orders o ON o.id = p.order_id
          WHERE p.gateway_order_id = ? LIMIT 1`,
@@ -88,101 +158,72 @@ async function getPaymentIntentByGatewayOrderId(gatewayOrderId) {
     return rows[0] || null;
 }
 
-async function completePayment(gatewayOrderId, transactionRef) {
-    return pool.transaction(async tx => {
-        const [rows] = await tx.query(
-            `SELECT p.order_id, p.status AS payment_status, o.ticket_number
-             FROM payments p JOIN orders o ON o.id = p.order_id
-             WHERE p.gateway_order_id = ? FOR UPDATE OF p, o`,
-            [gatewayOrderId]
-        );
-        const payment = rows[0];
-        if (!payment) return null;
-        if (payment.payment_status === 'refunded') {
-            throw new Error('A refunded payment cannot be completed.');
-        }
-
-        const ticketNumber = `CP-${String(payment.order_id).padStart(3, '0')}`;
-        await tx.execute(
-            `UPDATE payments
-             SET status = 'success', transaction_ref = COALESCE(?, transaction_ref), updated_at = NOW()
-             WHERE gateway_order_id = ? AND status <> 'refunded'`,
-            [transactionRef || null, gatewayOrderId]
-        );
-        await tx.execute(
-            `UPDATE orders
-             SET payment_status = 'PAID', ticket_number = COALESCE(ticket_number, ?)
-             WHERE id = ?`,
-            [ticketNumber, payment.order_id]
-        );
-        return { id: payment.order_id, ticketNumber: payment.ticket_number || ticketNumber };
-    });
+/** Latest Cashfree attempt for an order (used to re-check a pending order). */
+async function getLatestCashfreeAttempt(orderId) {
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE order_id = ? AND method = 'cashfree' ORDER BY id DESC LIMIT 1`,
+        [orderId]
+    );
+    return rows[0] || null;
 }
 
-async function failPayment(gatewayOrderId) {
+/**
+ * Marks one payment attempt failed. The order only becomes PAYMENT_FAILED when no
+ * other attempt is still open, so a late failure event can neither downgrade a
+ * paid order nor clobber a newer retry.
+ */
+async function failPaymentAttempt(paymentId) {
     return pool.transaction(async tx => {
-        const [rows] = await tx.query(
-            `SELECT p.order_id, p.status AS payment_status
-             FROM payments p JOIN orders o ON o.id = p.order_id
-             WHERE p.gateway_order_id = ? FOR UPDATE OF p, o`,
-            [gatewayOrderId]
-        );
+        const [paymentRows] = await tx.query(`SELECT order_id FROM payments WHERE id = ?`, [paymentId]);
+        if (!paymentRows[0]) return false;
+        const orderId = paymentRows[0].order_id;
+        // Same lock order as the finalizer (order, then payment) to avoid deadlocks.
+        await tx.query(`SELECT id FROM orders WHERE id = ? FOR UPDATE`, [orderId]);
+        const [rows] = await tx.query(`SELECT id, status FROM payments WHERE id = ? FOR UPDATE`, [paymentId]);
         const payment = rows[0];
-        if (!payment || payment.payment_status === 'success' || payment.payment_status === 'refunded') return;
+        if (!payment || payment.status !== 'pending') return false;
         await tx.execute(
-            `UPDATE payments SET status = 'failed', updated_at = NOW()
-             WHERE gateway_order_id = ? AND status = 'pending'`,
-            [gatewayOrderId]
+            `UPDATE payments SET status = 'failed', updated_at = NOW() WHERE id = ? AND status = 'pending'`,
+            [payment.id]
         );
         await tx.execute(
             `UPDATE orders SET payment_status = 'PAYMENT_FAILED'
-             WHERE id = ? AND payment_status = 'PAYMENT_PENDING'`,
-            [payment.order_id]
+             WHERE id = ? AND payment_status = 'PAYMENT_PENDING'
+               AND NOT EXISTS (SELECT 1 FROM payments WHERE order_id = ? AND status IN ('pending', 'success'))`,
+            [orderId, orderId]
         );
+        return true;
     });
 }
 
-// Payment methods settled outside the app; only a shop admin can confirm them.
-const OFFLINE_PAYMENT_METHODS = ['whatsapp', 'none'];
+/** Marks a Cashfree attempt (by its gateway order id) failed. */
+async function failPayment(gatewayOrderId) {
+    const [rows] = await pool.execute(`SELECT id FROM payments WHERE gateway_order_id = ?`, [gatewayOrderId]);
+    return rows[0] ? failPaymentAttempt(rows[0].id) : false;
+}
 
-// Orders the shop works with: paid orders, plus offline orders still awaiting the
-// admin's payment confirmation. Unpaid Cashfree checkouts stay hidden.
-const SHOP_VISIBLE_ORDER = `(o.payment_status = 'PAID' OR (o.payment_status = 'PAYMENT_PENDING' AND EXISTS (
-    SELECT 1 FROM payments op
-    WHERE op.order_id = o.id AND op.status = 'pending'
-      AND op.method IN (${OFFLINE_PAYMENT_METHODS.map(m => `'${m}'`).join(', ')}))))`;
+/** Latest pending payment a shop admin may confirm by hand, or null. */
+async function getAdminConfirmablePayment(orderId) {
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
+        [orderId]
+    );
+    const payment = rows[0];
+    if (!payment || payment.status !== 'pending' || !ADMIN_CONFIRMABLE_METHODS.includes(payment.method)) {
+        return null;
+    }
+    return payment;
+}
 
-/**
- * Shop admin confirms an offline payment was received. Locks the order and its
- * latest payment so concurrent clicks settle once; only then is the order PAID
- * and given a ticket number. Returns null when there is no pending offline payment.
- */
-async function confirmOfflinePayment(orderId) {
-    return pool.transaction(async tx => {
-        const [rows] = await tx.query(
-            `SELECT o.id, o.ticket_number, p.id AS payment_id, p.status AS payment_status, p.method
-             FROM orders o JOIN payments p ON p.order_id = o.id
-             WHERE o.id = ?
-             ORDER BY p.id DESC LIMIT 1
-             FOR UPDATE OF o, p`,
-            [orderId]
-        );
-        const row = rows[0];
-        if (!row || row.payment_status !== 'pending' || !OFFLINE_PAYMENT_METHODS.includes(row.method)) {
-            return null;
-        }
-
-        const ticketNumber = `CP-${String(row.id).padStart(3, '0')}`;
-        await tx.execute(
-            `UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ? AND status = 'pending'`,
-            [row.payment_id]
-        );
-        await tx.execute(
-            `UPDATE orders SET payment_status = 'PAID', ticket_number = COALESCE(ticket_number, ?) WHERE id = ?`,
-            [ticketNumber, row.id]
-        );
-        return { id: row.id, ticketNumber: row.ticket_number || ticketNumber };
-    });
+/** Unfiltered order lookup for student-facing routes; callers MUST authorize access. */
+async function getOrderRecord(orderId) {
+    const [rows] = await pool.execute(
+        `SELECT o.*, u.email AS customer_email
+         FROM orders o LEFT JOIN users u ON u.id = o.user_id
+         WHERE o.id = ?`,
+        [orderId]
+    );
+    return rows[0] || null;
 }
 
 async function getOrderForUser(orderId, userId) {
@@ -204,6 +245,29 @@ async function getOrdersByUser(userId) {
          LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.user_id = ? AND o.payment_status = 'PAID' ORDER BY o.created_at DESC LIMIT 50`,
         [userId]
+    );
+    return rows;
+}
+
+// Guest order recovery: all orders for a normalized phone (any payment method or
+// state), newest first, each with its latest payment attempt. Primary key stays orders.id; guest_phone is
+// only an indexed lookup field (one phone → many orders).
+async function getGuestOrdersByPhone(phone) {
+    const [rows] = await pool.execute(
+        `SELECT o.*,
+                pay.status            AS latest_payment_status,
+                pay.method            AS latest_payment_method,
+                pay.qr_expires_at     AS latest_qr_expires_at,
+                pay.gateway_order_id  AS latest_gateway_order_id
+         FROM orders o
+         LEFT JOIN LATERAL (
+             SELECT status, method, qr_expires_at, gateway_order_id
+             FROM payments WHERE order_id = o.id ORDER BY id DESC LIMIT 1
+         ) pay ON true
+         WHERE o.guest_phone = ?
+         ORDER BY o.created_at DESC
+         LIMIT 50`,
+        [phone]
     );
     return rows;
 }
@@ -311,7 +375,7 @@ async function getOrderByTicketTokenHash(tokenHash) {
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.ticket_access_token_hash = ? AND ${SHOP_VISIBLE_ORDER}`,
+         WHERE o.ticket_access_token_hash = ?`,
         [tokenHash]
     );
     return rows[0] || null;
@@ -455,20 +519,25 @@ async function getPlatformStats() {
 }
 
 module.exports = {
+    ORDER_PAYMENT_METHOD,
+    ADMIN_CONFIRMABLE_METHODS,
     createOrder,
-    createPaymentIntent,
+    addCashfreeAttempt,
     getPaymentIntentByGatewayOrderId,
-    completePayment,
+    getLatestCashfreeAttempt,
     failPayment,
+    failPaymentAttempt,
+    getAdminConfirmablePayment,
+    getOrderRecord,
     getOrderForUser,
     getOrdersByUser,
+    getGuestOrdersByPhone,
     getOrderStats,
     VALID_STATUSES,
     ALLOWED_TRANSITIONS,
     listOrders,
     getOrderById,
     getOrderByTicketTokenHash,
-    confirmOfflinePayment,
     updateStatus,
     getDashboardStats,
     getEarnings,

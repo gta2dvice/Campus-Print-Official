@@ -1,5 +1,6 @@
 const { PDFParse } = require('pdf-parse');
 const JSZip = require('jszip');
+const { resolveFileType } = require('./fileTypes');
 
 // pdfjs's getDocument() promise never settles for some files (most notably
 // password-protected PDFs, which wait forever on an unanswered password
@@ -69,24 +70,43 @@ async function detectDocxPages(buffer) {
     return { pages, estimated: false };
 }
 
+// PPTX slide count is reliable and dependency-free: each slide is one
+// ppt/slides/slideN.xml entry in the OOXML zip. One slide = one printable page.
+async function detectPptxPages(buffer) {
+    const zip = await JSZip.loadAsync(buffer);
+    const slideCount = Object.keys(zip.files).filter(
+        name => /^ppt\/slides\/slide\d+\.xml$/i.test(name)
+    ).length;
+    if (slideCount >= 1) return { pages: slideCount, estimated: false };
+    return { pages: 1, estimated: true };
+}
+
 /**
- * Detects page count for a single uploaded file (in-memory buffer + mimetype).
- * Falls back to a 1-page estimate for anything it can't confidently parse
- * (legacy .doc, corrupt files, unsupported types).
+ * Detects page count for a single uploaded file (in-memory buffer + name/mime).
+ * Reliable for PDF, images, DOCX (when Word wrote the page count) and PPTX
+ * (slide count). For spreadsheets and legacy binary Office files there is no
+ * reliable server-side count, so it returns a flagged 1-page estimate — callers
+ * must treat `estimated: true` as "needs a user-supplied / shop-confirmed count",
+ * never as an authoritative value, and never as 0.
  */
 async function detectPages(file) {
+    const resolved = resolveFileType(file.originalname, file.mimetype);
+    const key = resolved ? resolved.key : null;
     try {
-        if (file.mimetype === 'application/pdf') {
-            return await detectPdfPages(file.buffer);
+        switch (key) {
+            case 'pdf':
+                return await detectPdfPages(file.buffer);
+            case 'docx':
+                return await detectDocxPages(file.buffer);
+            case 'pptx':
+                return await detectPptxPages(file.buffer);
+            case 'jpg':
+            case 'png':
+                return { pages: 1, estimated: false };
+            // xls, xlsx, legacy .doc/.ppt, and unknowns: no reliable count.
+            default:
+                return { pages: 1, estimated: true };
         }
-        if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            return await detectDocxPages(file.buffer);
-        }
-        if (file.mimetype === 'image/png' || file.mimetype === 'image/jpeg') {
-            return { pages: 1, estimated: false };
-        }
-        // Legacy .doc and anything else we can't reliably parse.
-        return { pages: 1, estimated: true };
     } catch (err) {
         console.error(`Page detection failed for ${file.originalname}:`, err.message);
         return { pages: 1, estimated: true };

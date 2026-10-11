@@ -38,7 +38,7 @@ async function listShops({ search = '', status = '', page = 1, limit = 20 } = {}
 }
 
 async function updateShop(id, data) {
-    const fields = ['shop_name', 'owner_name', 'phone', 'email', 'address', 'opens_at', 'closes_at', 'is_open'];
+    const fields = ['shop_name', 'owner_name', 'phone', 'email', 'address', 'opens_at', 'closes_at', 'is_open', 'payment_upi'];
     const updates = [];
     const params = [];
 

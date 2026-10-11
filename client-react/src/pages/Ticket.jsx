@@ -9,6 +9,52 @@ import '../styles/style.css';
 import '../styles/dashboard.css';
 import '../styles/ticket.css';
 
+// States where the outcome isn't final yet; the page re-checks the server for these.
+const STILL_OPEN_STATES = ['PAYMENT_PENDING', 'PAYMENT_PROCESSING', 'TICKET_GENERATION_PENDING'];
+
+function stateHeader(order) {
+  const keepLink = 'Keep this link — this page updates automatically once your payment is confirmed.';
+  switch (order.state) {
+    case 'TICKET_GENERATION_PENDING':
+      return {
+        title: 'Payment received',
+        highlight: 'preparing your ticket',
+        subtitle: 'Your payment is confirmed. Your collection ticket is being generated — you will not be charged again.',
+        note: 'This page updates automatically.'
+      };
+    case 'PAYMENT_FAILED':
+      return {
+        title: 'Payment failed',
+        highlight: 'no ticket yet',
+        subtitle: 'This payment did not go through. Your order is saved — you can pay again for it.',
+        note: 'Open the Orders page to retry payment for this order.'
+      };
+    case 'REFUNDED':
+      return {
+        title: 'Order refunded',
+        highlight: 'no ticket',
+        subtitle: 'The payment for this order was refunded.',
+        note: 'Contact the shop if you have questions.'
+      };
+    case 'EXPIRED':
+      return {
+        title: 'Order placed',
+        highlight: 'QR expired',
+        subtitle: 'The payment QR expired before payment was confirmed. Your order is saved and still unpaid.',
+        note: 'Open the Orders page to get a fresh QR, or contact the shop if you already paid.'
+      };
+    default: {
+      const method = order.payment?.method;
+      const subtitle = method === 'cashfree'
+        ? 'We are confirming your payment with Cashfree.'
+        : method === 'none'
+          ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
+          : 'The shop will confirm your payment shortly.';
+      return { title: 'Order placed', highlight: 'payment pending', subtitle, note: keepLink };
+    }
+  }
+}
+
 export default function Ticket() {
   useBodyClass('ticket-page-body');
   useDocumentTitle('Collection Ticket – Campus Prints');
@@ -24,18 +70,17 @@ export default function Ticket() {
       return;
     }
     let cancelled = false;
-    (async () => {
+    let timer = null;
+    async function loadTicket() {
       try {
         const endpoint = ticketToken
           ? `/api/orders/ticket/${encodeURIComponent(ticketToken)}`
           : `/api/orders/${encodeURIComponent(orderId)}`;
-        console.info('[TICKET_LOAD] Fetching ticket:', { secureTokenProvided: Boolean(ticketToken), orderId: ticketToken ? undefined : orderId });
         const res = await fetch(endpoint, { credentials: 'include' });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           console.error('[TICKET_LOAD_FAILED]', {
             stage: 'ticket_lookup_response',
-            orderId: ticketToken ? undefined : orderId,
             httpStatus: res.status,
             code: data.code || 'TICKET_LOAD_FAILED'
           });
@@ -43,35 +88,26 @@ export default function Ticket() {
           return;
         }
         const data = await res.json();
-        if (!cancelled) {
-          console.info('[TICKET_LOAD] Ticket loaded:', { ticketNumberPresent: Boolean(data.ticket_number) });
-          setOrder(data);
-        }
+        if (cancelled) return;
+        setOrder(data);
+        // Keep checking the SERVER while the outcome is still open (refresh-safe).
+        if (STILL_OPEN_STATES.includes(data.state)) timer = setTimeout(loadTicket, 10000);
       } catch (error) {
         console.error('[TICKET_LOAD_FAILED]', {
           stage: 'ticket_lookup_request',
-          orderId: ticketToken ? undefined : orderId,
           errorName: error instanceof Error ? error.name : 'UnknownError'
         });
         if (!cancelled) setTicketError('Could not reach the server to load this ticket. Please retry.');
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    loadTicket();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [orderId, ticketToken]);
 
-  function maskPhone(phone) {
-    if (!phone) return '—';
-    if (phone.length < 10) return phone;
-    return `${phone.slice(0, 3)}****${phone.slice(-3)}`;
-  }
-
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
-  // Offline payments (QR Payment / pay at shop) stay pending until the shop confirms them;
-  // only then is the order PAID and given a collection ticket number.
-  const isPaid = order?.payment_status === 'PAID';
-  const pendingPaymentNote = order?.payment?.method === 'none'
-    ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
-    : 'The shop will confirm your payment shortly.';
+  // Everything below comes from the server's state for this order, never from the URL.
+  const isPaid = order?.state === 'TICKET_READY';
+  const header = order ? stateHeader(order) : null;
 
   return (
     <>
@@ -112,10 +148,10 @@ export default function Ticket() {
           ) : (
             <section className="ticket-success-header">
               <h1 className="success-heading">
-                Order placed — <span className="highlight-cyan">payment pending</span>
+                {header.title} — <span className="highlight-cyan">{header.highlight}</span>
               </h1>
-              <p className="success-subtitle">{pendingPaymentNote}</p>
-              <p className="success-note">Keep this link. Refresh it after the shop confirms your payment to see your collection ticket.</p>
+              <p className="success-subtitle">{header.subtitle}</p>
+              <p className="success-note">{header.note}</p>
             </section>
           )}
 
@@ -170,7 +206,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">PHONE</span>
-                    <span className="info-value">{maskPhone(order?.guest_phone)}</span>
+                    <span className="info-value">{order?.guest_phone || '—'}</span>
                   </div>
                 </div>
 
