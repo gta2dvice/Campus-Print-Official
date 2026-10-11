@@ -14,6 +14,7 @@ const slots = require('../slots');
 const pool = require('../db');
 const { uploadBuffer, buildObjectPath, deleteFiles, downloadFile } = require('../storage');
 const cashfree = require('../cashfree');
+const { PRICING, priceOrder } = require('../pricing');
 const { sendStoredFile } = require('../sendStoredFile');
 const { createTicketToken, hashTicketToken, isValidTicketToken } = require('../ticketTokens');
 const RecoveryOtp = require('../models/RecoveryOtp');
@@ -195,43 +196,11 @@ async function buildTicketView(order) {
 }
 
 // ── Order Configuration ─────────────────────
-const PRICING = {
-    single: 2,
-    double: 3,
-    serviceCharge: 3,
-    hostelSurcharge: 4,
-    classroomDelivery: 10
-};
-
-/**
- * Printing cost for one file. B&W double-sided is charged per physical sheet
- * (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
- * Keep in sync with filePrintingCost() in client-react/src/pages/NewOrder.jsx and Home.jsx.
- */
-function filePrintingCost(f) {
-    const pages = Number(f.pages) || 0;
-    const copies = Number(f.copies) || 1;
-    if (f.colorMode === 'color') return pages * copies * 5;
-    if (f.printingSide === 'double') return Math.ceil(pages / 2) * copies * PRICING.double;
-    return pages * copies * PRICING.single;
-}
+// Rates + the printing / extra-charge split live in server/pricing.js.
 
 // Upper bound on a user-declared page count (only used when the server can't count
 // a file's pages) so a tampered value can't produce an absurd charge.
 const MAX_DECLARED_PAGES = 2000;
-
-function priceResolved(resolvedFiles, { collectionLocationId, classroomDelivery }) {
-    if (!resolvedFiles || resolvedFiles.length === 0) return 0;
-    let printingCost = 0;
-    for (const f of resolvedFiles) printingCost += filePrintingCost(f);
-    let deliveryCharge = 0;
-    if (collectionLocationId === 'hostel-gate') {
-        deliveryCharge = PRICING.hostelSurcharge;
-    } else if (classroomDelivery === 'true' || classroomDelivery === true) {
-        deliveryCharge = PRICING.classroomDelivery;
-    }
-    return printingCost + PRICING.serviceCharge + deliveryCharge;
-}
 
 /**
  * The single source of truth for amount + per-file data. Validates each uploaded
@@ -241,7 +210,8 @@ function priceResolved(resolvedFiles, { collectionLocationId, classroomDelivery 
  * processing. The frontend NEVER dictates the amount.
  *
  * Throws an Error with .code / .httpStatus for an invalid upload.
- * Returns { resolved, amount }.
+ * Returns { resolved, amount, charges } — charges is pricing.priceOrder()'s split;
+ * each resolved file also carries its own printingCharge.
  */
 async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocationId, classroomDelivery }) {
     if (!files || files.length === 0) {
@@ -297,7 +267,9 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
         });
     }
 
-    return { resolved, amount: priceResolved(resolved, { collectionLocationId, classroomDelivery }) };
+    const charges = priceOrder(resolved, { collectionLocationId, classroomDelivery });
+    resolved.forEach((f, i) => { f.printingCharge = charges.fileCharges[i]; });
+    return { resolved, amount: charges.total, charges };
 }
 
 function readOrderPayload(body) {
@@ -366,6 +338,7 @@ async function validateAndPriceSubmission(req, res) {
         });
         resolved = priced.resolved;
         amount = priced.amount;
+        data.charges = priced.charges;
     } catch (e) {
         res.status(e.httpStatus || 400).json({ message: e.message, code: e.code || 'FILE_VALIDATION_FAILED' });
         return null;
@@ -398,7 +371,8 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
                 pageCount: rf.pages,
                 printingSide: rf.printingSide,
                 copies: rf.copies,
-                colorMode: rf.colorMode
+                colorMode: rf.colorMode,
+                printingCharge: rf.printingCharge
             });
             console.info('[ORDER_CREATE] File storage upload completed:', {
                 orderId,

@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  saApi, fmtMoney, fmtDate, fmtPickup, LIVE_REFRESH_MS, StatusBadge,
+  saApi, fmtDate, fmtPickup, LIVE_REFRESH_MS, StatusBadge,
   Loading, EmptyState, ErrorState, Pagination, Modal, DetailGrid, DetailItem,
 } from './shared';
+import { OrderFinance, fmtRupees } from './Finance';
+
+// Manual payments the owner confirms by hand (no gateway to verify them).
+const OWNER_CONFIRMABLE_METHODS = ['upi_qr', 'whatsapp', 'none'];
 
 export default function Orders() {
   const [searchParams] = useSearchParams();
@@ -99,7 +103,7 @@ export default function Orders() {
             <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
-                  {['Order ID', 'Student', 'Shop', 'Pickup', 'Details', 'Status', 'Amount', 'Date', ''].map((h) => (
+                  {['Order ID', 'Student', 'Shop', 'Pickup', 'Details', 'Status', 'Customer Total', 'Printer', 'Extras', 'Date', ''].map((h) => (
                     <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-[0.6rem] text-left text-[0.72rem] font-semibold uppercase tracking-wide text-gray-400">{h}</th>
                   ))}
                 </tr>
@@ -113,7 +117,9 @@ export default function Orders() {
                     <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
                     <td data-label="Details" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x</td>
                     <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
-                    <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                    <td data-label="Customer Total" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtRupees(o.finance?.customerTotal)}</td>
+                    <td data-label="Printer" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtRupees(o.finance?.printerPayable)}{o.finance?.basis === 'ESTIMATED' && <small className="ml-1 text-amber-600">est.</small>}</td>
+                    <td data-label="Extras" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtRupees(o.finance?.grossExtraRevenue)}{o.finance?.basis === 'ESTIMATED' && <small className="ml-1 text-amber-600">est.</small>}</td>
                     <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
                     <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]">
                       <button onClick={() => setOpenOrderId(o.id)} className="rounded-full border border-gray-200 px-[0.7rem] py-[0.32rem] text-[0.72rem] font-semibold text-gray-600 hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">View</button>
@@ -127,29 +133,58 @@ export default function Orders() {
         <Pagination data={data} onPage={setPage} />
       </div>
 
-      {openOrderId && <OrderModal orderId={openOrderId} onClose={() => setOpenOrderId(null)} />}
+      {openOrderId && <OrderModal orderId={openOrderId} onClose={() => setOpenOrderId(null)} onChanged={() => loadOrders(true)} />}
     </>
   );
 }
 
-function OrderModal({ orderId, onClose }) {
+function OrderModal({ orderId, onClose, onChanged }) {
   const [order, setOrder] = useState(null);
   const [error, setError] = useState('');
+  const [markingPaid, setMarkingPaid] = useState(false);
+  const [markPaidMessage, setMarkPaidMessage] = useState('');
+
+  const loadOrder = useCallback(async () => {
+    const res = await saApi(`/api/super-admin/orders/${orderId}`);
+    if (!res.ok) throw new Error('Failed to load order');
+    return res.json();
+  }, [orderId]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await saApi(`/api/super-admin/orders/${orderId}`);
-        if (!res.ok) throw new Error('Failed to load order');
-        const o = await res.json();
+        const o = await loadOrder();
         if (!cancelled) setOrder(o);
       } catch (err) {
         if (!cancelled) setError(err.message);
       }
     })();
     return () => { cancelled = true; };
-  }, [orderId]);
+  }, [loadOrder]);
+
+  // Owner confirms a UPI QR / manual payment after checking the received transfer.
+  async function markPaid() {
+    setMarkingPaid(true);
+    setMarkPaidMessage('');
+    try {
+      const res = await saApi(`/api/super-admin/orders/${orderId}/mark-paid`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMarkPaidMessage(data.message || 'Could not mark as paid.');
+        return;
+      }
+      setOrder(await loadOrder());
+      setMarkPaidMessage('Payment marked as received.');
+      onChanged?.();
+    } catch {
+      setMarkPaidMessage('Connection error. Please try again.');
+    } finally {
+      setMarkingPaid(false);
+    }
+  }
+
+  const canMarkPaid = order?.payment?.status === 'pending' && OWNER_CONFIRMABLE_METHODS.includes(order.payment.method);
 
   return (
     <Modal title={`Order #${String(orderId).padStart(4, '0')}`} onClose={onClose}>
@@ -166,7 +201,16 @@ function OrderModal({ orderId, onClose }) {
             <DetailItem label="Color">{order.color_option === 'bw' ? 'Black & White' : 'Color'}</DetailItem>
             <DetailItem label="Paper Size">{order.paper_size}</DetailItem>
             <DetailItem label="Copies">{order.copies}</DetailItem>
-            <DetailItem label="Amount"><strong>{fmtMoney(order.total_price)}</strong></DetailItem>
+            <DetailItem label="Customer Total"><strong>{fmtRupees(order.finance?.summary?.customerTotal)}</strong></DetailItem>
+            <DetailItem label="Payment">
+              {order.payment ? `${order.payment.method} · ${order.payment.status}` : 'No payment recorded'}
+              {canMarkPaid && (
+                <button onClick={markPaid} disabled={markingPaid} className="ml-2 rounded-full border border-emerald-500 px-[0.7rem] py-[0.2rem] text-[0.72rem] font-semibold text-emerald-600 hover:bg-emerald-500/[0.08]">
+                  {markingPaid ? 'Saving…' : 'Mark Paid'}
+                </button>
+              )}
+              {markPaidMessage && <div className="mt-1 text-[0.75rem] text-gray-500">{markPaidMessage}</div>}
+            </DetailItem>
             <DetailItem label="Collection Location">{order.collection_location || '—'}</DetailItem>
             <DetailItem label="Collection Time">{order.collection_time || '—'}</DetailItem>
             <DetailItem label="Ticket">{order.ticket_number || '—'}</DetailItem>
@@ -174,12 +218,19 @@ function OrderModal({ orderId, onClose }) {
             <DetailItem label="Placed On">{fmtDate(order.created_at)}</DetailItem>
             {order.rejection_reason && <DetailItem label="Rejection Reason">{order.rejection_reason}</DetailItem>}
           </DetailGrid>
+          <OrderFinance finance={order.finance} />
           <h4 className="mb-3 mt-5 text-[0.9rem] font-bold text-gray-900">Documents ({order.files.length})</h4>
           {order.files.length ? (
             <ul className="flex flex-col gap-2">
               {order.files.map((f) => (
                 <li key={f.id} className="flex items-center justify-between gap-x-3 gap-y-1 rounded-[10px] bg-black/[0.02] px-[0.8rem] py-[0.6rem] text-[0.82rem] max-sm:flex-wrap">
-                  <span className="min-w-0 [overflow-wrap:anywhere]">{f.original_name} <small className="text-gray-400">({(f.size_bytes / 1024).toFixed(0)} KB)</small></span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    {f.original_name} <small className="text-gray-400">({(f.size_bytes / 1024).toFixed(0)} KB)</small>
+                    <small className="block text-gray-500">
+                      {f.page_count ? `${f.page_count} pages` : 'pages —'} · {f.copies || 1}x · {f.color_mode === 'color' ? 'Color' : 'B&W'} · {f.printing_side === 'double' ? 'Double-sided' : 'Single-sided'}
+                      {f.printing_charge != null && ` · printing ${fmtRupees(f.printing_charge)}`}
+                    </small>
+                  </span>
                   <span className="flex-shrink-0">
                     <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}`} target="_blank" rel="noopener noreferrer" className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">View</a>
                     <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}?download=1`} className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">Download</a>

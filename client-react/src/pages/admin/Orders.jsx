@@ -33,6 +33,11 @@ const PAYMENT_METHOD_LABELS = {
   none: 'Pay at shop',
 };
 
+// Printer's payable for an order; orders placed before charges were itemised have none.
+function fmtPrinterPayable(amount) {
+  return amount == null ? 'Not itemised' : fmtMoney(amount);
+}
+
 export default function Orders() {
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -62,7 +67,6 @@ export default function Orders() {
   const [modalOrder, setModalOrder] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
-  const [markingPaid, setMarkingPaid] = useState(false);
 
   const [rejectOrderId, setRejectOrderId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -142,26 +146,6 @@ export default function Orders() {
       setModalError(err.message || 'Failed to load order');
     } finally {
       setModalLoading(false);
-    }
-  }
-
-  async function markOrderPaid() {
-    if (!modalOrder?.id) return;
-    setMarkingPaid(true);
-    try {
-      const res = await adminApi(`/api/admin/orders/${modalOrder.id}/mark-paid`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data.message || 'Could not mark as paid.', 'error');
-        return;
-      }
-      setModalOrder((o) => (o ? { ...o, payment: data, payment_status: 'PAID', ticket_number: data.ticket_number } : o));
-      showToast('Payment marked as received.');
-      loadOrders(true);
-    } catch {
-      showToast('Connection error. Please try again.', 'error');
-    } finally {
-      setMarkingPaid(false);
     }
   }
 
@@ -260,7 +244,7 @@ export default function Orders() {
                   <th>Pickup Slot</th>
                   <th>Specs</th>
                   <th>Status</th>
-                  <th>Amount</th>
+                  <th>Printing</th>
                   <th>Date</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -292,7 +276,7 @@ export default function Orders() {
                         </div>
                       )}
                     </td>
-                    <td data-label="Amount" className="font-black text-slate-900 whitespace-nowrap">{fmtMoney(o.total_price)}</td>
+                    <td data-label="Printing" className="font-black text-slate-900 whitespace-nowrap">{fmtPrinterPayable(o.printer_payable)}</td>
                     <td data-label="Date" className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
                     <td data-label="Actions" className="text-right whitespace-nowrap">
                       <div className="admin-actions-cell">
@@ -423,8 +407,8 @@ export default function Orders() {
                         <span className="admin-modal-value">{fmtPickup(modalOrder)}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Total Price</span>
-                        <span className="admin-modal-value text-blue-600 text-base font-black">{fmtMoney(modalOrder.total_price)}</span>
+                        <span className="admin-modal-label">Printer Payable (printing only)</span>
+                        <span className="admin-modal-value text-blue-600 text-base font-black">{fmtPrinterPayable(modalOrder.printer_payable)}</span>
                       </div>
                     </div>
                   </div>
@@ -448,9 +432,7 @@ export default function Orders() {
                           <span className="admin-modal-value flex flex-wrap items-center gap-2">
                             <StatusBadge status={modalOrder.payment.status} kind="payment" />
                             {modalOrder.payment.status === 'pending' && (
-                              <button onClick={markOrderPaid} disabled={markingPaid} className="admin-action-btn admin-action-btn-accept max-sm:min-h-11">
-                                {markingPaid ? 'Saving…' : 'Mark Paid'}
-                              </button>
+                              <span className="text-xs font-semibold text-slate-500">Confirmed by the owner</span>
                             )}
                           </span>
                         </div>
@@ -483,6 +465,13 @@ export default function Orders() {
                               <div className="min-w-0">
                                 <div className="admin-doc-name">{f.original_name}</div>
                                 <div className="admin-doc-size">{(f.size_bytes / 1024).toFixed(0)} KB</div>
+                                <div className="admin-doc-size">
+                                  {f.page_count ? `${f.page_count} page${f.page_count === 1 ? '' : 's'}` : 'Pages: —'}
+                                  {' · '}{f.copies || 1} cop{(f.copies || 1) === 1 ? 'y' : 'ies'}
+                                  {' · '}{f.color_mode === 'color' ? 'Color' : 'B&W'}
+                                  {' · '}{f.printing_side === 'double' ? 'Double-sided' : 'Single-sided'}
+                                  {f.printing_charge != null && <> · <strong>{fmtMoney(f.printing_charge)}</strong></>}
+                                </div>
                               </div>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">

@@ -7,6 +7,8 @@ const Shop = require('../models/Shop');
 const Payment = require('../models/Payment');
 const { requireSuperAdmin } = require('../middleware/roleAuth');
 const { sendStoredFile } = require('../sendStoredFile');
+const { financialBreakdown } = require('../services/orderFinance');
+const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 
 // ── Auth ──────────────────────────────────────────
 
@@ -169,7 +171,20 @@ router.get('/orders', requireSuperAdmin, async (req, res) => {
     try {
         const { search = '', status = '', dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC' } = req.query;
         const result = await Order.listOrders({ search, status, dateFrom, dateTo, page: Number(page), limit: Number(limit), sort, dir });
-        res.json(result);
+        // Per-row split for the list (no files needed for the totals).
+        const orders = result.orders.map(o => {
+            const finance = financialBreakdown(o);
+            return {
+                ...o,
+                finance: {
+                    basis: finance.basis,
+                    printerPayable: finance.summary.printerPayable,
+                    grossExtraRevenue: finance.summary.grossExtraRevenue,
+                    customerTotal: finance.summary.customerTotal
+                }
+            };
+        });
+        res.json({ ...result, orders });
     } catch (err) {
         console.error('Super admin list orders error:', err);
         res.status(500).json({ message: 'Server Error' });
@@ -180,10 +195,66 @@ router.get('/orders/:id', requireSuperAdmin, async (req, res) => {
     try {
         const order = await Order.getOrderById(req.params.id);
         if (!order) return res.status(404).json({ message: 'Order not found' });
-        const files = await OrderFile.getFilesByOrder(order.id);
-        res.json({ ...order, files });
+        const [files, payments] = await Promise.all([
+            OrderFile.getFilesByOrder(order.id),
+            Payment.listForOrder(order.id)
+        ]);
+        const view = { ...order };
+        delete view.ticket_access_token_hash;
+        res.json({
+            ...view,
+            files,
+            payments,
+            payment: payments.length ? payments[payments.length - 1] : null,
+            finance: financialBreakdown(order, files, payments)
+        });
     } catch (err) {
         console.error('Super admin get order error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// Owner confirms a UPI QR / manual payment was received (they can see the customer
+// total to check the transfer). Goes through the same finalizer as Cashfree.
+router.post('/orders/:id/mark-paid', requireSuperAdmin, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+        const pending = await Order.getAdminConfirmablePayment(order.id);
+        if (!pending) return res.status(400).json({ message: 'This order has no pending payment to confirm.' });
+        const result = await processSuccessfulPayment(order.id, {
+            paymentId: pending.id,
+            method: pending.method,
+            amount: pending.amount,
+            currency: pending.currency,
+            source: 'super_admin_mark_paid'
+        });
+        const payment = await Payment.findByOrderId(order.id);
+        res.json({
+            status: payment.status,
+            method: payment.method,
+            transaction_ref: payment.transaction_ref,
+            payment_status: 'PAID',
+            ticket_status: result.ticketStatus,
+            ticket_number: result.ticketNumber
+        });
+    } catch (err) {
+        if (err.code === 'PAYMENT_AMOUNT_MISMATCH') {
+            return res.status(409).json({ message: 'Payment amount does not match the order. Not marked paid.' });
+        }
+        console.error('Super admin mark paid error:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// ── Financials: printer payable vs Campus Print extras, across orders ──
+// ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&location=<collection_location_id>
+router.get('/financials', requireSuperAdmin, async (req, res) => {
+    try {
+        const { dateFrom = '', dateTo = '', location = '' } = req.query;
+        res.json(await Order.getFinancialSummary({ dateFrom, dateTo, location }));
+    } catch (err) {
+        console.error('Super admin financials error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });

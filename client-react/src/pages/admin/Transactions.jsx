@@ -4,7 +4,8 @@ import Pagination from '../../components/admin/Pagination';
 import { adminApi, fmtMoney, fmtDate } from '../../lib/adminHelpers';
 import '../../styles/admin-effects.css';
 
-const PAY_STATUS_OPTIONS = ['success', 'refunded', 'pending', 'failed'];
+// The printer sees settled payments only, each with its printing payable.
+const PAY_STATUS_OPTIONS = ['success', 'refunded'];
 const PAY_LABELS = { success: 'Success', refunded: 'Refunded', pending: 'Pending', failed: 'Failed' };
 
 export default function Transactions() {
@@ -106,7 +107,7 @@ export default function Transactions() {
                   <th>Transaction Ref</th>
                   <th>Order ID</th>
                   <th>Customer Email</th>
-                  <th>Amount</th>
+                  <th>Printer Payable</th>
                   <th>Payment Status</th>
                   <th className="text-right">Date & Time</th>
                 </tr>
@@ -117,7 +118,7 @@ export default function Transactions() {
                     <td data-label="Transaction Ref" className="font-mono text-xs font-bold text-slate-900">{p.transaction_ref}</td>
                     <td data-label="Order ID" className="font-bold text-blue-600">#{String(p.order_id).padStart(4, '0')}</td>
                     <td data-label="Customer Email" className="font-medium text-slate-800">{p.customer_email}</td>
-                    <td data-label="Amount" className="font-black text-slate-900">{fmtMoney(p.amount)}</td>
+                    <td data-label="Printer Payable" className="font-black text-slate-900">{p.amount == null ? 'Not itemised' : fmtMoney(p.amount)}</td>
                     <td data-label="Payment Status">
                       <StatusBadge status={p.status} kind="payment" />
                     </td>
