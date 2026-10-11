@@ -17,12 +17,13 @@ export default function Footer() {
                         <Link to="/new-order">New Order</Link>
                         <Link to="/orders">My Orders</Link>
                         <Link to="/about">About</Link>
+                        <a href="mailto:printcampus@college.edu">Contact</a>
                     </div>
                     <div className="footer-col">
                         <h4>Connect</h4>
                         <a href="https://instagram.com" target="_blank" rel="noreferrer">Instagram</a>
                         <a href="https://linkedin.com" target="_blank" rel="noreferrer">LinkedIn</a>
-                        <a href="mailto:ayjn15@gmail.com">Email Us</a>
+                        <a href="mailto:printcampus@college.edu">Email Us</a>
                     </div>
                 </div>
             </div>
