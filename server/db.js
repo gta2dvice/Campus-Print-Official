@@ -49,9 +49,43 @@ async function run(sql, params = []) {
     return [result.rows, { rowCount: result.rowCount, affectedRows: result.rowCount }];
 }
 
+async function transaction(callback) {
+    const client = await pool.connect();
+    const tx = {
+        async query(sql, params = []) {
+            const text = toPgPlaceholders(mysqlToPg(sql));
+            const result = await client.query(text, coerceParams(params));
+            if (/^\s*insert\s+/i.test(text)) {
+                return [{
+                    insertId: result.rows[0] && result.rows[0].id,
+                    affectedRows: result.rowCount,
+                    rowCount: result.rowCount
+                }];
+            }
+            return [result.rows, { rowCount: result.rowCount, affectedRows: result.rowCount }];
+        },
+        execute(sql, params = []) {
+            return this.query(sql, params);
+        }
+    };
+
+    try {
+        await client.query('BEGIN');
+        const result = await callback(tx);
+        await client.query('COMMIT');
+        return result;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 const adapter = {
     execute: run,
     query: run,
+    transaction,
     connect: () => pool.connect(),
     end: () => pool.end(),
     // Raw pg pool for libraries that need one (the session store).

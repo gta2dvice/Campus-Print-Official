@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
 const router = express.Router();
 const Order = require('../models/Order');
 const OrderFile = require('../models/OrderFile');
@@ -14,7 +15,7 @@ const upiQr = require('../upiQr');
 const UPI_QR_TTL_MS = 15 * 60 * 1000;
 const slots = require('../slots');
 const pool = require('../db');
-const { uploadBuffer, buildObjectPath, downloadFile } = require('../storage');
+const { uploadBuffer, buildObjectPath, deleteFiles, downloadFile } = require('../storage');
 const cashfree = require('../cashfree');
 const { requireProfile } = require('../middleware/roleAuth');
 const { sendStoredFile } = require('../sendStoredFile');
@@ -284,6 +285,7 @@ router.get('/slots', async (req, res) => {
                      FROM orders
                      WHERE collection_time = ?
                        AND DATE(created_at) = CURDATE()
+                       AND payment_status = 'PAID'
                        AND status NOT IN ('rejected','cancelled')
                      GROUP BY collection_location_id`,
                     [time]
@@ -308,6 +310,7 @@ router.get('/slots', async (req, res) => {
                      FROM orders
                      WHERE collection_location_id = ?
                        AND DATE(created_at) = CURDATE()
+                       AND payment_status = 'PAID'
                        AND status NOT IN ('rejected','cancelled')
                      GROUP BY collection_time`,
                     [locationId]
@@ -339,7 +342,7 @@ router.get('/stats', async (req, res) => {
     }
 });
 
-// GET /api/orders/payment-options — public: what the payment step shows (shop phone, QR availability)
+// GET /api/orders/payment-options — public details shown during checkout.
 router.get('/payment-options', async (req, res) => {
     try {
         const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
@@ -350,23 +353,25 @@ router.get('/payment-options', async (req, res) => {
             // Path changes on every upload, so it doubles as a cache-buster for the image URL.
             qrVersion: shop?.payment_qr_path ? encodeURIComponent(shop.payment_qr_path.split('/').pop()) : null
         });
-    } catch (err) {
-        console.error('Payment options error:', err);
+    } catch (error) {
+        console.error('Payment options error:', error);
         res.status(500).json({ message: 'Server Error' });
     }
 });
 
-// GET /api/orders/payment-options/qr — public: the shop's QR Payment image (bucket is private)
+// GET /api/orders/payment-options/qr — serves the private shop QR image.
 router.get('/payment-options/qr', async (req, res) => {
     try {
         const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
-        if (!shop?.payment_qr_path) return res.status(404).json({ message: 'No payment QR configured' });
+        if (!shop?.payment_qr_path) {
+            return res.status(404).json({ message: 'No payment QR configured' });
+        }
         const buffer = await downloadFile(shop.payment_qr_path);
         res.setHeader('Content-Type', shop.payment_qr_mime || 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=300');
         res.send(buffer);
-    } catch (err) {
-        console.error('Payment QR error:', err);
+    } catch (error) {
+        console.error('Payment QR error:', error);
         res.status(500).json({ message: 'Server Error' });
     }
 });
@@ -704,9 +709,11 @@ function readOrderPayload(body) {
         collectionLocationId: body.collectionLocationId || null,
         collectionLocationName: body.collectionLocation || null,
         collectionTime: body.collectionTime || null,
-        // Derived from the server's own clock, not trusted from the client, so a pre-order
-        // placed after 5 PM IST is always correctly recorded against tomorrow's date.
-        collectionDate: slots.getOrderDateContext().date
+        collectionDate: slots.getOrderDateContext().date,
+        classroomDelivery: body.classroomDelivery === 'true' || body.classroomDelivery === true,
+        guestFullName: body.fullName || null,
+        guestPhone: body.phone || null,
+        guestClassroom: body.classroom || null
     };
 }
 
@@ -878,14 +885,30 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
             phoneAvailable: Boolean(phone)
         });
 
-        const cashfreeOrderId = `cp_${userId || 'guest'}_${Date.now()}`;
+        const cashfreeOrderId = `cp_${crypto.randomUUID()}`;
         const requestOrigin = req.get('origin') || '';
         const localFrontendOrigin = /^http:\/\/localhost(?::\d+)?$/.test(requestOrigin)
             ? requestOrigin
             : '';
         const frontend = (localFrontendOrigin || process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
         const publicApi = (process.env.PUBLIC_API_URL || '').replace(/\/$/, '');
-        const notifyUrl = publicApi ? `${publicApi}/api/orders/payment/webhook` : undefined;
+        let webhookOrigin = '';
+        try {
+            const parsedApi = new URL(publicApi);
+            if (parsedApi.protocol === 'https:' && parsedApi.pathname === '/' &&
+                !parsedApi.search && !parsedApi.hash && !parsedApi.username && !parsedApi.password) {
+                webhookOrigin = parsedApi.origin;
+            }
+        } catch {
+            // The production configuration check below reports an actionable error.
+        }
+        if (process.env.NODE_ENV === 'production' && !webhookOrigin) {
+            return res.status(503).json({
+                message: 'Cashfree payments require PUBLIC_API_URL to be a public HTTPS API origin.',
+                code: 'PAYMENT_WEBHOOK_URL_REQUIRED'
+            });
+        }
+        const notifyUrl = webhookOrigin ? `${webhookOrigin}/api/orders/payment/webhook` : undefined;
         const returnUrl = `${frontend}/new-order?cf_order={order_id}`;
         let returnOrigin = 'invalid';
         try {
@@ -893,6 +916,28 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
         } catch {
             // Keep diagnostics safe if a malformed return URL is configured.
         }
+
+        const data = readOrderPayload(body);
+        data.totalPrice = verifiedAmount;
+        data.fileCount = files.length;
+        const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
+        if (pickupErr) return res.status(400).json({ message: pickupErr });
+
+        stage = 'order_intent_persistence';
+        const ticketToken = createTicketToken(cashfreeOrderId);
+        const order = await Order.createPaymentIntent(userId, DEFAULT_SHOP_ID, data, {
+            gatewayOrderId: cashfreeOrderId,
+            ticketTokenHash: hashTicketToken(ticketToken)
+        });
+        try {
+            await persistUploadedFiles(userId, order.id, files, JSON.stringify(fileSettings), currentStage => {
+                stage = currentStage;
+            });
+        } catch (error) {
+            await Order.failPayment(cashfreeOrderId);
+            throw error;
+        }
+
         stage = 'cashfree_order_create';
         console.info('[PAYMENT_SUCCESS] Cashfree return URL configured:', {
             frontendOrigin: returnOrigin,
@@ -935,17 +980,20 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
         });
 
         stage = 'payment_session_validation';
-        if (!session.paymentSessionId) {
+        if (!session.paymentSessionId || session.cashfreeOrderId !== cashfreeOrderId ||
+            !cashfree.amountsMatch(session.orderAmount, verifiedAmount)) {
+            const mismatch = Boolean(session.paymentSessionId) &&
+                (session.cashfreeOrderId !== cashfreeOrderId || !cashfree.amountsMatch(session.orderAmount, verifiedAmount));
             console.error('[PAYMENT_CREATE_FAILED]', {
                 stage,
                 status: 502,
-                code: 'PAYMENT_SESSION_MISSING',
-                message: 'Cashfree response did not contain a payment session ID.',
+                code: mismatch ? 'CASHFREE_ORDER_MISMATCH' : 'PAYMENT_SESSION_MISSING',
+                message: 'Cashfree response did not match the persisted order intent.',
                 orderStatus: session.orderStatus || 'unknown'
             });
             return res.status(502).json({
-                message: 'Cashfree did not return a payment session. Please try again.',
-                code: 'PAYMENT_SESSION_MISSING'
+                message: 'Cashfree did not return a valid payment session. Please try again.',
+                code: mismatch ? 'CASHFREE_ORDER_MISMATCH' : 'PAYMENT_SESSION_MISSING'
             });
         }
 
@@ -956,7 +1004,7 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
         });
         res.json({
             paymentSessionId: session.paymentSessionId,
-            cashfreeOrderId: session.cashfreeOrderId,
+            cashfreeOrderId,
             mode: cashfree.getMode()
         });
     } catch (err) {
@@ -974,11 +1022,6 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
     }
 });
 
-// POST /api/orders/payment/simulate — TEMP stand-in or fallback when Cashfree keys fail.
-/**
- * Validates a guest order request, creates the order + its files, and records the payment row.
- * Shared by the test checkout (/payment/simulate) and offline payments (/payment/offline).
- */
 async function createGuestOrder(req, res, payment) {
     try {
         if (!req.files || req.files.length === 0) {
@@ -1057,9 +1100,20 @@ async function createGuestOrder(req, res, payment) {
     }
 }
 
-router.post('/payment/simulate', upload.array('files', 10), (req, res) =>
-    createGuestOrder(req, res, { method: 'simulated', transactionRef: `TXN-SIM-${Date.now()}`, status: 'success' })
-);
+// Explicit simulation endpoint; payment-session failures never fall back to it automatically.
+router.post('/payment/simulate', upload.array('files', 10), (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ message: 'Not found.' });
+    }
+    if (paymentGatewayReady()) {
+        return res.status(400).json({ message: 'Cashfree is configured. Use the Cashfree checkout.' });
+    }
+    return createGuestOrder(req, res, {
+        method: 'simulated',
+        transactionRef: `TXN-SIM-${Date.now()}`,
+        status: 'success'
+    });
+});
 
 // Payment methods chosen in the booking flow that are settled outside the app. The order is
 // created right away with a pending payment; the shop admin marks it paid once money arrives.
@@ -1233,12 +1287,11 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
     let verificationStage = 'request_received';
     let cashfreeOrderId;
     if (!paymentGatewayReady()) {
-        console.error('[PAYMENT_VERIFY_FAILED]', {
-            stage: 'gateway_configuration',
-            code: 'PAYMENT_GATEWAY_NOT_CONFIGURED',
-            message: 'Cashfree is not configured.'
+        return res.status(503).json({
+            status: 'PAYMENT_PENDING',
+            message: 'Payment gateway is not configured.',
+            code: 'PAYMENT_GATEWAY_NOT_CONFIGURED'
         });
-        return res.status(503).json({ message: 'Payment gateway is not configured.', code: 'PAYMENT_GATEWAY_NOT_CONFIGURED' });
     }
     try {
         cashfreeOrderId = req.body.cashfree_order_id || req.body.cashfreeOrderId;
@@ -1458,72 +1511,65 @@ router.post('/payment/verify', upload.array('files', 10), async (req, res) => {
             stage: verificationStage,
             error_code: safeError.code,
             message: safeError.message
-        };
-        console.error(
-            verificationStage === 'cashfree_status_verification' ? '[PAYMENT_VERIFY_FAILED]' : '[TICKET_CREATE_FAILED]',
-            diagnostic
-        );
-        res.status(500).json({
-            message: verificationStage === 'cashfree_status_verification'
-                ? 'Cashfree payment status could not be verified. Please retry.'
-                : 'Payment status was verified, but ticket creation failed. Please contact support.',
-            code: safeError.code
+        });
+        res.status(error.code === 'PAYMENT_ORDER_MISMATCH' ? 409 : 502).json({
+            status: 'PAYMENT_PENDING',
+            message: 'Payment confirmation is still pending. Please retry shortly.',
+            code: error.code || 'PAYMENT_VERIFICATION_FAILED'
         });
     }
 });
 
 // POST /api/orders/payment/webhook — Cashfree server-to-server payment events.
 router.post('/payment/webhook', async (req, res) => {
+    if (!paymentGatewayReady()) {
+        return res.status(503).json({ message: 'Payment gateway is not configured.' });
+    }
+    const signature = req.headers['x-webhook-signature'];
+    const timestamp = req.headers['x-webhook-timestamp'];
+    const rawBody = req.rawBody;
+    if (!signature || !timestamp || typeof rawBody !== 'string') {
+        return res.status(400).json({ message: 'Missing webhook signature.' });
+    }
+
+    const tsNum = Number(timestamp);
+    if (Number.isFinite(tsNum)) {
+        const ageMs = Math.abs(Date.now() - (String(timestamp).length <= 10 ? tsNum * 1000 : tsNum));
+        if (ageMs > 15 * 60 * 1000) return res.status(400).json({ message: 'Stale webhook.' });
+    }
     try {
-        if (!paymentGatewayReady()) return res.status(503).json({ message: 'Payment gateway is not configured.' });
-
-        const signature = req.headers['x-webhook-signature'];
-        const timestamp = req.headers['x-webhook-timestamp'];
-        const rawBody = req.rawBody;
-        if (!signature || !timestamp || typeof rawBody !== 'string') {
-            return res.status(400).json({ message: 'Missing webhook signature' });
-        }
-
-        const tsNum = Number(timestamp);
-        if (Number.isFinite(tsNum)) {
-            const ageMs = Math.abs(Date.now() - (String(timestamp).length <= 10 ? tsNum * 1000 : tsNum));
-            if (ageMs > 15 * 60 * 1000) {
-                return res.status(400).json({ message: 'Stale webhook' });
-            }
-        }
-
         cashfree.verifyWebhookSignature(signature, rawBody, timestamp);
+    } catch (error) {
+        console.warn('[CASHFREE_WEBHOOK_REJECTED]', {
+            code: String(error.code || 'INVALID_SIGNATURE').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+        });
+        return res.status(400).json({ message: 'Invalid webhook signature.' });
+    }
 
-        const eventType = req.body?.type || req.body?.event || '';
-        const orderId = req.body?.data?.order?.order_id;
-        const paymentStatus = String(req.body?.data?.payment?.payment_status || '').toUpperCase();
-        const cfPaymentId = req.body?.data?.payment?.cf_payment_id;
+    const orderId = req.body?.data?.order?.order_id;
+    if (typeof orderId !== 'string' || !/^cp_[a-f0-9-]{36}$/i.test(orderId)) {
+        return res.status(200).json({ ok: true, ignored: true });
+    }
 
-        if (!orderId) return res.status(200).json({ ok: true });
-
-        let status = null;
-        try {
-            const cfOrder = await cashfree.fetchOrder(orderId);
-            if (cashfree.isOrderPaid(cfOrder)) status = 'success';
-            else if (eventType.includes('FAILED') || eventType.includes('USER_DROPPED') || paymentStatus === 'FAILED' || paymentStatus === 'USER_DROPPED') {
-                status = 'failed';
-            }
-        } catch (fetchErr) {
-            console.error('Cashfree webhook fetch error:', fetchErr.response?.data || fetchErr.message);
+    try {
+        const result = await reconcileCashfreePayment(orderId);
+        const eventType = String(req.body?.type || req.body?.event || '').toUpperCase();
+        const eventPaymentStatus = String(req.body?.data?.payment?.payment_status || '').toUpperCase();
+        const indicatesSuccess = eventType.includes('SUCCESS') || eventPaymentStatus === 'SUCCESS';
+        if (result.status === 'PAYMENT_PENDING' && indicatesSuccess) {
+            return res.status(503).json({ message: 'Cashfree payment status is not yet final; retry webhook.' });
         }
-
-        if (status) {
-            await Payment.updateByGatewayOrderId(orderId, {
-                status,
-                transactionRef: cfPaymentId ? String(cfPaymentId) : undefined
-            });
-        }
-
-        res.status(200).json({ ok: true });
-    } catch (err) {
-        console.error('Cashfree webhook error:', err.message);
-        res.status(400).json({ message: 'Invalid webhook' });
+        res.status(200).json({ ok: true, status: result.status });
+    } catch (error) {
+        const safeError = safeOrderError(error);
+        console.error('[CASHFREE_WEBHOOK_RECONCILIATION_FAILED]', {
+            cashfreeOrderId: orderId,
+            code: safeError.code,
+            message: safeError.message
+        });
+        res.status(503).json({ message: 'Payment status could not be reconciled; retry webhook.' });
     }
 });
+
 
 module.exports = router;

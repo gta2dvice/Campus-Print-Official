@@ -1,7 +1,11 @@
 const pool = require('../db');
 const Profile = require('./Profile');
 
-async function createOrder(userId, shopId, data) {
+async function createOrder(userId, shopId, data, options = {}) {
+    return createOrderRecord(userId, shopId, data, options);
+}
+
+async function createOrderRecord(userId, shopId, data, options) {
     const {
         paperSize, copies, spiralBinding, expressDelivery, totalPrice, fileCount,
         collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
@@ -14,35 +18,128 @@ async function createOrder(userId, shopId, data) {
         studentId = profile ? profile.id : null;
     }
 
-    const [result] = await pool.execute(
-        `INSERT INTO orders
+    return pool.transaction(async tx => {
+        const [result] = await tx.execute(
+            `INSERT INTO orders
             (user_id, student_id, shop_id, paper_size, copies, spiral_binding, express_delivery, total_price, file_count,
-             collection_location_id, collection_location, collection_time, collection_date, total_pages,
-             guest_full_name, guest_phone, guest_classroom)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-            userId || null,
-            studentId,
-            shopId,
-            paperSize || 'A4',
-            copies || 1,
-            spiralBinding ? 1 : 0,
-            expressDelivery ? 1 : 0,
-            totalPrice || 0,
-            fileCount || 0,
-            collectionLocationId || null,
-            collectionLocationName || null,
-            collectionTime || null,
-            collectionDate || null,
-            totalPages || 0,
-            guestFullName || null,
-            guestPhone || null,
-            guestClassroom || null
-        ]
+             collection_location_id, collection_location, collection_time, total_pages,
+             collection_date,
+             guest_full_name, guest_phone, guest_classroom, payment_status, ticket_access_token_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`,
+            [
+                userId || null,
+                studentId,
+                shopId,
+                paperSize || 'A4',
+                copies || 1,
+                spiralBinding ? 1 : 0,
+                expressDelivery ? 1 : 0,
+                totalPrice || 0,
+                fileCount || 0,
+                collectionLocationId || null,
+                collectionLocationName || null,
+                collectionTime || null,
+                totalPages || 0,
+                collectionDate || null,
+                guestFullName || null,
+                guestPhone || null,
+                guestClassroom || null,
+                options.paymentStatus || 'PAID',
+                options.ticketTokenHash || null
+            ]
+        );
+        const id = result.insertId;
+        const ticketNumber = options.paymentStatus === 'PAYMENT_PENDING'
+            ? null
+            : `CP-${String(id).padStart(3, '0')}`;
+        if (ticketNumber) {
+            await tx.execute('UPDATE orders SET ticket_number = ? WHERE id = ?', [ticketNumber, id]);
+        }
+        if (options.gatewayOrderId) {
+            await tx.execute(
+                `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, gateway_order_id)
+                 VALUES (?, ?, ?, ?, 'pending', 'cashfree', ?)`,
+                [id, userId || null, shopId, totalPrice, options.gatewayOrderId]
+            );
+        }
+        return { id, ticketNumber };
+    });
+}
+
+async function createPaymentIntent(userId, shopId, data, { gatewayOrderId, ticketTokenHash }) {
+    return createOrderRecord(userId, shopId, data, {
+        paymentStatus: 'PAYMENT_PENDING',
+        ticketTokenHash,
+        gatewayOrderId
+    });
+}
+
+async function getPaymentIntentByGatewayOrderId(gatewayOrderId) {
+    const [rows] = await pool.execute(
+        `SELECT p.id AS payment_id, p.order_id, p.amount AS payment_amount, p.status AS payment_status,
+                p.transaction_ref, p.gateway_order_id, o.total_price, o.payment_status AS order_payment_status,
+                o.ticket_number, o.ticket_access_token_hash, o.user_id, o.guest_full_name
+         FROM payments p
+         JOIN orders o ON o.id = p.order_id
+         WHERE p.gateway_order_id = ? LIMIT 1`,
+        [gatewayOrderId]
     );
-    const ticketNumber = `CP-${String(result.insertId).padStart(3, '0')}`;
-    await pool.execute(`UPDATE orders SET ticket_number = ? WHERE id = ?`, [ticketNumber, result.insertId]);
-    return { id: result.insertId, ticketNumber };
+    return rows[0] || null;
+}
+
+async function completePayment(gatewayOrderId, transactionRef) {
+    return pool.transaction(async tx => {
+        const [rows] = await tx.query(
+            `SELECT p.order_id, p.status AS payment_status, o.ticket_number
+             FROM payments p JOIN orders o ON o.id = p.order_id
+             WHERE p.gateway_order_id = ? FOR UPDATE OF p, o`,
+            [gatewayOrderId]
+        );
+        const payment = rows[0];
+        if (!payment) return null;
+        if (payment.payment_status === 'refunded') {
+            throw new Error('A refunded payment cannot be completed.');
+        }
+
+        const ticketNumber = `CP-${String(payment.order_id).padStart(3, '0')}`;
+        await tx.execute(
+            `UPDATE payments
+             SET status = 'success', transaction_ref = COALESCE(?, transaction_ref), updated_at = NOW()
+             WHERE gateway_order_id = ? AND status <> 'refunded'`,
+            [transactionRef || null, gatewayOrderId]
+        );
+        await tx.execute(
+            `UPDATE orders
+             SET payment_status = 'PAID', ticket_number = COALESCE(ticket_number, ?)
+             WHERE id = ?`,
+            [ticketNumber, payment.order_id]
+        );
+        return { id: payment.order_id, ticketNumber: payment.ticket_number || ticketNumber };
+    });
+}
+
+async function failPayment(gatewayOrderId) {
+    return pool.transaction(async tx => {
+        const [rows] = await tx.query(
+            `SELECT p.order_id, p.status AS payment_status
+             FROM payments p JOIN orders o ON o.id = p.order_id
+             WHERE p.gateway_order_id = ? FOR UPDATE OF p, o`,
+            [gatewayOrderId]
+        );
+        const payment = rows[0];
+        if (!payment || payment.payment_status === 'success' || payment.payment_status === 'refunded') return;
+        await tx.execute(
+            `UPDATE payments SET status = 'failed', updated_at = NOW()
+             WHERE gateway_order_id = ? AND status = 'pending'`,
+            [gatewayOrderId]
+        );
+        await tx.execute(
+            `UPDATE orders SET payment_status = 'PAYMENT_FAILED'
+             WHERE id = ? AND payment_status = 'PAYMENT_PENDING'`,
+            [payment.order_id]
+        );
+    });
 }
 
 async function getOrderForUser(orderId, userId) {
@@ -51,7 +148,7 @@ async function getOrderForUser(orderId, userId) {
          FROM orders o
          JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.id = ? AND o.user_id = ?`,
+         WHERE o.id = ? AND o.user_id = ? AND o.payment_status = 'PAID'`,
         [orderId, userId]
     );
     return rows[0] || null;
@@ -62,7 +159,7 @@ async function getOrdersByUser(userId) {
         `SELECT o.*, p.full_name, p.phone_number, p.class_room_number
          FROM orders o
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.user_id = ? ORDER BY o.created_at DESC LIMIT 50`,
+         WHERE o.user_id = ? AND o.payment_status = 'PAID' ORDER BY o.created_at DESC LIMIT 50`,
         [userId]
     );
     return rows;
@@ -93,7 +190,8 @@ async function getGuestOrdersByPhone(phone) {
 
 async function getOrderStats(userId) {
     const [rows] = await pool.execute(
-        'SELECT status, COUNT(*) AS count FROM orders WHERE user_id = ? GROUP BY status',
+        `SELECT status, COUNT(*) AS count FROM orders
+         WHERE user_id = ? AND payment_status = 'PAID' GROUP BY status`,
         [userId]
     );
     const result = { total: 0, in_progress: 0, ready: 0 };
@@ -123,7 +221,7 @@ const ALLOWED_TRANSITIONS = {
 
 async function listOrders({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC' } = {}) {
     const offset = (page - 1) * limit;
-    const where = [];
+    const where = ["o.payment_status = 'PAID'"];
     const params = [];
 
     if (shopId) {
@@ -131,8 +229,8 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
         params.push(shopId);
     }
     if (search) {
-        where.push('(o.id = ? OR u.email LIKE ? OR p.full_name LIKE ?)');
-        params.push(Number(search) || 0, `%${search}%`, `%${search}%`);
+        where.push('(o.id = ? OR u.email LIKE ? OR p.full_name LIKE ? OR o.guest_full_name LIKE ?)');
+        params.push(Number(search) || 0, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (status) {
         where.push('o.status = ?');
@@ -163,7 +261,10 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
         [...params, limit, offset]
     );
     const [[{ count }]] = await pool.query(
-        `SELECT COUNT(*) AS count FROM orders o LEFT JOIN users u ON u.id = o.user_id ${whereClause}`,
+        `SELECT COUNT(*) AS count FROM orders o
+         LEFT JOIN users u ON u.id = o.user_id
+         LEFT JOIN student_profiles p ON p.id = o.student_id
+         ${whereClause}`,
         params
     );
     return { orders: rows, total: count, page, limit };
@@ -178,8 +279,20 @@ async function getOrderById(orderId, shopId = null) {
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN shops s ON s.id = o.shop_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
-         WHERE o.id = ? ${shopFilter}`,
+         WHERE o.id = ? AND o.payment_status = 'PAID' ${shopFilter}`,
         params
+    );
+    return rows[0] || null;
+}
+
+async function getOrderByTicketTokenHash(tokenHash) {
+    const [rows] = await pool.execute(
+        `SELECT o.*, u.email AS customer_email, s.shop_name, p.full_name, p.phone_number, p.class_room_number
+         FROM orders o LEFT JOIN users u ON u.id = o.user_id
+         LEFT JOIN shops s ON s.id = o.shop_id
+         LEFT JOIN student_profiles p ON p.id = o.student_id
+         WHERE o.ticket_access_token_hash = ? AND o.payment_status = 'PAID'`,
+        [tokenHash]
     );
     return rows[0] || null;
 }
@@ -205,27 +318,31 @@ async function updateStatus(orderId, newStatus, rejectionReason = null, shopId =
 }
 
 async function getDashboardStats(shopId = null) {
-    const shopFilter = shopId ? 'WHERE shop_id = ?' : '';
+    const shopFilter = shopId ? ' AND shop_id = ?' : '';
     const shopParams = shopId ? [shopId] : [];
 
-    const [statusRows] = await pool.query(`SELECT status, COUNT(*) AS count FROM orders ${shopFilter} GROUP BY status`, shopParams);
+    const [statusRows] = await pool.query(
+        `SELECT status, COUNT(*) AS count FROM orders WHERE payment_status = 'PAID' ${shopFilter} GROUP BY status`,
+        shopParams
+    );
     const counts = { pending: 0, accepted: 0, printing: 0, ready: 0, completed: 0, rejected: 0, cancelled: 0 };
     statusRows.forEach(r => { counts[r.status] = parseInt(r.count, 10); });
 
-    const todayFilter = shopId ? 'AND shop_id = ?' : '';
     const [[todayRow]] = await pool.query(
         `SELECT COUNT(*) AS orders_today, COALESCE(SUM(total_price), 0) AS earnings_today
-         FROM orders WHERE DATE(created_at) = CURDATE() AND status NOT IN ('rejected','cancelled') ${todayFilter}`,
+         FROM orders WHERE payment_status = 'PAID' AND DATE(created_at) = CURDATE()
+           AND status NOT IN ('rejected','cancelled') ${shopFilter}`,
         shopParams
     );
     const [[totalRow]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS total_earnings FROM orders WHERE status = 'completed' ${todayFilter}`,
+        `SELECT COALESCE(SUM(total_price), 0) AS total_earnings FROM orders
+         WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`,
         shopParams
     );
-    const recentFilter = shopId ? 'WHERE o.shop_id = ?' : '';
+    const recentFilter = shopId ? ' AND o.shop_id = ?' : '';
     const [recentOrders] = await pool.query(
         `SELECT o.*, u.email AS customer_email FROM orders o LEFT JOIN users u ON u.id = o.user_id
-         ${recentFilter} ORDER BY o.created_at DESC LIMIT 5`,
+         WHERE o.payment_status = 'PAID' ${recentFilter} ORDER BY o.created_at DESC LIMIT 5`,
         shopParams
     );
 
@@ -245,33 +362,35 @@ async function getEarnings(shopId = null) {
 
     const [[today]] = await pool.query(
         `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
-         WHERE status = 'completed' AND DATE(created_at) = CURDATE() ${shopFilter}`, shopParams
+         WHERE payment_status = 'PAID' AND status = 'completed' AND DATE(created_at) = CURDATE() ${shopFilter}`, shopParams
     );
     const [[yesterday]] = await pool.query(
         `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
-         WHERE status = 'completed' AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) ${shopFilter}`, shopParams
+         WHERE payment_status = 'PAID' AND status = 'completed' AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) ${shopFilter}`, shopParams
     );
     const [[week]] = await pool.query(
         `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
-         WHERE status = 'completed' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) ${shopFilter}`, shopParams
+         WHERE payment_status = 'PAID' AND status = 'completed' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) ${shopFilter}`, shopParams
     );
     const [[month]] = await pool.query(
         `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
-         WHERE status = 'completed' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) ${shopFilter}`, shopParams
+         WHERE payment_status = 'PAID' AND status = 'completed' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) ${shopFilter}`, shopParams
     );
     const [[total]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders WHERE status = 'completed' ${shopFilter}`, shopParams
+        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+         WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`, shopParams
     );
     const [trend] = await pool.query(
         `SELECT DATE(created_at) AS date, COALESCE(SUM(total_price), 0) AS amount
-         FROM orders WHERE status = 'completed' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY) ${shopFilter}
+         FROM orders WHERE payment_status = 'PAID' AND status = 'completed'
+           AND created_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY) ${shopFilter}
          GROUP BY DATE(created_at) ORDER BY date ASC`, shopParams
     );
     const txFilter = shopId ? 'AND o.shop_id = ?' : '';
     const [recentTransactions] = await pool.query(
         `SELECT o.id, o.total_price, o.created_at, u.email AS customer_email
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
-         WHERE o.status = 'completed' ${txFilter} ORDER BY o.created_at DESC LIMIT 10`, shopParams
+         WHERE o.payment_status = 'PAID' AND o.status = 'completed' ${txFilter} ORDER BY o.created_at DESC LIMIT 10`, shopParams
     );
 
     const avgOrderValue = total.count > 0 ? parseFloat(total.amount) / parseInt(total.count, 10) : 0;
@@ -291,16 +410,19 @@ async function getEarnings(shopId = null) {
 // ── Super Admin: platform-wide ───────────────────
 
 async function getPlatformStats() {
-    const [statusRows] = await pool.query('SELECT status, COUNT(*) AS count FROM orders GROUP BY status');
+    const [statusRows] = await pool.query(
+        `SELECT status, COUNT(*) AS count FROM orders WHERE payment_status = 'PAID' GROUP BY status`
+    );
     const counts = { pending: 0, accepted: 0, printing: 0, ready: 0, completed: 0, rejected: 0, cancelled: 0 };
     statusRows.forEach(r => { counts[r.status] = parseInt(r.count, 10); });
 
     const [[revenueRow]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS revenue FROM orders WHERE status = 'completed'`
+        `SELECT COALESCE(SUM(total_price), 0) AS revenue FROM orders
+         WHERE payment_status = 'PAID' AND status = 'completed'`
     );
     const [ordersOverTime] = await pool.query(
         `SELECT DATE(created_at) AS date, COUNT(*) AS count
-         FROM orders WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+         FROM orders WHERE payment_status = 'PAID' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
          GROUP BY DATE(created_at) ORDER BY date ASC`
     );
 
@@ -314,6 +436,10 @@ async function getPlatformStats() {
 
 module.exports = {
     createOrder,
+    createPaymentIntent,
+    getPaymentIntentByGatewayOrderId,
+    completePayment,
+    failPayment,
     getOrderForUser,
     getOrdersByUser,
     getGuestOrdersByPhone,
@@ -322,6 +448,7 @@ module.exports = {
     ALLOWED_TRANSITIONS,
     listOrders,
     getOrderById,
+    getOrderByTicketTokenHash,
     updateStatus,
     getDashboardStats,
     getEarnings,

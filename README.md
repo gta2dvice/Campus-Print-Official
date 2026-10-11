@@ -17,10 +17,11 @@ Students typically wait in line at a campus print shop with files on a USB drive
 1. A **student** signs up or logs in on the public React site.
 2. They upload files (PDF, DOCX, DOC, PNG, JPEG), set colour / paper / sides / copies / add-ons, and the backend estimates or detects page count.
 3. They choose a **collection location** and **time slot**, then pay.
-4. The backend **creates the print order only after payment succeeds** (Cashfree verification, or a local simulate path when Cashfree keys are not set).
-5. The order is assigned to **shop id 1** (hard-coded single-shop deployment).
-6. A **shop admin** sees the order as `pending`, downloads files, and moves it through accept → printing → ready → completed.
-7. The student tracks status on the dashboard and keeps a **collection ticket** (ticket number, location, time, transaction ref).
+4. Before checkout, the backend persists a `PAYMENT_PENDING` order intent, payment row, customer/collection details, print configuration, and uploaded file references.
+5. A trusted Cashfree verification or signed webhook marks that intent paid and assigns its ticket.
+6. The order is assigned to **shop id 1** (hard-coded single-shop deployment).
+7. A **shop admin** sees only paid orders as `pending`, downloads files, and moves them through accept → printing → ready → completed.
+8. The student tracks status on the dashboard and keeps a **secure collection ticket** (ticket number, location, time, transaction ref).
 
 Fulfilment in this codebase is **campus pickup**, not courier tracking. An “Express Delivery” add-on is a **price flag** stored on the order; it does not add a separate delivery workflow.
 
@@ -36,18 +37,17 @@ Signup always creates a student. Shop and super-admin users are seeded with `npm
 
 Student, shop-admin, and super-admin sessions are **separate** cookie fields on the same `express-session`. Logging into one panel does not automatically authenticate the others.
 
-### Implemented workflow (payment first)
-
-Payment must be verified by the backend **before** an `orders` row exists for Cashfree (and the simulate path also creates the order only after the simulate POST succeeds). Shop staff therefore only see jobs that already have a payment record.
+### Implemented Cashfree workflow
 
 **Cashfree path**
 
-1. Student submits checkout → `POST /api/orders/payment/create` creates a Cashfree order (no print order yet).
-2. Browser opens Cashfree Checkout (modal).
-3. `POST /api/orders/payment/verify` fetches Cashfree until `order_status === PAID`, checks amount, then inserts the order, uploads files to Supabase Storage, and inserts a payment with `status: success`, `method: cashfree`.
-4. Student is sent to `/ticket?id=…`.
+1. Student submits checkout → `POST /api/orders/payment/create` calculates the amount server-side, creates the pending order/payment intent, stores uploaded files in Supabase Storage, and then creates a Cashfree payment session.
+2. Browser opens Cashfree Checkout (modal); browser state is not the source of truth.
+3. Cashfree calls `POST /api/orders/payment/webhook`. The server verifies its signature, fetches the Cashfree order and payment records, checks the ID/currency/amount, and idempotently settles the stored intent and assigns one ticket.
+4. On return, `POST /api/orders/payment/verify` performs the same trusted server-side reconciliation and returns `PAID`, `PAYMENT_PENDING`, or `PAYMENT_FAILED`. The client retries pending confirmation and navigates to `/ticket?token=…` only when the backend confirms payment.
+5. The opaque Cashfree order ID is retained locally before checkout. Reopening the site resumes verification; the guest ticket endpoint accepts a separate HMAC-derived bearer token, not a sequential order ID.
 
-**Simulate path** (only when `CASHFREE_APP_ID` and `CASHFREE_SECRET_KEY` are both unset)
+**Simulate path** remains a separate development-only route (`POST /api/orders/payment/simulate`) when Cashfree is not configured.
 
 1. Create returns **503**.
 2. Client calls `POST /api/orders/payment/simulate`.
@@ -55,7 +55,7 @@ Payment must be verified by the backend **before** an `orders` row exists for Ca
 
 If Cashfree keys **are** set, simulate is rejected (`400`: use the real checkout).
 
-Webhook `POST /api/orders/payment/webhook` can update an **existing** payment row by `gateway_order_id`. It does **not** create the print order. The webhook is registered only if `PUBLIC_API_URL` is set.
+The webhook and browser verification converge on the same transaction-locked settlement function. Unique constraints on Cashfree order IDs, ticket numbers, and guest ticket-token hashes prevent duplicate records. Shop/admin order lists and slot counts exclude unpaid intents. For webhook recovery in a deployed environment, set `PUBLIC_API_URL` to the publicly reachable API origin so Cashfree can reach the webhook; configure the same webhook in the Cashfree dashboard if required by the account.
 
 ### Order lifecycle
 
@@ -75,16 +75,16 @@ Shop-admin transitions (`Order.ALLOWED_TRANSITIONS`):
 | `ready` | `completed`, `cancelled` |
 | `completed` / `rejected` / `cancelled` | none |
 
-Default on insert is `pending`. That happens **after** payment, so `pending` here means “paid, waiting for the shop,” not “unpaid.”
+`orders.status` remains the shop workflow and defaults to `pending`. Payment is tracked separately in `orders.payment_status` (`PAYMENT_PENDING`, `PAID`, `PAYMENT_FAILED`), so shop `pending` means “paid, waiting for the shop.” The corresponding `payments.status` is `pending`, `success`, `failed`, or `refunded`.
 
 Mapping to the product lifecycle names:
 
 | Named stage | In this repo |
 |---|---|
 | CREATE ORDER | Client form on `/new-order` (not a DB status). |
-| PAYMENT PENDING | **Not implemented yet** as an order status. Cashfree has an unpaid gateway order until verify succeeds. |
-| PAYMENT VERIFIED | Implemented as `POST /api/orders/payment/verify` (and simulate). Not an order status. |
-| PAID | Payment row `status = success`. Print order created as `pending`. |
+| PAYMENT PENDING | `orders.payment_status = PAYMENT_PENDING` and `payments.status = pending`; intent and files already exist before checkout. |
+| PAYMENT VERIFIED | Signed webhook or `POST /api/orders/payment/verify` re-fetches Cashfree order and payment state, verifies amount/currency, and settles idempotently. |
+| PAID | `orders.payment_status = PAID`, payment row `status = success`, and `ticket_number` is assigned. Print workflow `orders.status` becomes `pending`. |
 | SENT TO PRINTER | **Not implemented yet** as a named state. After pay, the order is `pending` on shop `1` and listed in the shop admin panel. |
 | ACCEPTED | `accepted` |
 | PRINTING | `printing` |
@@ -92,7 +92,7 @@ Mapping to the product lifecycle names:
 | OUT FOR DELIVERY | **Not implemented yet** |
 | DELIVERED / COMPLETED | `completed` (shop marks pickup done). There is no courier “delivered” status. |
 
-**Payment statuses** (`payments.status`): `pending`, `success`, `failed`, `refunded`. New payments are inserted as `success`. Reject/cancel sets the payment to `refunded` in the **database only**. A Cashfree refund API call is **Not implemented yet**.
+**Payment statuses** (`payments.status`): `pending`, `success`, `failed`, `refunded`. Cashfree intents start as `pending` and transition to `success` or `failed`. Reject/cancel sets the payment to `refunded` in the **database only**. A Cashfree refund API call is **Not implemented yet**.
 
 ---
 
@@ -304,8 +304,9 @@ Names taken from `.env.example` and server code. **Do not put real keys in git.*
 |---|---|
 | `PORT` | API port (default `3000`) |
 | `NODE_ENV` | `production` enables `Secure` + `SameSite=None` cookies |
-| `FRONTEND_URL` | CORS allowlist + Cashfree `return_url` |
-| `PUBLIC_API_URL` | Cashfree `notify_url` = `{PUBLIC_API_URL}/api/orders/payment/webhook` |
+| `FRONTEND_URL` | Exact production frontend origin allowed by CORS + Cashfree `return_url` |
+| `CORS_ORIGINS` | Optional comma-separated list of additional exact frontend origins allowed by CORS |
+| `PUBLIC_API_URL` | Public HTTPS API origin for Cashfree `notify_url`; required when `NODE_ENV=production` |
 | `SUPABASE_STORAGE_BUCKET` | Default `uploaded-pdfs` |
 | `CRON_SECRET` | Protects `/api/internal/cleanup-pdfs` |
 
@@ -321,8 +322,9 @@ Names taken from `.env.example` and server code. **Do not put real keys in git.*
 | `CASHFREE_SECRET_KEY` | Secret (same environment as App ID) |
 | `CASHFREE_ENV` | `sandbox` or `production` (default `sandbox`) |
 | `CASHFREE_DEFAULT_PHONE` | Fallback customer phone (default `9999999999`) |
+| `TICKET_TOKEN_SECRET` | Dedicated secret used to derive secure guest ticket tokens (falls back to the Cashfree secret if unset) |
 
-Use **test keys with `sandbox`** and **live keys with `production`**. Mixing them causes Cashfree “Authentication failed”. Leave both keys empty to use simulate checkout.
+Use **test keys with `sandbox`** and **live keys with `production`**. Mixing them causes Cashfree “Authentication failed”. Payment-session failures are returned to the frontend and are not converted into simulated checkouts.
 
 ### Optional / not in `.env.example`
 
@@ -338,7 +340,7 @@ Use **test keys with `sandbox`** and **live keys with `production`**. Mixing the
 
 | Variable | Purpose |
 |---|---|
-| `VITE_API_URL` | Leave empty for Vite `/api` proxy and same-origin Express. Set only if the SPA is on another origin. |
+| `VITE_API_URL` | Leave empty for the Vercel `/api` rewrite. The helper that reads it is not used by every API call. |
 
 ---
 
@@ -432,7 +434,7 @@ Prefix `/api`. Student and payment routes use `credentials: 'include'`.
 Observed config (not a full Docker/K8s setup):
 
 **Express host (e.g. Render, VM)**  
-Set the env vars above, `NODE_ENV=production`, `FRONTEND_URL` to the public site origin, `PUBLIC_API_URL` to the public API origin. Build the client, then `npm start`. The process also runs PDF cleanup on boot and every hour.
+Set the env vars above, `NODE_ENV=production`, `FRONTEND_URL` to the exact public Vercel origin, and `PUBLIC_API_URL` to the public Render API origin. Vercel builds the frontend separately; Render can run backend-only without `client-react/dist`. If a client build is present, Express serves it; otherwise the API root returns a health response. Start Render with `npm start`. The process also runs PDF cleanup on boot and every hour.
 
 **Vercel (`client-react/vercel.json`)**  
 Static build of the SPA. Rewrites `/api/*` to `https://campus-print-1yeh.onrender.com/api/$1` (the URL currently in that file). Root `vercel.json` schedules:
@@ -445,7 +447,7 @@ That cron only works if the Vercel project can reach an API that implements that
 
 **Supabase Edge Function** `cleanup-expired-pdfs`: optional extra cleanup; `config.toml` sets `verify_jwt = false` and the function still checks `CRON_SECRET` when set.
 
-HTTPS is required for production cookies (`secure: true`). If the SPA and API are on different sites, include `FRONTEND_URL` in CORS and set `VITE_API_URL` on the frontend build.
+The Vercel frontend uses relative `/api/...` requests; `client-react/vercel.json` rewrites them to `https://campus-print-1yeh.onrender.com/api/...`. No `VITE_API_URL` is required with this proxy setup. Keep `VITE_API_URL` unset unless all frontend API calls are migrated to use it. HTTPS is required for production cookies (`secure: true`).
 
 ---
 
