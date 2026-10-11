@@ -1,28 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Toast from '../../components/Toast';
 import StatusBadge from '../../components/admin/StatusBadge';
 import Pagination from '../../components/admin/Pagination';
 import { adminApi, fmtMoney, fmtDate, fmtPickup, LIVE_REFRESH_MS, STATUS_LABELS } from '../../lib/adminHelpers';
+import { canPreview, previewFile, downloadFile } from '../../lib/fileAccess';
 
-const STATUS_OPTIONS = ['pending', 'accepted', 'printing', 'ready', 'completed', 'rejected', 'cancelled'];
+const STATUS_OPTIONS = ['pending', 'completed', 'rejected', 'cancelled'];
 
 const ACTION_BUTTON_CLASSES = {
   accepted: 'admin-action-btn admin-action-btn-accept',
   rejected: 'admin-action-btn admin-action-btn-reject',
   printing: 'admin-action-btn admin-action-btn-print',
   ready: 'admin-action-btn admin-action-btn-ready',
-  completed: 'admin-action-btn admin-action-btn-complete',
+  completed: 'admin-action-btn admin-action-btn-accept',
 };
 
+// Pending → Accept → Completed (Ready for Pickup), or Reject. Orders left in a
+// legacy intermediate state (accepted / printing / ready) can only be completed.
+const LEGACY_COMPLETE = [{ status: 'completed', label: 'Mark Ready for Pickup' }];
 const NEXT_ACTIONS_CONFIG = {
   pending: [
-    { status: 'accepted', label: 'Accept' },
+    { status: 'completed', label: 'Accept' },
     { status: 'rejected', label: 'Reject' },
   ],
-  accepted: [{ status: 'printing', label: 'Start Printing' }],
-  printing: [{ status: 'ready', label: 'Mark Ready' }],
-  ready: [{ status: 'completed', label: 'Mark Completed' }],
+  accepted: LEGACY_COMPLETE,
+  printing: LEGACY_COMPLETE,
+  ready: LEGACY_COMPLETE,
 };
 
 const PAYMENT_METHOD_LABELS = {
@@ -120,16 +124,49 @@ export default function Orders() {
     setAppliedFilters({ search: '', status: '', dateFrom: '', dateTo: '' });
   }
 
+  // One status change at a time: the ref blocks repeat clicks before React re-renders.
+  const busyRef = useRef(false);
+  const [busyOrderId, setBusyOrderId] = useState(null);
+
   async function updateOrderStatus(orderId, newStatus, closeModal = false) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusyOrderId(orderId);
     try {
       const res = await adminApi(`/api/admin/orders/${orderId}/status`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) });
-      const respData = await res.json();
-      if (!res.ok) { showToast(respData.message || 'Update failed', 'error'); return; }
-      showToast(`Order marked as ${STATUS_LABELS[newStatus] || newStatus}.`);
+      const respData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(respData.message || 'Update failed', 'error');
+        loadOrders(true);
+        return;
+      }
+      showToast(newStatus === 'completed'
+        ? 'Order accepted — moved to Completed (Ready for Pickup).'
+        : `Order marked as ${STATUS_LABELS[newStatus] || newStatus}.`);
+      // Reflect the move right away; the reload below confirms it from the server.
+      setData((d) => (d ? {
+        ...d,
+        orders: d.orders
+          .map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+          .filter((o) => !appliedFilters.status || o.status === appliedFilters.status),
+      } : d));
       if (closeModal) setModalOrder(null);
-      loadOrders();
+      loadOrders(true);
     } catch {
       showToast('Connection error. Please try again.', 'error');
+    } finally {
+      busyRef.current = false;
+      setBusyOrderId(null);
+    }
+  }
+
+  async function openFile(orderId, file, mode) {
+    const url = `/api/admin/orders/${orderId}/documents/${file.id}`;
+    try {
+      if (mode === 'preview') await previewFile(url);
+      else await downloadFile(url, file.original_name);
+    } catch (err) {
+      showToast(err.message || 'Could not open this file.', 'error');
     }
   }
 
@@ -290,6 +327,7 @@ export default function Orders() {
                           <button
                             key={a.status}
                             onClick={() => (a.status === 'rejected' ? openRejectModal(o.id) : updateOrderStatus(o.id, a.status))}
+                            disabled={busyOrderId === o.id}
                             className={ACTION_BUTTON_CLASSES[a.status] || 'admin-action-btn admin-action-btn-print'}
                           >
                             {a.label}
@@ -475,20 +513,20 @@ export default function Orders() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
-                              <a
-                                href={`/api/admin/orders/${modalOrder.id}/documents/${f.id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="admin-doc-btn admin-doc-btn-view"
-                              >
-                                View
-                              </a>
-                              <a
-                                href={`/api/admin/orders/${modalOrder.id}/documents/${f.id}?download=1`}
-                                className="admin-doc-btn admin-doc-btn-dl"
-                              >
-                                Download
-                              </a>
+                              {f.file_deleted_at ? (
+                                <span className="text-xs font-semibold text-slate-400">File deleted</span>
+                              ) : (
+                                <>
+                                  {canPreview(f.mime_type) && (
+                                    <button type="button" onClick={() => openFile(modalOrder.id, f, 'preview')} className="admin-doc-btn admin-doc-btn-view">
+                                      Preview
+                                    </button>
+                                  )}
+                                  <button type="button" onClick={() => openFile(modalOrder.id, f, 'download')} className="admin-doc-btn admin-doc-btn-dl">
+                                    Download
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -512,6 +550,7 @@ export default function Orders() {
                     <button
                       key={a.status}
                       onClick={() => (a.status === 'rejected' ? (setModalOrder(null), openRejectModal(modalOrder.id)) : updateOrderStatus(modalOrder.id, a.status, true))}
+                      disabled={busyOrderId === modalOrder.id}
                       className={ACTION_BUTTON_CLASSES[a.status] || 'admin-action-btn admin-action-btn-print'}
                     >
                       {a.label}

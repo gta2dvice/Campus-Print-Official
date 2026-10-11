@@ -33,10 +33,7 @@ const ADMIN_NAV = [
     items: [
       { key: 'orders', label: 'All Orders', path: '/admin/orders', status: null, icon: 'doc' },
       { key: 'orders-pending', label: 'Pending Orders', path: '/admin/orders', status: 'pending', icon: 'clock' },
-      { key: 'orders-accepted', label: 'Accepted Orders', path: '/admin/orders', status: 'accepted', icon: 'check' },
-      { key: 'orders-printing', label: 'Printing', path: '/admin/orders', status: 'printing', icon: 'printer' },
-      { key: 'orders-ready', label: 'Ready for Pickup', path: '/admin/orders', status: 'ready', icon: 'bag' },
-      { key: 'orders-completed', label: 'Completed', path: '/admin/orders', status: 'completed', icon: 'checkcircle' },
+      { key: 'orders-completed', label: 'Completed (Ready for Pickup)', path: '/admin/orders', status: 'completed', icon: 'checkcircle' },
       { key: 'orders-rejected', label: 'Rejected / Cancelled', path: '/admin/orders', status: 'rejected', icon: 'x' },
     ],
   },

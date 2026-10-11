@@ -289,7 +289,8 @@ async function getOrderStats(userId) {
     rows.forEach(r => {
         const cnt = parseInt(r.count, 10);
         result.total += cnt;
-        if (r.status === 'accepted' || r.status === 'printing') result.in_progress += cnt;
+        // Waiting for the printer (pending, or a legacy intermediate state) vs ready for pickup.
+        if (['pending', 'accepted', 'printing'].includes(r.status)) result.in_progress += cnt;
         if (r.status === 'ready' || r.status === 'completed') result.ready += cnt;
     });
     return result;
@@ -299,11 +300,13 @@ async function getOrderStats(userId) {
 
 const VALID_STATUSES = ['pending', 'accepted', 'printing', 'ready', 'completed', 'rejected', 'cancelled'];
 
-// Allowed forward transitions a shop admin can make from the current status
+// Admin workflow: Pending → Accept → Completed (= Ready for Pickup), or Pending → Rejected.
+// 'accepted' / 'printing' / 'ready' are legacy intermediate states (kept valid in the
+// DB); any such order can only be completed or cancelled.
 const ALLOWED_TRANSITIONS = {
-    pending: ['accepted', 'rejected'],
-    accepted: ['printing', 'cancelled'],
-    printing: ['ready', 'cancelled'],
+    pending: ['completed', 'rejected'],
+    accepted: ['completed', 'cancelled'],
+    printing: ['completed', 'cancelled'],
     ready: ['completed', 'cancelled'],
     completed: [],
     rejected: [],
@@ -397,14 +400,21 @@ async function updateStatus(orderId, newStatus, rejectionReason = null, shopId =
     if (!allowed.includes(newStatus)) {
         return { error: 'invalid_transition', from: order.status, to: newStatus };
     }
+    // Only paid orders can be accepted / handed over (never marks anything paid).
+    if (newStatus === 'completed' && order.payment_status !== 'PAID') {
+        return { error: 'payment_pending' };
+    }
 
-    if (newStatus === 'rejected') {
-        await pool.execute(
-            'UPDATE orders SET status = ?, rejection_reason = ? WHERE id = ?',
-            [newStatus, rejectionReason || null, orderId]
-        );
-    } else {
-        await pool.execute('UPDATE orders SET status = ? WHERE id = ?', [newStatus, orderId]);
+    // Guarded update: applies only if the order is still in the status we read, so a
+    // repeated / concurrent click can't apply the same transition twice.
+    const [, info] = await pool.execute(
+        `UPDATE orders SET status = ?, rejection_reason = ?
+         WHERE id = ? AND status = ?${newStatus === 'completed' ? " AND payment_status = 'PAID'" : ''}`,
+        [newStatus, newStatus === 'rejected' ? (rejectionReason || null) : order.rejection_reason, orderId, order.status]
+    );
+    if (!info || info.rowCount === 0) {
+        const current = await getOrderById(orderId, shopId);
+        return { error: 'invalid_transition', from: current?.status || order.status, to: newStatus };
     }
     return { order: await getOrderById(orderId, shopId) };
 }

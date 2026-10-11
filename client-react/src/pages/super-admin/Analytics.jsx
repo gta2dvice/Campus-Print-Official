@@ -56,7 +56,8 @@ export default function Analytics() {
 
       <div className="rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
         <h2 className="mb-2 text-base font-bold text-gray-900">Orders by Status</h2>
-        {Object.entries(oc).map(([status, count]) => (
+        {/* Legacy intermediate states (accepted / printing / ready) only show if an order is still in one. */}
+        {Object.entries(oc).filter(([status, count]) => !['accepted', 'printing', 'ready'].includes(status) || count > 0).map(([status, count]) => (
           <div key={status} className="grid grid-cols-[130px_1fr_40px] items-center gap-[0.9rem] py-2 max-md:grid-cols-[110px_1fr_32px]">
             <StatusBadge status={status} />
             <div className="h-[10px] overflow-hidden rounded-full bg-black/[0.04]">

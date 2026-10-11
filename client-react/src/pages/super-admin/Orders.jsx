@@ -5,6 +5,7 @@ import {
   Loading, EmptyState, ErrorState, Pagination, Modal, DetailGrid, DetailItem,
 } from './shared';
 import { OrderFinance, fmtRupees } from './Finance';
+import { canPreview, previewFile, downloadFile } from '../../lib/fileAccess';
 
 // Manual payments the owner confirms by hand (no gateway to verify them).
 const OWNER_CONFIRMABLE_METHODS = ['upi_qr', 'whatsapp', 'none'];
@@ -78,10 +79,7 @@ export default function Orders() {
         >
           <option value="">All statuses</option>
           <option value="pending">Pending</option>
-          <option value="accepted">Accepted</option>
-          <option value="printing">Printing</option>
-          <option value="ready">Ready</option>
-          <option value="completed">Completed</option>
+          <option value="completed">Completed (Ready for Pickup)</option>
           <option value="rejected">Rejected</option>
           <option value="cancelled">Cancelled</option>
         </select>
@@ -186,6 +184,48 @@ function OrderModal({ orderId, onClose, onChanged }) {
 
   const canMarkPaid = order?.payment?.status === 'pending' && OWNER_CONFIRMABLE_METHODS.includes(order.payment.method);
 
+  // Pending → Accept → Completed (Ready for Pickup), or Reject. One request at a time.
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const canHandle = ['pending', 'accepted', 'printing', 'ready'].includes(order?.status);
+
+  async function changeStatus(action) {
+    if (statusBusy) return;
+    let body;
+    if (action === 'reject') {
+      const reason = window.prompt('Reason for rejecting this order (optional):');
+      if (reason === null) return;
+      body = JSON.stringify({ reason: reason.trim() });
+    }
+    setStatusBusy(true);
+    setStatusMessage('');
+    try {
+      const res = await saApi(`/api/super-admin/orders/${orderId}/${action}`, { method: 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatusMessage(data.message || 'Could not update this order.');
+      } else {
+        setStatusMessage(action === 'accept' ? 'Accepted — moved to Completed (Ready for Pickup).' : 'Order rejected.');
+      }
+      setOrder(await loadOrder());
+      onChanged?.();
+    } catch {
+      setStatusMessage('Connection error. Please try again.');
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+
+  async function openFile(file, mode) {
+    const url = `/api/super-admin/orders/${orderId}/documents/${file.id}`;
+    try {
+      if (mode === 'preview') await previewFile(url);
+      else await downloadFile(url, file.original_name);
+    } catch (err) {
+      setStatusMessage(err.message || 'Could not open this file.');
+    }
+  }
+
   return (
     <Modal title={`Order #${String(orderId).padStart(4, '0')}`} onClose={onClose}>
       {error ? (
@@ -197,7 +237,22 @@ function OrderModal({ orderId, onClose, onChanged }) {
           <DetailGrid>
             <DetailItem label="Student">{order.customer_email}</DetailItem>
             <DetailItem label="Shop">{order.shop_name || '—'}</DetailItem>
-            <DetailItem label="Status"><StatusBadge status={order.status} /></DetailItem>
+            <DetailItem label="Status">
+              <StatusBadge status={order.status} />
+              {canHandle && (
+                <span className="ml-2 inline-flex gap-2">
+                  <button onClick={() => changeStatus('accept')} disabled={statusBusy || order.payment_status !== 'PAID'} title={order.payment_status !== 'PAID' ? 'Confirm the payment first' : undefined} className="rounded-full border border-emerald-500 px-[0.7rem] py-[0.2rem] text-[0.72rem] font-semibold text-emerald-600 hover:bg-emerald-500/[0.08] disabled:opacity-50">
+                    {statusBusy ? 'Saving…' : 'Accept'}
+                  </button>
+                  {order.status === 'pending' && (
+                    <button onClick={() => changeStatus('reject')} disabled={statusBusy} className="rounded-full border border-red-500 px-[0.7rem] py-[0.2rem] text-[0.72rem] font-semibold text-red-600 hover:bg-red-500/[0.08] disabled:opacity-50">
+                      Reject
+                    </button>
+                  )}
+                </span>
+              )}
+              {statusMessage && <div className="mt-1 text-[0.75rem] text-gray-500">{statusMessage}</div>}
+            </DetailItem>
             <DetailItem label="Color">{order.color_option === 'bw' ? 'Black & White' : 'Color'}</DetailItem>
             <DetailItem label="Paper Size">{order.paper_size}</DetailItem>
             <DetailItem label="Copies">{order.copies}</DetailItem>
@@ -232,8 +287,16 @@ function OrderModal({ orderId, onClose, onChanged }) {
                     </small>
                   </span>
                   <span className="flex-shrink-0">
-                    <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}`} target="_blank" rel="noopener noreferrer" className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">View</a>
-                    <a href={`/api/super-admin/orders/${order.id}/documents/${f.id}?download=1`} className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">Download</a>
+                    {f.file_deleted_at ? (
+                      <span className="ml-3 text-[0.78rem] text-gray-400">File deleted</span>
+                    ) : (
+                      <>
+                        {canPreview(f.mime_type) && (
+                          <button type="button" onClick={() => openFile(f, 'preview')} className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">Preview</button>
+                        )}
+                        <button type="button" onClick={() => openFile(f, 'download')} className="ml-3 text-[0.78rem] font-semibold text-blue-500 hover:underline">Download</button>
+                      </>
+                    )}
                   </span>
                 </li>
               ))}
