@@ -49,14 +49,6 @@ async function findByOrderId(orderId) {
     return rows[0] || null;
 }
 
-/** Marks an order's pending (offline) payment as received. Returns null when nothing was pending. */
-async function markPaidForOrder(orderId) {
-    const payment = await findByOrderId(orderId);
-    if (!payment || payment.status !== 'pending') return null;
-    await pool.execute(`UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ?`, [payment.id]);
-    return findByOrderId(orderId);
-}
-
 async function listPayments({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20 } = {}) {
     const offset = (page - 1) * limit;
     const where = [];
@@ -105,4 +97,4 @@ async function getPlatformPaymentStats() {
     return result;
 }
 
-module.exports = { createForOrder, refundForOrder, findByOrderId, markPaidForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
+module.exports = { createForOrder, refundForOrder, findByOrderId, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };

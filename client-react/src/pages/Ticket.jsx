@@ -66,6 +66,12 @@ export default function Ticket() {
   }
 
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
+  // Offline payments (QR Payment / pay at shop) stay pending until the shop confirms them;
+  // only then is the order PAID and given a collection ticket number.
+  const isPaid = order?.payment_status === 'PAID';
+  const pendingPaymentNote = order?.payment?.method === 'none'
+    ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
+    : 'The shop will confirm your payment shortly.';
 
   return (
     <>
@@ -90,18 +96,28 @@ export default function Ticket() {
           ) : (
             <>
 
-          <section className="ticket-success-header">
-            <div className="success-badge-circle">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </div>
-            <h1 className="success-heading">
-              Payment <span className="highlight-cyan">Successful!</span>
-            </h1>
-            <p className="success-subtitle">Your collection ticket is ready.</p>
-            <p className="success-note">Keep this ticket handy when collecting your prints.</p>
-          </section>
+          {isPaid ? (
+            <section className="ticket-success-header">
+              <div className="success-badge-circle">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <h1 className="success-heading">
+                Payment <span className="highlight-cyan">Successful!</span>
+              </h1>
+              <p className="success-subtitle">Your collection ticket is ready.</p>
+              <p className="success-note">Keep this ticket handy when collecting your prints.</p>
+            </section>
+          ) : (
+            <section className="ticket-success-header">
+              <h1 className="success-heading">
+                Order placed — <span className="highlight-cyan">payment pending</span>
+              </h1>
+              <p className="success-subtitle">{pendingPaymentNote}</p>
+              <p className="success-note">Keep this link. Refresh it after the shop confirms your payment to see your collection ticket.</p>
+            </section>
+          )}
 
           <div className="ticket-card-wrapper">
             <div className="ticket-left-stub">
@@ -115,12 +131,14 @@ export default function Ticket() {
             <div className="ticket-main-body">
               <div className="ticket-microcopy">
                 <span className="star-ornament">✦</span>
-                <span>YOUR COLLECTION TICKET</span>
+                <span>{isPaid ? 'YOUR COLLECTION TICKET' : 'ORDER REFERENCE'}</span>
                 <span className="star-ornament">✦</span>
               </div>
 
               <div className="ticket-number-display">
-                <h2 className="cp-ticket-code">{order ? (order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`) : '—'}</h2>
+                <h2 className="cp-ticket-code">
+                  {isPaid ? (order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`) : `Order #${order.id}`}
+                </h2>
               </div>
 
               <div className="ticket-divider">
@@ -180,7 +198,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">TRANSACTION ID</span>
-                    <span className="info-value font-mono">{order?.payment ? order.payment.transaction_ref : '—'}</span>
+                    <span className="info-value font-mono">{isPaid && order?.payment ? order.payment.transaction_ref : '—'}</span>
                   </div>
                 </div>
 
@@ -227,19 +245,23 @@ export default function Ticket() {
             </div>
             <div className="reminder-text">
               <p className="reminder-title">Reach on time to collect your prints.</p>
-              <p className="reminder-desc">Show this ticket at the collection counter.</p>
+              <p className="reminder-desc">
+                {isPaid ? 'Show this ticket at the collection counter.' : 'Show this order reference at the collection counter.'}
+              </p>
             </div>
           </div>
 
           <div className="ticket-action-buttons">
-            <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => window.print()}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              <span>Download Ticket</span>
-            </button>
+            {isPaid && (
+              <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => window.print()}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Download Ticket</span>
+              </button>
+            )}
 
             <a href="/" className="ticket-btn ticket-btn-primary">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

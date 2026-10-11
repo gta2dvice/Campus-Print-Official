@@ -95,18 +95,44 @@ function filePrintingCost(f) {
     return pages * copies * PRICING.single;
 }
 
-function calculateTotalPrice(data) {
-    const fileSettings = Array.isArray(data.fileSettings)
-        ? data.fileSettings
-        : data.fileSettings ? JSON.parse(data.fileSettings) : [];
-    let printingCost = 0;
+// Upper bound on a user-declared page count (only used when the server can't count
+// a file's pages) so a tampered value can't produce an absurd charge.
+const MAX_DECLARED_PAGES = 2000;
 
-    if (fileSettings.length > 0) {
-        fileSettings.forEach(f => {
-            printingCost += filePrintingCost(f);
+/**
+ * Trusted order amount. Page counts come from the uploaded file bytes; the
+ * client-sent page count is only a fallback for files we can't count reliably
+ * (clamped), and the client-sent price is never used. Returns 0 when the
+ * files and settings don't line up.
+ */
+async function calculateTotalPrice(files, data) {
+    let fileSettings;
+    try {
+        fileSettings = Array.isArray(data.fileSettings)
+            ? data.fileSettings
+            : data.fileSettings ? JSON.parse(data.fileSettings) : [];
+    } catch {
+        return 0;
+    }
+    if (!files || files.length === 0 || !Array.isArray(fileSettings) || fileSettings.length !== files.length) {
+        return 0;
+    }
+
+    let printingCost = 0;
+    for (const [index, file] of files.entries()) {
+        const setting = fileSettings[index] || {};
+        const detected = await detectPages(file);
+        let pages = detected.pages;
+        if (detected.estimated) {
+            const declared = parseInt(setting.pages, 10);
+            pages = Math.max(1, Math.min(MAX_DECLARED_PAGES, Number.isFinite(declared) ? declared : 1));
+        }
+        printingCost += filePrintingCost({
+            pages,
+            copies: Math.max(1, parseInt(setting.copies, 10) || 1),
+            printingSide: setting.printingSide === 'double' ? 'double' : 'single',
+            colorMode: setting.colorMode === 'color' ? 'color' : 'bw'
         });
-    } else {
-        return 0; // No files, no cost
     }
 
     const serviceCharge = PRICING.serviceCharge;
@@ -258,7 +284,7 @@ router.get('/ticket/:token', async (req, res) => {
             return res.status(404).json({ message: 'Ticket not found.', code: 'TICKET_NOT_FOUND' });
         }
         const [[payment]] = await pool.query(
-            `SELECT transaction_ref, method, amount FROM payments WHERE order_id = ? AND status = 'success' LIMIT 1`,
+            `SELECT transaction_ref, method, amount, status FROM payments WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
             [order.id]
         );
         const ticket = { ...order };
@@ -568,7 +594,7 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
             collectionLocationId: req.body.collectionLocationId,
             classroomDelivery: req.body.classroomDelivery
         };
-        const verifiedAmount = calculateTotalPrice(orderData);
+        const verifiedAmount = await calculateTotalPrice(files, orderData);
 
         if (!verifiedAmount || verifiedAmount <= 0) {
             console.error('[PAYMENT_CREATE_FAILED]', {
@@ -852,11 +878,14 @@ async function createGuestOrder(req, res, payment) {
         const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
         if (pickupErr) return res.status(400).json({ message: pickupErr });
 
-        // Server-side price calculation to prevent tampering
-        const verifiedPrice = calculateTotalPrice({
+        // Server-side price from the uploaded files to prevent tampering
+        const verifiedPrice = await calculateTotalPrice(req.files, {
             ...data,
             fileSettings: req.body.fileSettings
         });
+        if (!verifiedPrice || verifiedPrice <= 0) {
+            return res.status(400).json({ message: 'Invalid order amount' });
+        }
         data.totalPrice = verifiedPrice;
 
         data.fileCount = req.files.length;
@@ -864,15 +893,19 @@ async function createGuestOrder(req, res, payment) {
         data.guestPhone = phone;
         data.guestClassroom = classroom;
 
+        // An offline payment isn't received yet: the order stays PAYMENT_PENDING (no
+        // ticket number) until a shop admin confirms it via /admin/orders/:id/mark-paid.
+        const paymentStatus = payment.status === 'success' ? 'PAID' : 'PAYMENT_PENDING';
         const userId = req.session?.userId || null;
         const ticketToken = crypto.randomBytes(32).toString('hex');
         const order = await Order.createOrder(userId, DEFAULT_SHOP_ID, data, {
+            paymentStatus,
             ticketTokenHash: hashTicketToken(ticketToken)
         });
         await persistUploadedFiles(userId, order.id, req.files, req.body.fileSettings);
         await Payment.createForOrder(order.id, userId, DEFAULT_SHOP_ID, data.totalPrice || 0, payment.method, payment.transactionRef, { status: payment.status });
 
-        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber, ticketToken });
+        res.status(201).json({ id: order.id, ticketNumber: order.ticketNumber, ticketToken, paymentStatus });
     } catch (err) {
         console.error(`${payment.method} order error:`, err);
         res.status(500).json({ message: 'Server Error' });

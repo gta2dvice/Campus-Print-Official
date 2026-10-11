@@ -153,9 +153,15 @@ router.post('/orders/:id/mark-paid', requireShopAdmin, async (req, res) => {
     try {
         const order = await Order.getOrderById(req.params.id, req.shopId);
         if (!order) return res.status(404).json({ message: 'Order not found' });
-        const payment = await Payment.markPaidForOrder(order.id);
-        if (!payment) return res.status(400).json({ message: 'This order has no pending payment.' });
-        res.json({ status: payment.status, method: payment.method, transaction_ref: payment.transaction_ref });
+        const confirmed = await Order.confirmOfflinePayment(order.id);
+        if (!confirmed) return res.status(400).json({ message: 'This order has no pending payment.' });
+        const payment = await Payment.findByOrderId(order.id);
+        res.json({
+            status: payment.status,
+            method: payment.method,
+            transaction_ref: payment.transaction_ref,
+            ticket_number: confirmed.ticketNumber
+        });
     } catch (err) {
         console.error('Admin mark paid error:', err);
         res.status(500).json({ message: 'Server Error' });

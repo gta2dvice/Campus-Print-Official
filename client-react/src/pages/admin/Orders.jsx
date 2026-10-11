@@ -154,8 +154,9 @@ export default function Orders() {
         showToast(data.message || 'Could not mark as paid.', 'error');
         return;
       }
-      setModalOrder((o) => (o ? { ...o, payment: data } : o));
+      setModalOrder((o) => (o ? { ...o, payment: data, payment_status: 'PAID', ticket_number: data.ticket_number } : o));
       showToast('Payment marked as received.');
+      loadOrders(true);
     } catch {
       showToast('Connection error. Please try again.', 'error');
     } finally {
@@ -281,6 +282,14 @@ export default function Orders() {
                     </td>
                     <td data-label="Status" className="whitespace-nowrap">
                       <StatusBadge status={o.status} />
+                      {o.payment_status === 'PAYMENT_PENDING' && (
+                        <div className="mt-1">
+                          <span className="admin-badge admin-badge-pending">
+                            <span className="admin-badge-dot" />
+                            <span>Unpaid</span>
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td data-label="Amount" className="font-black text-slate-900 whitespace-nowrap">{fmtMoney(o.total_price)}</td>
                     <td data-label="Date" className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
