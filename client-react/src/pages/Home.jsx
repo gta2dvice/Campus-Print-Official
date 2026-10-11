@@ -454,7 +454,7 @@ export default function Home() {
                     <span className="detail-icon">📞</span>
                     <div>
                       <strong>Contact</strong>
-                      <p>+91 9457311377<br />printcampus@college.edu</p>
+                      <p>+91 8076756723<br />ayjn15@gmail.com</p>
                     </div>
                   </div>
                 </div>
