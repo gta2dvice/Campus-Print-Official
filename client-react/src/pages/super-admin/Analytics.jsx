@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { saApi, fmtMoney, StatusBadge, Loading, ErrorState, TrendChart } from './shared';
+import { FinancialSummary } from './Finance';
 
 function StatCard({ number, label }) {
   return (
@@ -45,6 +46,8 @@ export default function Analytics() {
         <StatCard number={fmtMoney(data.earnings.avgOrderValue)} label="Average Order Value" />
         <StatCard number={fmtMoney(data.orderStats.totalRevenue)} label="Total Revenue" />
       </div>
+
+      <FinancialSummary />
 
       <div className="mb-5 rounded-[18px] border border-gray-300/50 bg-white/90 p-6 max-sm:p-4 shadow-sm backdrop-blur-md">
         <h2 className="text-base font-bold text-gray-900">Orders Over Time (last 30 days)</h2>

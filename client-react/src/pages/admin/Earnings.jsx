@@ -45,11 +45,11 @@ export default function Earnings() {
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
               Financial Analytics
             </div>
-            <h2 className="mt-2 text-2xl font-black tracking-tight text-white">Shop Revenue & Payouts</h2>
-            <p className="mt-1 text-xs text-slate-300">Complete summary of completed orders, revenue trends, and payouts.</p>
+            <h2 className="mt-2 text-2xl font-black tracking-tight text-white">Printing Earnings</h2>
+            <p className="mt-1 text-xs text-slate-300">Printing charges payable to the printer for completed orders.</p>
           </div>
           <div className="text-right">
-            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Lifetime Earnings</div>
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Lifetime Printing Earnings</div>
             <div className="text-3xl font-black text-emerald-400">{data ? fmtMoney(data.total.amount) : '₹0'}</div>
           </div>
         </div>
@@ -57,19 +57,24 @@ export default function Earnings() {
 
       {/* Stat Cards */}
       <div className="admin-stats-grid">
-        <StatBox number={data ? fmtMoney(data.today.amount) : '–'} label="Today's Revenue" highlight />
+        <StatBox number={data ? fmtMoney(data.today.amount) : '–'} label="Today's Printing" highlight />
         <StatBox number={data ? fmtMoney(data.week.amount) : '–'} label="This Week" />
         <StatBox number={data ? fmtMoney(data.month.amount) : '–'} label="This Month" />
-        <StatBox number={data ? fmtMoney(data.total.amount) : '–'} label="Total Earnings" />
+        <StatBox number={data ? fmtMoney(data.total.amount) : '–'} label="Total Printing Earnings" />
         <StatBox number={data ? data.total.count : '–'} label="Completed Orders" />
-        <StatBox number={data ? fmtMoney(data.avgOrderValue) : '–'} label="Avg Order Value" />
+        <StatBox number={data ? fmtMoney(data.avgOrderValue) : '–'} label="Avg Printing per Order" />
       </div>
+      {data?.notItemisedCount > 0 && (
+        <p className="text-xs font-semibold text-amber-700">
+          {data.notItemisedCount} completed order{data.notItemisedCount === 1 ? ' was' : 's were'} placed before printing charges were itemised and {data.notItemisedCount === 1 ? 'is' : 'are'} not included in these totals.
+        </p>
+      )}
 
       {/* Revenue Trend Chart */}
       <div className="admin-card">
         <div className="mb-4">
-          <h3 className="text-base font-extrabold text-slate-900">Revenue Trend (Last 14 Days)</h3>
-          <p className="text-xs text-slate-500">Daily earnings breakdown for completed print orders</p>
+          <h3 className="text-base font-extrabold text-slate-900">Printing Earnings Trend (Last 14 Days)</h3>
+          <p className="text-xs text-slate-500">Daily printing charges for completed print orders</p>
         </div>
 
         {error ? (
@@ -113,7 +118,7 @@ export default function Earnings() {
                 <tr>
                   <th>Order ID</th>
                   <th>Customer Email</th>
-                  <th>Amount</th>
+                  <th>Printing</th>
                   <th className="text-right">Date</th>
                 </tr>
               </thead>
@@ -122,7 +127,7 @@ export default function Earnings() {
                   <tr key={t.id}>
                     <td data-label="Order ID" className="font-extrabold text-slate-900">#{String(t.id).padStart(4, '0')}</td>
                     <td data-label="Customer Email" className="font-medium text-slate-800">{t.customer_email}</td>
-                    <td data-label="Amount" className="font-black text-emerald-600">{fmtMoney(t.total_price)}</td>
+                    <td data-label="Printing" className="font-black text-emerald-600">{t.amount == null ? 'Not itemised' : fmtMoney(t.amount)}</td>
                     <td data-label="Date" className="text-right text-slate-400 text-xs font-medium">{fmtDate(t.created_at)}</td>
                   </tr>
                 ))}

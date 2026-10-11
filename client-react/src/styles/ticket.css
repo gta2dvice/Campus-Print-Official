@@ -341,6 +341,38 @@ html, body.ticket-page-body {
     font-family: 'Inter', sans-serif;
 }
 
+/* Delivery Person Details row: details on the left, Call button on the right */
+.delivery-row .info-details {
+    flex: 1;
+}
+
+.delivery-call-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 0.45rem 1.1rem;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 0.2s ease;
+}
+
+.delivery-call-btn:hover,
+.delivery-call-btn:focus-visible {
+    background: #1d4ed8;
+}
+
+@media print {
+    .delivery-call-btn {
+        display: none;
+    }
+}
+
 /* Handwritten Thanks Note */
 .ticket-footer-note {
     margin-top: 1.5rem;
@@ -613,6 +645,12 @@ html, body.ticket-page-body {
 
     .info-value.value-prominent {
         font-size: 1.05rem;
+    }
+
+    .delivery-call-btn {
+        min-height: 36px;
+        padding: 0.4rem 0.85rem;
+        font-size: 0.85rem;
     }
 
     .ticket-footer-note {

@@ -38,6 +38,9 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
         collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
         guestFullName, guestPhone, guestClassroom
     } = data;
+    // Itemised charge split, saved once at creation so the order keeps its own
+    // historical amounts even if rates change later (server/pricing.js).
+    const charges = data.charges || {};
     const orderPaymentMethod = ORDER_PAYMENT_METHOD[payment.method];
     if (!orderPaymentMethod) throw new Error(`Unknown payment method: ${payment.method}`);
 
@@ -54,8 +57,8 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
              collection_location_id, collection_location, collection_time, total_pages,
              collection_date,
              guest_full_name, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
-             ticket_access_token_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?)
+             ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?)
          RETURNING id`,
             [
                 userId || null,
@@ -76,7 +79,11 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 guestPhone || null,
                 guestClassroom || null,
                 orderPaymentMethod,
-                ticketTokenHash
+                ticketTokenHash,
+                charges.printingAmount ?? null,
+                charges.serviceCharge ?? null,
+                charges.deliveryCharge ?? null,
+                charges.classroomCharge ?? null
             ]
         );
         const id = result.insertId;
@@ -303,7 +310,7 @@ const ALLOWED_TRANSITIONS = {
     cancelled: []
 };
 
-async function listOrders({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC' } = {}) {
+async function listOrders({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC', view = 'customer' } = {}) {
     const offset = (page - 1) * limit;
     const where = [SHOP_VISIBLE_ORDER];
     const params = [];
@@ -330,7 +337,8 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
     }
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const sortableColumns = { created_at: 'o.created_at', total_price: 'o.total_price', status: 'o.status' };
+    // The printer's "amount" sort uses printing charges, never the customer total.
+    const sortableColumns = { created_at: 'o.created_at', total_price: `o.${amountColumn(view)}`, status: 'o.status' };
     const sortCol = sortableColumns[sort] || 'o.created_at';
     const sortDir = dir === 'ASC' ? 'ASC' : 'DESC';
 
@@ -401,7 +409,96 @@ async function updateStatus(orderId, newStatus, rejectionReason = null, shopId =
     return { order: await getOrderById(orderId, shopId) };
 }
 
-async function getDashboardStats(shopId = null) {
+/**
+ * Super Admin financial summary over PAID orders, split into the printer's printing
+ * charges and Campus Print's extra charges, overall and per collection location.
+ * Orders placed before charges were itemised are counted separately (their totals
+ * are never re-split here). Refunds are reported separately, not netted silently.
+ */
+async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' } = {}) {
+    const where = ["o.payment_status = 'PAID'"];
+    const params = [];
+    if (dateFrom) { where.push('o.created_at >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('o.created_at <= ?'); params.push(`${dateTo} 23:59:59`); }
+    if (location) { where.push('o.collection_location_id = ?'); params.push(location); }
+    const whereClause = `WHERE ${where.join(' AND ')}`;
+
+    const columns = `
+        COUNT(*) AS paid_orders,
+        COUNT(o.printing_amount) AS itemised_orders,
+        COALESCE(SUM(o.total_price) FILTER (WHERE o.printing_amount IS NOT NULL), 0) AS itemised_customer_total,
+        COALESCE(SUM(o.printing_amount), 0) AS printing,
+        COALESCE(SUM(o.service_charge), 0) AS service,
+        COALESCE(SUM(o.delivery_charge), 0) AS delivery,
+        COALESCE(SUM(o.classroom_charge), 0) AS classroom,
+        COUNT(*) FILTER (WHERE o.printing_amount IS NULL) AS not_itemised_orders,
+        COALESCE(SUM(o.total_price) FILTER (WHERE o.printing_amount IS NULL), 0) AS not_itemised_total`;
+
+    const [[totalsRow]] = await pool.query(`SELECT ${columns} FROM orders o ${whereClause}`, params);
+    const [locationRows] = await pool.query(
+        `SELECT o.collection_location_id, MAX(o.collection_location) AS collection_location, ${columns}
+         FROM orders o ${whereClause}
+         GROUP BY o.collection_location_id ORDER BY o.collection_location_id`,
+        params
+    );
+    const [[refundRow]] = await pool.query(
+        `SELECT COALESCE(SUM(p.amount), 0) AS refunded, COUNT(*) AS refunded_payments
+         FROM payments p JOIN orders o ON o.id = p.order_id
+         ${whereClause} AND p.status = 'refunded'`,
+        params
+    );
+
+    const shape = (r) => {
+        const num = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
+        const printing = num(r.printing);
+        const extras = num(num(r.service) + num(r.delivery) + num(r.classroom));
+        const itemisedCustomerTotal = num(r.itemised_customer_total);
+        return {
+            paidOrders: parseInt(r.paid_orders, 10),
+            itemisedOrders: parseInt(r.itemised_orders, 10),
+            totalPrinting: printing,
+            printerPayable: printing,
+            totalService: num(r.service),
+            totalDelivery: num(r.delivery),
+            totalClassroom: num(r.classroom),
+            otherCharges: 0,
+            // Gross, not profit: gateway fees, taxes and other costs are not deducted.
+            grossExtraRevenue: extras,
+            itemisedCustomerTotal,
+            reconciled: Math.abs(itemisedCustomerTotal - (printing + extras)) < 0.01,
+            notItemisedOrders: parseInt(r.not_itemised_orders, 10),
+            notItemisedCustomerTotal: num(r.not_itemised_total),
+            customerTotal: num(itemisedCustomerTotal + num(r.not_itemised_total))
+        };
+    };
+
+    return {
+        filters: { dateFrom: dateFrom || null, dateTo: dateTo || null, location: location || null },
+        totals: shape(totalsRow),
+        byLocation: locationRows.map(r => ({
+            locationId: r.collection_location_id,
+            location: r.collection_location,
+            ...shape(r)
+        })),
+        refunds: {
+            refundedAmount: Math.round(parseFloat(refundRow.refunded || 0) * 100) / 100,
+            refundedPayments: parseInt(refundRow.refunded_payments, 10)
+        },
+        // Not recorded anywhere in the system today.
+        notTracked: ['taxes', 'discounts', 'gatewayFees']
+    };
+}
+
+// Which amount the money aggregates sum: the customer's total (Super Admin) or only
+// the printer's printing charges (Printer Admin). Whitelisted — never user input.
+const AMOUNT_COLUMNS = { customer: 'total_price', printing: 'printing_amount' };
+
+function amountColumn(view) {
+    return AMOUNT_COLUMNS[view] || AMOUNT_COLUMNS.customer;
+}
+
+async function getDashboardStats(shopId = null, { view = 'customer' } = {}) {
+    const col = amountColumn(view);
     const shopFilter = shopId ? ' AND shop_id = ?' : '';
     const shopParams = shopId ? [shopId] : [];
 
@@ -413,13 +510,15 @@ async function getDashboardStats(shopId = null) {
     statusRows.forEach(r => { counts[r.status] = parseInt(r.count, 10); });
 
     const [[todayRow]] = await pool.query(
-        `SELECT COUNT(*) AS orders_today, COALESCE(SUM(total_price), 0) AS earnings_today
+        `SELECT COUNT(*) AS orders_today, COALESCE(SUM(${col}), 0) AS earnings_today
          FROM orders WHERE payment_status = 'PAID' AND DATE(created_at) = CURDATE()
            AND status NOT IN ('rejected','cancelled') ${shopFilter}`,
         shopParams
     );
     const [[totalRow]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS total_earnings FROM orders
+        `SELECT COALESCE(SUM(${col}), 0) AS total_earnings,
+                COUNT(*) FILTER (WHERE ${col} IS NULL) AS not_itemised
+         FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`,
         shopParams
     );
@@ -436,43 +535,49 @@ async function getDashboardStats(shopId = null) {
         ordersToday: parseInt(todayRow.orders_today, 10),
         earningsToday: parseFloat(todayRow.earnings_today),
         totalEarnings: parseFloat(totalRow.total_earnings),
+        // Completed orders with no saved amount of this kind (placed before itemising).
+        notItemisedCount: parseInt(totalRow.not_itemised, 10),
         recentOrders
     };
 }
 
-async function getEarnings(shopId = null) {
+async function getEarnings(shopId = null, { view = 'customer' } = {}) {
+    const col = amountColumn(view);
     const shopFilter = shopId ? 'AND shop_id = ?' : '';
     const shopParams = shopId ? [shopId] : [];
+    // Counts only orders that have this amount, so averages aren't skewed by
+    // orders placed before charges were itemised.
+    const sumCount = `COALESCE(SUM(${col}), 0) AS amount, COUNT(${col}) AS count`;
 
     const [[today]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+        `SELECT ${sumCount} FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' AND DATE(created_at) = CURDATE() ${shopFilter}`, shopParams
     );
     const [[yesterday]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+        `SELECT ${sumCount} FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) ${shopFilter}`, shopParams
     );
     const [[week]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+        `SELECT ${sumCount} FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) ${shopFilter}`, shopParams
     );
     const [[month]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+        `SELECT ${sumCount} FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) ${shopFilter}`, shopParams
     );
     const [[total]] = await pool.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS amount, COUNT(*) AS count FROM orders
+        `SELECT ${sumCount}, COUNT(*) FILTER (WHERE ${col} IS NULL) AS not_itemised FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`, shopParams
     );
     const [trend] = await pool.query(
-        `SELECT DATE(created_at) AS date, COALESCE(SUM(total_price), 0) AS amount
+        `SELECT DATE(created_at) AS date, COALESCE(SUM(${col}), 0) AS amount
          FROM orders WHERE payment_status = 'PAID' AND status = 'completed'
            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY) ${shopFilter}
          GROUP BY DATE(created_at) ORDER BY date ASC`, shopParams
     );
     const txFilter = shopId ? 'AND o.shop_id = ?' : '';
     const [recentTransactions] = await pool.query(
-        `SELECT o.id, o.total_price, o.created_at, u.email AS customer_email
+        `SELECT o.id, o.${col} AS amount, o.created_at, u.email AS customer_email
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          WHERE o.payment_status = 'PAID' AND o.status = 'completed' ${txFilter} ORDER BY o.created_at DESC LIMIT 10`, shopParams
     );
@@ -485,9 +590,15 @@ async function getEarnings(shopId = null) {
         week: { amount: parseFloat(week.amount), count: parseInt(week.count, 10) },
         month: { amount: parseFloat(month.amount), count: parseInt(month.count, 10) },
         total: { amount: parseFloat(total.amount), count: parseInt(total.count, 10) },
+        notItemisedCount: parseInt(total.not_itemised, 10),
         avgOrderValue,
         trend: trend.map(r => ({ date: r.date, amount: parseFloat(r.amount) })),
-        recentTransactions
+        recentTransactions: recentTransactions.map(t => ({
+            ...t,
+            amount: t.amount === null ? null : parseFloat(t.amount),
+            // Kept for existing Super Admin screens that read total_price.
+            ...(col === 'total_price' ? { total_price: t.amount } : {})
+        }))
     };
 }
 
@@ -540,6 +651,7 @@ module.exports = {
     getOrderByTicketTokenHash,
     updateStatus,
     getDashboardStats,
+    getFinancialSummary,
     getEarnings,
     getPlatformStats
 };

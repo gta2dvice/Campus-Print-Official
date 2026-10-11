@@ -167,6 +167,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_one_success_per_order ON payments
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_success_transaction_ref ON payments (method, transaction_ref) WHERE status = 'success' AND transaction_ref IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_ticket_generation_pending ON orders (id) WHERE ticket_status = 'GENERATION_PENDING';
 
+-- Itemised order charges (server/migrate_order_charges.js), saved at creation by
+-- server/pricing.js: printing_amount = printer's printing charges only; service /
+-- delivery (Hostel Gate) / classroom = Campus Print extras. NULL on orders created
+-- before itemising (shown as not itemised / estimated; totals never recalculated).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS printing_amount NUMERIC(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_charge NUMERIC(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS classroom_charge NUMERIC(10,2);
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_charge NUMERIC(10,2);
+
 INSERT INTO shops (id, shop_name)
 SELECT 1, 'Campus Print'
 WHERE NOT EXISTS (SELECT 1 FROM shops WHERE id = 1);

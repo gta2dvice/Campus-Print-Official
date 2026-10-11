@@ -152,7 +152,7 @@ export default function Index() {
             <StatCard icon="clock" color="amber" number={c.pending} label="Pending Orders" sub="Needs Action" />
             <StatCard icon="printer" color="purple" number={c.accepted + c.printing} label="In Progress" sub="Accepted + Printing" />
             <StatCard icon="checkcircle" color="green" number={c.completed} label="Completed Orders" sub="This Month" />
-            <StatCard icon="wallet" color="green" number={fmtMoney(data.earningsToday)} label="Today's Earnings" sub={`${data.ordersToday} Orders Today`} />
+            <StatCard icon="wallet" color="green" number={fmtMoney(data.earningsToday)} label="Today's Printing Earnings" sub={`${data.ordersToday} Orders Today`} />
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
@@ -180,7 +180,7 @@ export default function Index() {
                         <th>Pickup</th>
                         <th>Specs</th>
                         <th>Status</th>
-                        <th className="text-right">Amount</th>
+                        <th className="text-right">Printing</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -197,7 +197,7 @@ export default function Index() {
                           <td data-label="Status">
                             <StatusBadge status={o.status} />
                           </td>
-                          <td data-label="Amount" className="text-right font-black text-slate-900">{fmtMoney(o.total_price)}</td>
+                          <td data-label="Printing" className="text-right font-black text-slate-900">{o.printer_payable == null ? 'Not itemised' : fmtMoney(o.printer_payable)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -209,9 +209,9 @@ export default function Index() {
             {/* Side Column: Revenue Snapshot & Quick Links */}
             <div className="space-y-6">
               <div className="admin-card">
-                <h3 className="text-base font-extrabold text-slate-900">Revenue Snapshot</h3>
+                <h3 className="text-base font-extrabold text-slate-900">Printing Earnings</h3>
                 <div className="mt-3 text-3xl font-black tracking-tight text-blue-600">{fmtMoney(earnings?.today?.amount)}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500">Earned Today ({earnings?.today?.count || 0} orders)</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">Printing charges earned today ({earnings?.today?.count || 0} orders)</div>
 
                 <div className="mt-5 space-y-2.5 border-t border-slate-100 pt-4 text-xs font-semibold">
                   <div className="flex items-center justify-between">
