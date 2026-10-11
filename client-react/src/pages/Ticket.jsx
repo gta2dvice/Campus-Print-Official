@@ -5,6 +5,7 @@ import Footer from '../components/Footer';
 import LogoLink from '../components/LogoLink';
 import useBodyClass from '../lib/useBodyClass';
 import useDocumentTitle from '../lib/useDocumentTitle';
+import { getDeliveryContact } from '../lib/deliveryPersons';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 import '../styles/ticket.css';
@@ -107,6 +108,8 @@ export default function Ticket() {
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
   // Everything below comes from the server's state for this order, never from the URL.
   const isPaid = order?.state === 'TICKET_READY';
+  // Assigned by the order's saved collection location (lib/deliveryPersons.js).
+  const deliveryContact = order ? getDeliveryContact(order.collection_location_id, order.collection_location) : null;
   const header = order ? stateHeader(order) : null;
 
   return (
@@ -263,6 +266,33 @@ export default function Ticket() {
                     <span className="info-value value-prominent">{order?.collection_time || '—'}</span>
                   </div>
                 </div>
+
+                {isPaid && (
+                  <div className="ticket-info-row highlight-row delivery-row">
+                    <div className="info-icon-badge loc-badge">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                      </svg>
+                    </div>
+                    <div className="info-details">
+                      <span className="info-label label-accent">DELIVERY PERSON DETAILS</span>
+                      {deliveryContact ? (
+                        <>
+                          <span className="info-value">Name: {deliveryContact.name}</span>
+                          <span className="info-value">Phone: {deliveryContact.phoneDisplay}</span>
+                        </>
+                      ) : (
+                        <span className="info-value">Delivery contact unavailable</span>
+                      )}
+                    </div>
+                    {deliveryContact && (
+                      <a className="delivery-call-btn" href={deliveryContact.telHref} aria-label={`Call ${deliveryContact.name}`}>
+                        Call
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="ticket-footer-note">
