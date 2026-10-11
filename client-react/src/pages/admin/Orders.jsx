@@ -28,7 +28,6 @@ const NEXT_ACTIONS_CONFIG = {
 const PAYMENT_METHOD_LABELS = {
   cashfree: 'Cashfree (online)',
   simulated: 'Test checkout',
-  upi_qr: 'UPI QR',
   whatsapp: 'QR Payment',
   none: 'No payment (pay shop directly)',
 };

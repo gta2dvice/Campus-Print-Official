@@ -8,7 +8,6 @@ import NewOrder from './pages/NewOrder';
 import SelectLocation from './pages/SelectLocation';
 import Ticket from './pages/Ticket';
 import OrderDetails from './pages/OrderDetails';
-import Orders from './pages/Orders';
 
 import AdminLogin from './pages/admin/Login';
 import AdminLayout from './pages/admin/AdminLayout';
@@ -42,7 +41,6 @@ export default function App() {
         {/* Student Guest Flow - Now Public */}
         <Route path="/new-order" element={<NewOrder />} />
         <Route path="/select-location" element={<SelectLocation />} />
-        <Route path="/orders" element={<Orders />} />
         <Route path="/ticket" element={<Ticket />} />
         <Route path="/order/:id" element={<OrderDetails />} />
 
