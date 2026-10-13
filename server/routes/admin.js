@@ -8,6 +8,7 @@ const OrderFile = require('../models/OrderFile');
 const Shop = require('../models/Shop');
 const Payment = require('../models/Payment');
 const { requireShopAdmin } = require('../middleware/roleAuth');
+const { toPrinterOrder } = require('../services/orderFinance');
 const { sendStoredFile } = require('../sendStoredFile');
 const { uploadBuffer, deleteFiles, downloadFile } = require('../storage');
 
@@ -61,11 +62,19 @@ router.post('/logout', (req, res) => {
     res.status(200).json({ message: 'Logged out successfully' });
 });
 
+// The Printer Admin (shop_admin) sees printing charges only. Every response below
+// that carries an order or an amount goes through services/orderFinance, which
+// whitelists order fields and replaces the customer total with the printer's
+// printing amount. Campus Print's extra charges never leave the server here.
+
+const PAYMENT_PENDING_MESSAGE = 'Payment for this order is not confirmed yet, so it cannot be accepted.';
+
 // ── Dashboard ─────────────────────────────────────
 
 router.get('/dashboard', requireShopAdmin, async (req, res) => {
     try {
-        const stats = await Order.getDashboardStats(req.shopId);
+        const stats = await Order.getDashboardStats(req.shopId, { view: 'printing' });
+        stats.recentOrders = stats.recentOrders.map(o => toPrinterOrder(o));
         res.json(stats);
     } catch (err) {
         console.error('Admin dashboard error:', err);
@@ -78,8 +87,8 @@ router.get('/dashboard', requireShopAdmin, async (req, res) => {
 router.get('/orders', requireShopAdmin, async (req, res) => {
     try {
         const { search = '', status = '', dateFrom = '', dateTo = '', page = 1, limit = 20, sort = 'created_at', dir = 'DESC' } = req.query;
-        const result = await Order.listOrders({ search, status, dateFrom, dateTo, page: Number(page), limit: Number(limit), sort, dir, shopId: req.shopId });
-        res.json(result);
+        const result = await Order.listOrders({ search, status, dateFrom, dateTo, page: Number(page), limit: Number(limit), sort, dir, shopId: req.shopId, view: 'printing' });
+        res.json({ ...result, orders: result.orders.map(o => toPrinterOrder(o)) });
     } catch (err) {
         console.error('Admin list orders error:', err);
         res.status(500).json({ message: 'Server Error' });
@@ -93,8 +102,7 @@ router.get('/orders/:id', requireShopAdmin, async (req, res) => {
         const files = await OrderFile.getFilesByOrder(order.id);
         const payment = await Payment.findByOrderId(order.id);
         res.json({
-            ...order,
-            files,
+            ...toPrinterOrder(order, files),
             payment: payment ? { status: payment.status, method: payment.method, transaction_ref: payment.transaction_ref } : null
         });
     } catch (err) {
@@ -111,24 +119,28 @@ router.patch('/orders/:id/status', requireShopAdmin, async (req, res) => {
         }
         const result = await Order.updateStatus(req.params.id, status, reason, req.shopId);
         if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error === 'payment_pending') return res.status(409).json({ message: PAYMENT_PENDING_MESSAGE });
         if (result.error === 'invalid_transition') {
-            return res.status(400).json({ message: `Cannot move order from ${result.from} to ${result.to}` });
+            return res.status(409).json({ message: `Cannot move order from ${result.from} to ${result.to}`, status: result.from });
         }
         if (status === 'rejected' || status === 'cancelled') {
             await Payment.refundForOrder(req.params.id);
         }
-        res.json(result.order);
+        res.json(toPrinterOrder(result.order));
     } catch (err) {
         console.error('Admin update status error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });
 
+// Accept = the order is printed and moves straight to Completed (Ready for Pickup).
 router.post('/orders/:id/accept', requireShopAdmin, async (req, res) => {
     try {
-        const result = await Order.updateStatus(req.params.id, 'accepted', null, req.shopId);
-        if (result.error) return res.status(400).json({ message: 'Unable to accept this order' });
-        res.json(result.order);
+        const result = await Order.updateStatus(req.params.id, 'completed', null, req.shopId);
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error === 'payment_pending') return res.status(409).json({ message: PAYMENT_PENDING_MESSAGE });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
+        res.json(toPrinterOrder(result.order));
     } catch (err) {
         console.error('Admin accept order error:', err);
         res.status(500).json({ message: 'Server Error' });
@@ -139,28 +151,19 @@ router.post('/orders/:id/reject', requireShopAdmin, async (req, res) => {
     try {
         const { reason } = req.body;
         const result = await Order.updateStatus(req.params.id, 'rejected', reason, req.shopId);
-        if (result.error) return res.status(400).json({ message: 'Unable to reject this order' });
+        if (result.error === 'not_found') return res.status(404).json({ message: 'Order not found' });
+        if (result.error) return res.status(409).json({ message: 'This order was already handled.', status: result.from });
         await Payment.refundForOrder(req.params.id);
-        res.json(result.order);
+        res.json(toPrinterOrder(result.order));
     } catch (err) {
         console.error('Admin reject order error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });
 
-// Marks a QR / pay-at-shop order's pending payment as received.
-router.post('/orders/:id/mark-paid', requireShopAdmin, async (req, res) => {
-    try {
-        const order = await Order.getOrderById(req.params.id, req.shopId);
-        if (!order) return res.status(404).json({ message: 'Order not found' });
-        const payment = await Payment.markPaidForOrder(order.id);
-        if (!payment) return res.status(400).json({ message: 'This order has no pending payment.' });
-        res.json({ status: payment.status, method: payment.method, transaction_ref: payment.transaction_ref });
-    } catch (err) {
-        console.error('Admin mark paid error:', err);
-        res.status(500).json({ message: 'Server Error' });
-    }
-});
+// Confirming UPI QR / manual payments needs the customer total, so it is a Super
+// Admin action (POST /api/super-admin/orders/:id/mark-paid). There is deliberately
+// no shop-admin mark-paid route.
 
 // Secure document access — only a logged-in shop admin can view/download
 router.get('/orders/:orderId/documents/:fileId', requireShopAdmin, async (req, res) => {
@@ -172,10 +175,10 @@ router.get('/orders/:orderId/documents/:fileId', requireShopAdmin, async (req, r
         if (!file || String(file.order_id) !== String(req.params.orderId)) {
             return res.status(404).json({ message: 'File not found' });
         }
-        await sendStoredFile(res, file, { download: !!req.query.download });
+        await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
     } catch (err) {
-        console.error('Admin document access error:', err);
-        res.status(500).json({ message: 'Server Error' });
+        console.error('Admin document access error:', err.message);
+        res.status(500).json({ message: 'Could not load this file right now. Please retry.', code: 'FILE_LOAD_FAILED' });
     }
 });
 
@@ -183,7 +186,7 @@ router.get('/orders/:orderId/documents/:fileId', requireShopAdmin, async (req, r
 
 router.get('/earnings', requireShopAdmin, async (req, res) => {
     try {
-        const earnings = await Order.getEarnings(req.shopId);
+        const earnings = await Order.getEarnings(req.shopId, { view: 'printing' });
         res.json(earnings);
     } catch (err) {
         console.error('Admin earnings error:', err);
@@ -191,12 +194,12 @@ router.get('/earnings', requireShopAdmin, async (req, res) => {
     }
 });
 
-// ── Transactions (payments for this shop) ─────────
+// ── Transactions: printer payable per paid order (never the customer's payment) ──
 
 router.get('/transactions', requireShopAdmin, async (req, res) => {
     try {
         const { search = '', status = '', dateFrom = '', dateTo = '', page = 1, limit = 20 } = req.query;
-        const result = await Payment.listPayments({ search, status, dateFrom, dateTo, page: Number(page), limit: Number(limit), shopId: req.shopId });
+        const result = await Payment.listPrinterPayables({ search, status, dateFrom, dateTo, page: Number(page), limit: Number(limit), shopId: req.shopId });
         res.json(result);
     } catch (err) {
         console.error('Admin transactions error:', err);

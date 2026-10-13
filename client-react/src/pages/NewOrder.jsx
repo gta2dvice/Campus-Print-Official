@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import Toast from '../components/Toast';
+import PaymentWarningModal from '../components/PaymentWarningModal';
+import WhatsAppOrderModal, { WA_ORDER_TEMPLATE } from '../components/WhatsAppOrderModal';
+import UpiQrPayment from '../components/UpiQrPayment';
 import useToast from '../lib/useToast';
 import useBodyClass from '../lib/useBodyClass';
 import useDocumentTitle from '../lib/useDocumentTitle';
@@ -23,12 +26,27 @@ const ALLOWED_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
   'image/png',
   'image/jpeg',
   'image/jpg',
-  'image/webp',
 ];
-const ALLOWED_EXTENSIONS = /\.(pdf|docx|doc|png|jpg|jpeg|webp)$/i;
+const ALLOWED_EXTENSIONS = /\.(pdf|docx|doc|pptx|ppt|xlsx|xls|png|jpg|jpeg)$/i;
+const ACCEPT_ATTR = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png';
+const SUPPORTED_LABEL = 'PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, JPG, PNG';
+const EXT_LABELS = { pdf: 'PDF', doc: 'DOC', docx: 'DOCX', ppt: 'PPT', pptx: 'PPTX', xls: 'XLS', xlsx: 'XLSX', jpg: 'JPG', jpeg: 'JPG', png: 'PNG' };
+
+function fileExtLabel(name) {
+  const m = /\.([a-z0-9]+)$/i.exec(name || '');
+  return m ? (EXT_LABELS[m[1].toLowerCase()] || m[1].toUpperCase()) : 'FILE';
+}
+
+function isImageName(name) {
+  return /\.(png|jpg|jpeg)$/i.test(name || '');
+}
 
 function isFileSupported(file) {
   if (!file) return false;
@@ -49,25 +67,35 @@ const LOCATION_ICONS = {
 };
 const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 
-// Booking step 3. 'whatsapp' (shown as QR Payment) and 'none' are settled outside the app (POST /api/orders/payment/offline).
+// Booking step 3. 'upi_qr' is the dynamic UPI QR flow (order-first, PENDING until a shop
+// admin confirms the payment — POST /api/orders/payment/upi-qr). 'none' is the Personal
+// WhatsApp manual-order flow — it opens an instruction modal and WhatsApp, no order/ticket.
 const PAYMENT_OPTIONS = [
   {
     id: 'cashfree',
-    name: 'Cashfree Payment',
-    sub: 'Pay online now with UPI, card or netbanking',
+    name: 'Cashfree',
+    tone: 'best',
+    recommended: true,
+    badge: '⭐ RECOMMENDED',
+    reliability: 'Most Reliable — Instant Ticket',
+    description: <><strong>Instant</strong> payment verification &amp; <strong>instant ticket</strong> generation.</>,
     icon: <><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></>,
   },
   {
-    id: 'whatsapp',
-    name: 'QR Payment',
-    sub: 'Scan the shop QR with any UPI app',
+    id: 'upi_qr',
+    name: 'UPI QR / Scanner',
+    tone: 'mid',
+    reliability: 'Reliable — Ticket After Verification',
+    description: <>Pay by scanning the QR. Ticket generated <strong>after payment verification</strong>.</>,
     icon: <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></>,
   },
   {
     id: 'none',
-    name: 'No Payment',
-    sub: 'Contact the shop for payment instructions',
-    icon: <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />,
+    name: 'WhatsApp Order',
+    tone: 'manual',
+    reliability: 'Manual Confirmation — Verified by Admin',
+    description: <>Payment &amp; order confirmation are <strong>verified manually</strong> by the Campus Print team/admin.</>,
+    icon: <path d="M20.5 3.5A11 11 0 0 0 3.2 17.3L2 22l4.8-1.2A11 11 0 1 0 20.5 3.5zM12 20a8 8 0 0 1-4.1-1.1l-.3-.2-2.9.7.8-2.8-.2-.3A8 8 0 1 1 12 20zm4.4-6c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1-.2.2-.6.8-.8 1-.1.1-.3.2-.5.1a6.6 6.6 0 0 1-3.2-2.8c-.2-.4.2-.4.6-1.2.1-.1 0-.3 0-.4s-.5-1.3-.7-1.7c-.2-.4-.4-.4-.5-.4h-.5a1 1 0 0 0-.7.3c-.2.3-.9.9-.9 2.1s.9 2.5 1 2.6c.1.2 1.8 2.8 4.4 3.9 1.6.7 2.2.7 3 .6.5 0 1.4-.6 1.6-1.1.2-.6.2-1 .1-1.1 0-.1-.2-.2-.4-.3z" />,
   },
 ];
 const SLOT_CUTOFF_MINUTES = 5;
@@ -126,6 +154,8 @@ export default function NewOrder() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnedCashfreeOrderId = searchParams.get('cf_order') || searchParams.get('order_id');
+  // Arriving from Orders → "Pay again": check once, then offer to reopen checkout.
+  const payAgain = searchParams.get('pay_again') === '1';
   useBodyClass('app-body');
   useDocumentTitle('New Order – Print Campus');
   const { toast, showToast } = useToast();
@@ -155,12 +185,20 @@ export default function NewOrder() {
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [locationStatuses, setLocationStatuses] = useState([]);
-  const [paymentMethod, setPaymentMethod] = useState(null); // 'cashfree' | 'whatsapp' | 'none'
-  const [paymentOptions, setPaymentOptions] = useState(null); // { phone, hasQr, qrVersion } from /api/orders/payment-options
+  const [paymentMethod, setPaymentMethod] = useState(null); // 'cashfree' | 'upi_qr' | 'none' (WhatsApp order)
+  const [paymentOptions, setPaymentOptions] = useState(null); // { phone, upi, hasQr, qrVersion } from /api/orders/payment-options
   const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState('');
   const [recoveryOrderId, setRecoveryOrderId] = useState(returnedCashfreeOrderId || '');
+  const [canRetryPayment, setCanRetryPayment] = useState(false);
+  const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
+  const confirmingPaymentRef = useRef(false); // guards against double-firing the pay flow
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  const [whatsappOpening, setWhatsappOpening] = useState(false);
+  const whatsappOpenedRef = useRef(false); // guards against opening WhatsApp more than once
+  const [upiQrData, setUpiQrData] = useState(null);
+  const upiSubmittingRef = useRef(false); // guards against creating duplicate UPI orders
   const persistReadyRef = useRef(false);
   const handledReturnOrderRef = useRef(null);
   const confirmPaidOrderRef = useRef(null);
@@ -338,13 +376,14 @@ export default function NewOrder() {
         continue;
       }
       if (!isFileSupported(file)) {
-        showToast(`${file.name}: unsupported type. Supported: PDF, DOCX, DOC, PNG, JPG.`, 'error');
+        showToast(`${file.name}: unsupported type. Supported: ${SUPPORTED_LABEL}.`, 'error');
         continue;
       }
       let clientPages = null;
-      if (file.type?.startsWith('image/') || /\.(png|jpg|jpeg|webp)$/i.test(file.name)) {
+      if (file.type?.startsWith('image/') || isImageName(file.name)) {
         clientPages = 1;
       } else {
+        // PDFs get a quick client-side guess; other docs are counted by the server.
         clientPages = await countPdfPagesClient(file);
       }
       accepted.push({
@@ -521,16 +560,16 @@ export default function NewOrder() {
 
   async function loadPaymentOptions() {
     setPaymentOptionsLoading(true);
-    let options = { phone: null, hasQr: false, qrVersion: null };
+    let options = { phone: null, upi: null, hasQr: false, qrVersion: null };
     try {
       const res = await fetch('/api/orders/payment-options', { credentials: 'include' });
       if (res.ok) options = await res.json();
     } catch {
-      // Cashfree and "No Payment" still work without these details.
+      // Cashfree and the WhatsApp order still work without these details.
     }
     setPaymentOptions(options);
-    // The shop may have removed its QR since it was picked.
-    setPaymentMethod((m) => (m === 'whatsapp' && !options.hasQr ? null : m));
+    // UPI QR needs the shop's UPI VPA; clear the selection if it isn't configured.
+    setPaymentMethod((m) => (m === 'upi_qr' && !options.upi ? null : m));
     setPaymentOptionsLoading(false);
   }
 
@@ -647,28 +686,6 @@ export default function NewOrder() {
     return formData;
   }
 
-  async function placeOfflineOrder(method) {
-    try {
-      const formData = buildOrderFormData();
-      formData.append('paymentMethod', method);
-      const response = await fetch('/api/orders/payment/offline', {
-        method: 'POST',
-        credentials: 'include',
-        body: formData
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        showToast(data.message || 'Failed to place order.', 'error');
-        setPaying(false);
-        return;
-      }
-      await finishSuccessfulOrder(data.ticketToken);
-    } catch {
-      showToast('Connection error. Please try again.', 'error');
-      setPaying(false);
-    }
-  }
-
   async function confirmPaidOrder(cashfreeOrderId) {
     console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
     const verifyRes = await fetch('/api/orders/payment/verify', {
@@ -686,16 +703,13 @@ export default function NewOrder() {
       return 'PAID';
     }
     if (verifyData.status === 'PAYMENT_FAILED') {
-      try {
-        localStorage.removeItem('cp_pending_payment');
-      } catch {
-        // A failed payment has no ticket, even if browser storage is unavailable.
-      }
-      setPaymentMessage('Cashfree could not complete this payment. No ticket was generated.');
+      // The order and its files are kept; "Try payment again" pays for the same order.
+      setCanRetryPayment(true);
+      setPaymentMessage('Cashfree reported this payment as failed. Your order is saved — you can try paying again for the same order.');
       setPaying(false);
       return 'PAYMENT_FAILED';
     }
-    if (verifyData.status === 'PAYMENT_PENDING') {
+    if (verifyData.status === 'PAYMENT_PENDING' || verifyData.status === 'PAYMENT_PROCESSING') {
       setPaymentMessage('Payment confirmation pending. We are checking Cashfree and preparing your ticket.');
       return 'PAYMENT_PENDING';
     }
@@ -709,11 +723,12 @@ export default function NewOrder() {
   }
   confirmPaidOrderRef.current = confirmPaidOrder;
 
-  async function recoverPayment(cashfreeOrderId) {
+  async function recoverPayment(cashfreeOrderId, { attempts = 20 } = {}) {
     if (!cashfreeOrderId) return;
     setPaying(true);
+    setCanRetryPayment(false);
     setPaymentMessage('Checking payment status with Cashfree…');
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
         const status = await confirmPaidOrderRef.current(cashfreeOrderId);
         if (status === 'PAID' || status === 'PAYMENT_FAILED') return;
@@ -725,9 +740,10 @@ export default function NewOrder() {
           errorName: error instanceof Error ? error.name : 'UnknownError'
         });
       }
-      if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
+      if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    setPaymentMessage('Payment confirmation is still pending. You can safely close this page and retry later.');
+    setPaymentMessage('Payment is not confirmed yet. If you closed checkout before paying, you can open it again for the same order — you will not be charged twice. If you already paid, check again in a minute.');
+    setCanRetryPayment(true);
     setPaying(false);
   }
   recoverPaymentRef.current = recoverPayment;
@@ -738,7 +754,7 @@ export default function NewOrder() {
     console.info('[PAYMENT_RETURN] Cashfree return received:', {
       cashfreeOrderId: recoveryOrderId
     });
-    recoverPaymentRef.current(recoveryOrderId).catch((error) => {
+    recoverPaymentRef.current(recoveryOrderId, payAgain ? { attempts: 1 } : undefined).catch((error) => {
       console.error('[PAYMENT_RETURN_FAILED]', {
         stage: 'verification_request',
         cashfreeOrderId: recoveryOrderId,
@@ -747,7 +763,102 @@ export default function NewOrder() {
       setPaymentMessage('Payment confirmation pending. Retry when your connection is available.');
       setPaying(false);
     });
-  }, [loading, recoveryOrderId]);
+  }, [loading, recoveryOrderId, payAgain]);
+
+  // Opens Cashfree checkout for one payment attempt, then asks the SERVER whether it
+  // was paid. Closing the modal or the return URL never counts as payment.
+  async function openCashfreeCheckout(session) {
+    try {
+      // Recovery hint only: the server is the source of truth for the order.
+      localStorage.setItem('cp_pending_payment', JSON.stringify({
+        cashfreeOrderId: session.cashfreeOrderId,
+        createdAt: Date.now()
+      }));
+    } catch {
+      // The order is still recoverable from the Orders page.
+    }
+    setRecoveryOrderId(session.cashfreeOrderId);
+    handledReturnOrderRef.current = session.cashfreeOrderId;
+    setCanRetryPayment(false);
+    setPaymentMessage('Complete payment in Cashfree. Your ticket will be created even if you close checkout.');
+
+    const started = Date.now();
+    while (typeof window.Cashfree !== 'function' && Date.now() - started < 8000) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (typeof window.Cashfree !== 'function') {
+      showToast('Payment gateway failed to load. Check your connection and retry.', 'error');
+      setPaying(false);
+      return;
+    }
+
+    const cashfreeCheckout = window.Cashfree({
+      mode: session.mode === 'production' ? 'production' : 'sandbox',
+    });
+
+    console.info('[PAYMENT_SUCCESS] Opening Cashfree checkout:', {
+      cashfreeOrderId: session.cashfreeOrderId,
+      mode: session.mode
+    });
+    try {
+      const checkoutResult = await cashfreeCheckout.checkout({
+        paymentSessionId: session.paymentSessionId,
+        redirectTarget: '_modal',
+      });
+      console.info('[PAYMENT_RETURN] Cashfree checkout returned control:', {
+        cashfreeOrderId: session.cashfreeOrderId,
+        hasError: Boolean(checkoutResult?.error),
+        hasPaymentDetails: Boolean(checkoutResult?.paymentDetails)
+      });
+    } catch (checkoutError) {
+      console.warn('[PAYMENT_RETURN] Cashfree checkout closed or returned an error; checking server payment status:', {
+        cashfreeOrderId: session.cashfreeOrderId,
+        errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
+      });
+    }
+    await recoverPayment(session.cashfreeOrderId);
+  }
+
+  // Pays again for the SAME order after a failed / abandoned Cashfree checkout.
+  async function retryCashfreePayment() {
+    if (!recoveryOrderId || paying) return;
+    setPaying(true);
+    setPaymentMessage('Restarting payment for the same order…');
+    try {
+      const res = await fetch('/api/orders/payment/cashfree/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cashfree_order_id: recoveryOrderId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.status === 'PAID' && data.ticketToken) {
+        await finishSuccessfulOrder(data.ticketToken);
+        return;
+      }
+      if (!res.ok || !data.paymentSessionId || !data.cashfreeOrderId) {
+        setPaymentMessage(data.message || 'Could not restart the payment. Please retry shortly.');
+        setPaying(false);
+        return;
+      }
+      await openCashfreeCheckout(data);
+    } catch {
+      setPaymentMessage('Could not reach the payment service. Please retry; you will not be charged twice.');
+      setPaying(false);
+    }
+  }
+
+  // Abandons the failed checkout locally (the unpaid order stays visible on the Orders page).
+  function dismissFailedPayment() {
+    try {
+      localStorage.removeItem('cp_pending_payment');
+    } catch {
+      // Nothing else to clear.
+    }
+    setCanRetryPayment(false);
+    setPaymentMessage('');
+    setRecoveryOrderId('');
+  }
 
   async function handlePay() {
     if (!selectedLocationId || !selectedTimeSlot) {
@@ -770,12 +881,10 @@ export default function NewOrder() {
       return;
     }
 
-    setPaying(true);
+    // UPI QR and WhatsApp have their own flows (requestPayment); only Cashfree pays here.
+    if (paymentMethod !== 'cashfree') return;
 
-    if (paymentMethod !== 'cashfree') {
-      await placeOfflineOrder(paymentMethod);
-      return;
-    }
+    setPaying(true);
 
     try {
       try {
@@ -797,7 +906,8 @@ export default function NewOrder() {
         setPaying(false);
         return;
       }
-
+      // Send the actual files so the backend derives the trusted amount from
+      // their real content (page counts), not from any client-sent price.
       const createRes = await fetch('/api/orders/payment/create', {
         method: 'POST',
         credentials: 'include',
@@ -817,52 +927,93 @@ export default function NewOrder() {
         setPaying(false);
         return;
       }
-      localStorage.setItem('cp_pending_payment', JSON.stringify({
-        cashfreeOrderId: createData.cashfreeOrderId,
-        createdAt: Date.now()
-      }));
-      setRecoveryOrderId(createData.cashfreeOrderId);
-      setPaymentMessage('Complete payment in Cashfree. Your ticket will be created even if you close checkout.');
-
-      const started = Date.now();
-      while (typeof window.Cashfree !== 'function' && Date.now() - started < 8000) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-      if (typeof window.Cashfree !== 'function') {
-        showToast('Payment gateway failed to load. Check your connection and retry.', 'error');
-        setPaying(false);
-        return;
-      }
-
-      const cashfreeCheckout = window.Cashfree({
-        mode: createData.mode === 'production' ? 'production' : 'sandbox',
-      });
-
-      console.info('[PAYMENT_SUCCESS] Opening Cashfree checkout:', {
-        cashfreeOrderId: createData.cashfreeOrderId,
-        mode: createData.mode
-      });
-      try {
-        const checkoutResult = await cashfreeCheckout.checkout({
-          paymentSessionId: createData.paymentSessionId,
-          redirectTarget: '_modal',
-        });
-        console.info('[PAYMENT_RETURN] Cashfree checkout returned control:', {
-          cashfreeOrderId: createData.cashfreeOrderId,
-          hasError: Boolean(checkoutResult?.error),
-          hasPaymentDetails: Boolean(checkoutResult?.paymentDetails)
-        });
-      } catch (checkoutError) {
-        console.warn('[PAYMENT_RETURN] Cashfree checkout closed or returned an error; checking server payment status:', {
-          cashfreeOrderId: createData.cashfreeOrderId,
-          errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
-        });
-      }
-      await recoverPayment(createData.cashfreeOrderId);
+      await openCashfreeCheckout(createData);
     } catch (error) {
       const details = error instanceof Error ? error.message : 'Could not reach the payment service.';
       setPaymentMessage(`Payment confirmation pending. ${details} Retry without submitting payment again.`);
       setPaying(false);
+    }
+  }
+
+  // Review-step button routes by method:
+  //  'none'   → Personal WhatsApp instruction modal (no order/payment)
+  //  'upi_qr' → create the order + show the UPI QR screen
+  //  else     → the pre-payment warning (Cashfree)
+  function requestPayment() {
+    if (paymentMethod === 'none') {
+      whatsappOpenedRef.current = false;
+      setWhatsappModalOpen(true);
+      return;
+    }
+    if (paymentMethod === 'upi_qr') {
+      startUpiQr();
+      return;
+    }
+    setPaymentWarningOpen(true);
+  }
+
+  // Order-first UPI QR: create the PENDING order on the server and show its QR.
+  // The guard prevents a double-click from creating two orders.
+  async function startUpiQr() {
+    if (upiSubmittingRef.current || paying) return;
+    upiSubmittingRef.current = true;
+    setPaying(true);
+    try {
+      const res = await fetch('/api/orders/payment/upi-qr', {
+        method: 'POST', credentials: 'include', body: buildOrderFormData(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Could not start UPI payment. Please try again.', 'error');
+        return;
+      }
+      try { await clearCompletedOrder(); } catch { /* draft cleanup is best-effort */ }
+      closeBookingModal();
+      setUpiQrData(data); // stays on a pending QR screen — no navigation to the ticket
+    } catch {
+      showToast('Connection error. Please try again.', 'error');
+    } finally {
+      setPaying(false);
+      upiSubmittingRef.current = false;
+    }
+  }
+
+  // Normalizes an Indian number to wa.me's international form (digits, no '+').
+  function toWhatsappNumber(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length === 10) return `91${digits}`;        // bare 10-digit → prefix India
+    if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`;
+    return digits;                                         // already has a country code
+  }
+
+  // "Continue to WhatsApp": open the existing WhatsApp chat exactly once, prefilled
+  // with the order template. No order/ticket is created; the form stays intact.
+  function openWhatsApp() {
+    if (whatsappOpenedRef.current) return;
+    const number = toWhatsappNumber(paymentOptions?.phone);
+    if (!number) {
+      showToast('WhatsApp number is not configured. Please contact the shop.', 'error');
+      return;
+    }
+    whatsappOpenedRef.current = true;
+    setWhatsappOpening(true);
+    const url = `https://wa.me/${number}?text=${encodeURIComponent(WA_ORDER_TEMPLATE)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setWhatsappModalOpen(false);
+    setWhatsappOpening(false);
+  }
+
+  // "Continue to Payment": run the existing, unchanged pay flow exactly once.
+  // The synchronous ref guard blocks double-clicks before React re-renders.
+  async function confirmPaymentWarning() {
+    if (confirmingPaymentRef.current || paying) return;
+    confirmingPaymentRef.current = true;
+    setPaymentWarningOpen(false);
+    try {
+      await handlePay();
+    } finally {
+      confirmingPaymentRef.current = false;
     }
   }
 
@@ -901,6 +1052,16 @@ export default function NewOrder() {
                   Check payment again
                 </button>
               )}
+              {!paying && recoveryOrderId && canRetryPayment && (
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={retryCashfreePayment}>
+                    Pay for this order again
+                  </button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={dismissFailedPayment}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <a href="/dashboard" className="back-link">
@@ -938,7 +1099,7 @@ export default function NewOrder() {
                     type="file"
                     id="fileInput"
                     multiple
-                    accept=".pdf,.docx,.doc,.png,.jpg,.jpeg"
+                    accept={ACCEPT_ATTR}
                     onChange={(e) => { addFiles([...e.target.files]); e.target.value = ''; }}
                   />
                   <div className="upload-zone-icon">
@@ -949,21 +1110,22 @@ export default function NewOrder() {
                     </svg>
                   </div>
                   <h3>Drag &amp; drop files or click to browse</h3>
-                  <p>Support for PDF, DOCX, PNG, JPG &nbsp;(Up to 10 files)</p>
+                  <p>Support for {SUPPORTED_LABEL} &nbsp;(Up to 10 files)</p>
                 </div>
 
                 <div className="files-list" id="filesList">
                   {files.length === 0 ? (
                     <div className="empty-files-state" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                       <p>No files uploaded yet</p>
-                      <p style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>Upload your PDF files to start your print order.</p>
+                      <p style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>Upload your files to start your print order.</p>
                       <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-                        + Upload PDFs
+                        + Upload Files
                       </button>
                     </div>
                   ) : (
                     <>
                       {files.map((f) => {
+                        const typeLabel = fileExtLabel(f.file.name);
                         let pagesText;
                         if (f.pages === null) {
                           pagesText = (
@@ -971,8 +1133,21 @@ export default function NewOrder() {
                               <span className="loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }}></span> Detecting pages…
                             </span>
                           );
+                        } else if (f.estimated) {
+                          // No reliable automatic count for this type — let the user confirm it.
+                          pagesText = (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span>Pages:</span>
+                              <input
+                                type="number" min="1" max="2000" value={f.pages}
+                                onChange={(e) => updateFilePages(f.key, e.target.value)}
+                                style={{ width: '4rem', padding: '0.15rem 0.35rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.8rem' }}
+                              />
+                              <span style={{ color: '#9a3412' }}>(confirm — page count finalized at processing)</span>
+                            </span>
+                          );
                         } else {
-                          pagesText = `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (estimated)' : ''}`;
+                          pagesText = `${f.pages} page${f.pages > 1 ? 's' : ''}`;
                         }
                         const pdfTotal = filePrintingCost(f);
                         return (
@@ -988,10 +1163,12 @@ export default function NewOrder() {
                           }}>
                             <div className="file-item-head">
                               <div className="file-item-main">
-                                <div className="file-icon" style={{ fontSize: '1.5rem' }}>📄</div>
+                                <div className="file-icon" style={{ fontSize: '1.5rem' }}>{isImageName(f.file.name) ? '🖼️' : '📄'}</div>
                                 <div className="file-item-info">
                                   <div className="file-item-name" style={{ fontWeight: '600' }}>{f.file.name}</div>
-                                  <div className="file-item-size" style={{ fontSize: '0.8rem', color: '#666' }}>{formatSize(f.file.size)} · {pagesText}</div>
+                                  <div className="file-item-size" style={{ fontSize: '0.8rem', color: '#666' }}>
+                                    <span style={{ fontWeight: 700, color: '#374151' }}>{typeLabel}</span> · {formatSize(f.file.size)} · {pagesText}
+                                  </div>
                                 </div>
                               </div>
                               <button className="file-remove" title="Remove" onClick={() => removeFile(f.key)}>✕</button>
@@ -1290,9 +1467,10 @@ export default function NewOrder() {
               <>
                 <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
                   {PAYMENT_OPTIONS.map((opt) => {
-                    const isDisabled = opt.id === 'whatsapp' && !paymentOptions?.hasQr;
+                    const isDisabled = opt.id === 'upi_qr' && !paymentOptions?.upi;
                     const isSelected = paymentMethod === opt.id && !isDisabled;
-                    let classes = 'cp-loc-card';
+                    let classes = 'cp-loc-card cp-pay-card';
+                    if (opt.recommended) classes += ' cp-pay-recommended';
                     if (isSelected) classes += ' is-selected';
                     if (isDisabled) classes += ' is-unavailable';
                     return (
@@ -1309,36 +1487,38 @@ export default function NewOrder() {
                           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>
                         </div>
                         <h3 className="cp-card-title">{opt.name}</h3>
-                        <p className="cp-card-sub">{opt.sub}</p>
+                        {opt.badge && <span className="cp-pay-badge">{opt.badge}</span>}
+                        <p className={`cp-pay-reliability cp-pay-reliability--${opt.tone}`}>{opt.reliability}</p>
+                        <p className="cp-card-sub cp-pay-desc">{opt.description}</p>
                         <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
                       </button>
                     );
                   })}
                 </div>
 
-                {paymentMethod === 'whatsapp' && paymentOptions?.hasQr && (
+                {paymentMethod === 'upi_qr' && (
                   <div className="cp-review-box cp-payment-detail">
-                    <h3 className="cp-review-heading">Scan to pay ₹{p.total}</h3>
-                    <img
-                      className="cp-payment-qr"
-                      src={`/api/orders/payment-options/qr?v=${paymentOptions.qrVersion || ''}`}
-                      alt="Shop payment QR code"
-                    />
+                    <h3 className="cp-review-heading">Pay via UPI QR</h3>
                     <p className="cp-card-sub">
-                      Scan this QR with any UPI app and pay <strong>₹{p.total}</strong>. Your order is placed when you continue,
-                      and the shop confirms the payment once it's received.
+                      When you continue, we'll create your order and show a UPI QR for <strong>₹{p.total}</strong>.
+                      Scan it with any UPI app to pay. Your payment is <strong>confirmed by our team</strong> — the
+                      order stays <strong>pending</strong> until then.
                     </p>
+                    {!paymentOptions?.upi && (
+                      <p className="cp-card-sub"><strong>UPI isn't set up yet — please choose another method.</strong></p>
+                    )}
                   </div>
                 )}
 
                 {paymentMethod === 'none' && (
                   <div className="cp-review-box cp-payment-detail">
-                    <h3 className="cp-review-heading">Online payment is currently unavailable</h3>
-                    <p className="cp-card-sub">Contact the shop for payment instructions:</p>
-                    {paymentOptions?.phone ? (
-                      <a className="cp-payment-phone" href={`tel:${paymentOptions.phone.replace(/[^\d+]/g, '')}`}>📞 {paymentOptions.phone}</a>
-                    ) : (
-                      <p className="cp-card-sub"><strong>Please contact the shop at the pickup counter.</strong></p>
+                    <h3 className="cp-review-heading">Order via Personal WhatsApp</h3>
+                    <p className="cp-card-sub">
+                      This is a <strong>manual order</strong>. When you continue, you'll get step-by-step WhatsApp
+                      instructions. <strong>No ticket is auto-generated</strong> — our team verifies and confirms your order.
+                    </p>
+                    {!paymentOptions?.phone && (
+                      <p className="cp-card-sub"><strong>WhatsApp number isn't set up yet — please contact the shop at the pickup counter.</strong></p>
                     )}
                   </div>
                 )}
@@ -1450,17 +1630,46 @@ export default function NewOrder() {
 
             <div className="cp-step-footer space-between" style={{ marginTop: '1.5rem' }}>
               <button type="button" className="btn btn-secondary" onClick={() => goToStep('payment')}>← Back to Payment</button>
-              <button type="button" className="btn btn-primary" disabled={paying} onClick={handlePay}>
+              <button type="button" className="btn btn-primary" disabled={paying} onClick={requestPayment}>
                 {paying ? (
                   <><span className="loading-spinner"></span>&nbsp; Processing…</>
                 ) : (
-                  <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : 'Place Order'} <span className="arrow-icon">→</span></>
+                  <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : paymentMethod === 'none' ? 'Order via WhatsApp' : paymentMethod === 'upi_qr' ? 'Pay via UPI QR' : 'Place Order'} <span className="arrow-icon">→</span></>
                 )}
               </button>
             </div>
           </section>
         </div>
       </div>
+
+      <PaymentWarningModal
+        isOpen={paymentWarningOpen}
+        processing={paying}
+        onCancel={() => setPaymentWarningOpen(false)}
+        onConfirm={confirmPaymentWarning}
+      />
+
+      <WhatsAppOrderModal
+        isOpen={whatsappModalOpen}
+        opening={whatsappOpening}
+        onCancel={() => setWhatsappModalOpen(false)}
+        onContinue={openWhatsApp}
+        whatsappNumber={paymentOptions?.phone || ''}
+        upi={paymentOptions?.upi || ''}
+        hasQr={!!paymentOptions?.hasQr}
+        qrVersion={paymentOptions?.qrVersion}
+        fileInfo={{ supported: SUPPORTED_LABEL, maxSizeMb: Math.round(MAX_FILE_BYTES / (1024 * 1024)), maxFiles: MAX_ORDER_FILES }}
+        showToast={showToast}
+      />
+
+      {upiQrData && (
+        <UpiQrPayment
+          data={upiQrData}
+          showToast={showToast}
+          onClose={() => setUpiQrData(null)}
+          onViewTicket={() => navigate(`/ticket?token=${encodeURIComponent(upiQrData.ticketToken)}`)}
+        />
+      )}
 
       <Toast toast={toast} />
     </>

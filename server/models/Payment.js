@@ -1,15 +1,24 @@
 const pool = require('../db');
 
-async function createForOrder(orderId, userId, shopId, amount, method = 'manual', transactionRef = null, extra = {}) {
-    const ref = transactionRef || `TXN-${String(orderId).padStart(6, '0')}`;
-    const status = extra.status || 'success';
-    const gatewayOrderId = extra.gatewayOrderId || null;
-    const [result] = await pool.execute(
-        `INSERT INTO payments (order_id, user_id, shop_id, amount, status, method, transaction_ref, gateway_order_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [orderId, userId, shopId, amount, status, method, ref, gatewayOrderId]
+// Payment rows are created by models/Order.js (with their order) and only ever
+// marked successful by services/paymentFinalizer.js.
+
+async function findByReference(paymentReference) {
+    if (!paymentReference) return null;
+    const [rows] = await pool.execute(
+        `SELECT * FROM payments WHERE payment_reference = ? ORDER BY id DESC LIMIT 1`,
+        [paymentReference]
     );
-    return { id: result.insertId, transaction_ref: ref };
+    return rows[0] || null;
+}
+
+// Refreshes the QR expiry for an unpaid payment (reuses the same order/reference).
+async function refreshQrExpiry(orderId, qrExpiresAt) {
+    await pool.execute(
+        `UPDATE payments SET qr_expires_at = ?, updated_at = NOW() WHERE order_id = ? AND status = 'pending'`,
+        [qrExpiresAt, orderId]
+    );
+    return findByOrderId(orderId);
 }
 
 async function findByGatewayOrderId(gatewayOrderId) {
@@ -19,21 +28,6 @@ async function findByGatewayOrderId(gatewayOrderId) {
         [gatewayOrderId]
     );
     return rows[0] || null;
-}
-
-async function updateByGatewayOrderId(gatewayOrderId, { status, transactionRef } = {}) {
-    const fields = [];
-    const params = [];
-    if (status) { fields.push('status = ?'); params.push(status); }
-    if (transactionRef) { fields.push('transaction_ref = ?'); params.push(transactionRef); }
-    if (fields.length === 0) return findByGatewayOrderId(gatewayOrderId);
-    fields.push('updated_at = NOW()');
-    params.push(gatewayOrderId);
-    await pool.execute(
-        `UPDATE payments SET ${fields.join(', ')} WHERE gateway_order_id = ?`,
-        params
-    );
-    return findByGatewayOrderId(gatewayOrderId);
 }
 
 async function refundForOrder(orderId) {
@@ -47,14 +41,6 @@ async function findByOrderId(orderId) {
         [orderId]
     );
     return rows[0] || null;
-}
-
-/** Marks an order's pending (offline) payment as received. Returns null when nothing was pending. */
-async function markPaidForOrder(orderId) {
-    const payment = await findByOrderId(orderId);
-    if (!payment || payment.status !== 'pending') return null;
-    await pool.execute(`UPDATE payments SET status = 'success', updated_at = NOW() WHERE id = ?`, [payment.id]);
-    return findByOrderId(orderId);
 }
 
 async function listPayments({ search = '', status = '', shopId = null, dateFrom = '', dateTo = '', page = 1, limit = 20 } = {}) {
@@ -85,6 +71,57 @@ async function listPayments({ search = '', status = '', shopId = null, dateFrom 
     return { payments: rows, total: count, page, limit };
 }
 
+/**
+ * Printer Admin "transactions": one row per settled payment of this shop's orders,
+ * showing the PRINTER'S payable (the order's printing charges) — never the payment
+ * amount the customer paid. Unpaid / failed attempts are not listed.
+ * `amount` is null for orders placed before charges were itemised.
+ */
+async function listPrinterPayables({ search = '', status = '', shopId, dateFrom = '', dateTo = '', page = 1, limit = 20 } = {}) {
+    const offset = (page - 1) * limit;
+    const where = ["p.status IN ('success', 'refunded')", 'o.shop_id = ?'];
+    const params = [shopId];
+
+    if (search) { where.push('(p.transaction_ref LIKE ? OR u.email LIKE ? OR o.guest_full_name LIKE ? OR p.order_id = ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`, Number(search) || 0); }
+    if (status === 'success' || status === 'refunded') { where.push('p.status = ?'); params.push(status); }
+    if (dateFrom) { where.push('p.created_at >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('p.created_at <= ?'); params.push(`${dateTo} 23:59:59`); }
+    const whereClause = `WHERE ${where.join(' AND ')}`;
+
+    const [rows] = await pool.query(
+        `SELECT p.id, p.order_id, p.status, p.method, p.transaction_ref, p.created_at,
+                COALESCE(u.email, o.guest_full_name) AS customer_email,
+                o.ticket_number, o.printing_amount AS amount
+         FROM payments p
+         JOIN orders o ON o.id = p.order_id
+         LEFT JOIN users u ON u.id = o.user_id
+         ${whereClause} ORDER BY p.created_at DESC LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+    );
+    const [[{ count }]] = await pool.query(
+        `SELECT COUNT(*) AS count FROM payments p JOIN orders o ON o.id = p.order_id
+         LEFT JOIN users u ON u.id = o.user_id ${whereClause}`,
+        params
+    );
+    return {
+        payments: rows.map(r => ({ ...r, amount: r.amount === null ? null : parseFloat(r.amount) })),
+        total: count,
+        page,
+        limit
+    };
+}
+
+/** Every payment attempt for one order (Super Admin breakdown). */
+async function listForOrder(orderId) {
+    const [rows] = await pool.execute(
+        `SELECT id, status, method, amount, currency, transaction_ref, gateway_order_id, payment_reference,
+                paid_at, created_at, updated_at
+         FROM payments WHERE order_id = ? ORDER BY id`,
+        [orderId]
+    );
+    return rows;
+}
+
 async function getPlatformPaymentStats() {
     const [rows] = await pool.query('SELECT status, COUNT(*) AS count, COALESCE(SUM(amount),0) AS amount FROM payments GROUP BY status');
     const result = {
@@ -105,4 +142,4 @@ async function getPlatformPaymentStats() {
     return result;
 }
 
-module.exports = { createForOrder, refundForOrder, findByOrderId, markPaidForOrder, listPayments, getPlatformPaymentStats, findByGatewayOrderId, updateByGatewayOrderId };
+module.exports = { refundForOrder, findByOrderId, listPayments, listPrinterPayables, listForOrder, getPlatformPaymentStats, findByGatewayOrderId, findByReference, refreshQrExpiry };

@@ -5,9 +5,56 @@ import Footer from '../components/Footer';
 import LogoLink from '../components/LogoLink';
 import useBodyClass from '../lib/useBodyClass';
 import useDocumentTitle from '../lib/useDocumentTitle';
+import { getDeliveryContact } from '../lib/deliveryPersons';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 import '../styles/ticket.css';
+
+// States where the outcome isn't final yet; the page re-checks the server for these.
+const STILL_OPEN_STATES = ['PAYMENT_PENDING', 'PAYMENT_PROCESSING', 'TICKET_GENERATION_PENDING'];
+
+function stateHeader(order) {
+  const keepLink = 'Keep this link — this page updates automatically once your payment is confirmed.';
+  switch (order.state) {
+    case 'TICKET_GENERATION_PENDING':
+      return {
+        title: 'Payment received',
+        highlight: 'preparing your ticket',
+        subtitle: 'Your payment is confirmed. Your collection ticket is being generated — you will not be charged again.',
+        note: 'This page updates automatically.'
+      };
+    case 'PAYMENT_FAILED':
+      return {
+        title: 'Payment failed',
+        highlight: 'no ticket yet',
+        subtitle: 'This payment did not go through. Your order is saved — you can pay again for it.',
+        note: 'Open the Orders page to retry payment for this order.'
+      };
+    case 'REFUNDED':
+      return {
+        title: 'Order refunded',
+        highlight: 'no ticket',
+        subtitle: 'The payment for this order was refunded.',
+        note: 'Contact the shop if you have questions.'
+      };
+    case 'EXPIRED':
+      return {
+        title: 'Order placed',
+        highlight: 'QR expired',
+        subtitle: 'The payment QR expired before payment was confirmed. Your order is saved and still unpaid.',
+        note: 'Open the Orders page to get a fresh QR, or contact the shop if you already paid.'
+      };
+    default: {
+      const method = order.payment?.method;
+      const subtitle = method === 'cashfree'
+        ? 'We are confirming your payment with Cashfree.'
+        : method === 'none'
+          ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
+          : 'The shop will confirm your payment shortly.';
+      return { title: 'Order placed', highlight: 'payment pending', subtitle, note: keepLink };
+    }
+  }
+}
 
 export default function Ticket() {
   useBodyClass('ticket-page-body');
@@ -24,18 +71,17 @@ export default function Ticket() {
       return;
     }
     let cancelled = false;
-    (async () => {
+    let timer = null;
+    async function loadTicket() {
       try {
         const endpoint = ticketToken
           ? `/api/orders/ticket/${encodeURIComponent(ticketToken)}`
           : `/api/orders/${encodeURIComponent(orderId)}`;
-        console.info('[TICKET_LOAD] Fetching ticket:', { secureTokenProvided: Boolean(ticketToken), orderId: ticketToken ? undefined : orderId });
         const res = await fetch(endpoint, { credentials: 'include' });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           console.error('[TICKET_LOAD_FAILED]', {
             stage: 'ticket_lookup_response',
-            orderId: ticketToken ? undefined : orderId,
             httpStatus: res.status,
             code: data.code || 'TICKET_LOAD_FAILED'
           });
@@ -43,29 +89,28 @@ export default function Ticket() {
           return;
         }
         const data = await res.json();
-        if (!cancelled) {
-          console.info('[TICKET_LOAD] Ticket loaded:', { ticketNumberPresent: Boolean(data.ticket_number) });
-          setOrder(data);
-        }
+        if (cancelled) return;
+        setOrder(data);
+        // Keep checking the SERVER while the outcome is still open (refresh-safe).
+        if (STILL_OPEN_STATES.includes(data.state)) timer = setTimeout(loadTicket, 10000);
       } catch (error) {
         console.error('[TICKET_LOAD_FAILED]', {
           stage: 'ticket_lookup_request',
-          orderId: ticketToken ? undefined : orderId,
           errorName: error instanceof Error ? error.name : 'UnknownError'
         });
         if (!cancelled) setTicketError('Could not reach the server to load this ticket. Please retry.');
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    loadTicket();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [orderId, ticketToken]);
 
-  function maskPhone(phone) {
-    if (!phone) return '—';
-    if (phone.length < 10) return phone;
-    return `${phone.slice(0, 3)}****${phone.slice(-3)}`;
-  }
-
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
+  // Everything below comes from the server's state for this order, never from the URL.
+  const isPaid = order?.state === 'TICKET_READY';
+  // Assigned by the order's saved collection location (lib/deliveryPersons.js).
+  const deliveryContact = order ? getDeliveryContact(order.collection_location_id, order.collection_location) : null;
+  const header = order ? stateHeader(order) : null;
 
   return (
     <>
@@ -90,18 +135,28 @@ export default function Ticket() {
           ) : (
             <>
 
-          <section className="ticket-success-header">
-            <div className="success-badge-circle">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </div>
-            <h1 className="success-heading">
-              Payment <span className="highlight-cyan">Successful!</span>
-            </h1>
-            <p className="success-subtitle">Your collection ticket is ready.</p>
-            <p className="success-note">Keep this ticket handy when collecting your prints.</p>
-          </section>
+          {isPaid ? (
+            <section className="ticket-success-header">
+              <div className="success-badge-circle">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <h1 className="success-heading">
+                Payment <span className="highlight-cyan">Successful!</span>
+              </h1>
+              <p className="success-subtitle">Your collection ticket is ready.</p>
+              <p className="success-note">Keep this ticket handy when collecting your prints.</p>
+            </section>
+          ) : (
+            <section className="ticket-success-header">
+              <h1 className="success-heading">
+                {header.title} — <span className="highlight-cyan">{header.highlight}</span>
+              </h1>
+              <p className="success-subtitle">{header.subtitle}</p>
+              <p className="success-note">{header.note}</p>
+            </section>
+          )}
 
           <div className="ticket-card-wrapper">
             <div className="ticket-left-stub">
@@ -115,12 +170,14 @@ export default function Ticket() {
             <div className="ticket-main-body">
               <div className="ticket-microcopy">
                 <span className="star-ornament">✦</span>
-                <span>YOUR COLLECTION TICKET</span>
+                <span>{isPaid ? 'YOUR COLLECTION TICKET' : 'ORDER REFERENCE'}</span>
                 <span className="star-ornament">✦</span>
               </div>
 
               <div className="ticket-number-display">
-                <h2 className="cp-ticket-code">{order ? (order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`) : '—'}</h2>
+                <h2 className="cp-ticket-code">
+                  {isPaid ? (order.ticket_number || `CP-${String(order.id).padStart(3, '0')}`) : `Order #${order.id}`}
+                </h2>
               </div>
 
               <div className="ticket-divider">
@@ -152,7 +209,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">PHONE</span>
-                    <span className="info-value">{maskPhone(order?.guest_phone)}</span>
+                    <span className="info-value">{order?.guest_phone || '—'}</span>
                   </div>
                 </div>
 
@@ -180,7 +237,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">TRANSACTION ID</span>
-                    <span className="info-value font-mono">{order?.payment ? order.payment.transaction_ref : '—'}</span>
+                    <span className="info-value font-mono">{isPaid && order?.payment ? order.payment.transaction_ref : '—'}</span>
                   </div>
                 </div>
 
@@ -209,6 +266,33 @@ export default function Ticket() {
                     <span className="info-value value-prominent">{order?.collection_time || '—'}</span>
                   </div>
                 </div>
+
+                {isPaid && (
+                  <div className="ticket-info-row highlight-row delivery-row">
+                    <div className="info-icon-badge loc-badge">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                      </svg>
+                    </div>
+                    <div className="info-details">
+                      <span className="info-label label-accent">DELIVERY PERSON DETAILS</span>
+                      {deliveryContact ? (
+                        <>
+                          <span className="info-value">Name: {deliveryContact.name}</span>
+                          <span className="info-value">Phone: {deliveryContact.phoneDisplay}</span>
+                        </>
+                      ) : (
+                        <span className="info-value">Delivery contact unavailable</span>
+                      )}
+                    </div>
+                    {deliveryContact && (
+                      <a className="delivery-call-btn" href={deliveryContact.telHref} aria-label={`Call ${deliveryContact.name}`}>
+                        Call
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="ticket-footer-note">
@@ -227,19 +311,23 @@ export default function Ticket() {
             </div>
             <div className="reminder-text">
               <p className="reminder-title">Reach on time to collect your prints.</p>
-              <p className="reminder-desc">Show this ticket at the collection counter.</p>
+              <p className="reminder-desc">
+                {isPaid ? 'Show this ticket at the collection counter.' : 'Show this order reference at the collection counter.'}
+              </p>
             </div>
           </div>
 
           <div className="ticket-action-buttons">
-            <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => window.print()}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              <span>Download Ticket</span>
-            </button>
+            {isPaid && (
+              <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => window.print()}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Download Ticket</span>
+              </button>
+            )}
 
             <a href="/" className="ticket-btn ticket-btn-primary">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -5,7 +5,7 @@ export const STATUS_LABELS = {
   accepted: 'Accepted',
   printing: 'Printing',
   ready: 'Ready',
-  completed: 'Completed',
+  completed: 'Completed · Ready for Pickup',
   rejected: 'Rejected',
   cancelled: 'Cancelled',
 };
@@ -30,14 +30,12 @@ export const PAY_LABELS = {
   failed: 'Failed',
 };
 
+// Workflow: Pending → Accept → Completed (Ready for Pickup), or Pending → Reject.
 export const NEXT_ACTIONS = {
   pending: [
-    { status: 'accepted', label: 'Accept', cls: 'bg-emerald-500 hover:bg-emerald-600 text-white' },
+    { status: 'completed', label: 'Accept', cls: 'bg-emerald-500 hover:bg-emerald-600 text-white' },
     { status: 'rejected', label: 'Reject', cls: 'bg-red-500 hover:bg-red-600 text-white' },
   ],
-  accepted: [{ status: 'printing', label: 'Start Printing', cls: 'bg-blue-500 hover:bg-blue-600 text-white' }],
-  printing: [{ status: 'ready', label: 'Mark Ready', cls: 'bg-blue-500 hover:bg-blue-600 text-white' }],
-  ready: [{ status: 'completed', label: 'Mark Completed', cls: 'bg-emerald-500 hover:bg-emerald-600 text-white' }],
 };
 
 export function fmtMoney(n) {

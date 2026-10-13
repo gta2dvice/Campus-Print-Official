@@ -3,7 +3,7 @@
 
 export const STATUS_LABELS = {
   pending: 'Pending', accepted: 'Accepted', printing: 'Printing',
-  ready: 'Ready', completed: 'Completed', rejected: 'Rejected', cancelled: 'Cancelled',
+  ready: 'Ready', completed: 'Completed · Ready for Pickup', rejected: 'Rejected', cancelled: 'Cancelled',
 };
 export const PAY_LABELS = { success: 'Success', refunded: 'Refunded', pending: 'Pending', failed: 'Failed' };
 export const ROLE_LABELS = { student: 'Student', shop_admin: 'Shop Admin', super_admin: 'Super Admin' };

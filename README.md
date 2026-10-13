@@ -115,8 +115,8 @@ Mapping to the product lifecycle names:
 ### Printer / shop (`/admin`)
 
 - Login for `role = shop_admin`.
-- Dashboard stats, order list/filters, status transitions, reject with reason.
-- View/download order files (until storage cleanup expires them).
+- Dashboard stats, order list/filters, Accept (Pending → Completed / Ready for Pickup) or Reject with reason.
+- Preview/download order files.
 - Earnings and shop-scoped payment list.
 - Shop profile edit (name, hours, contact, open flag).
 - Change own password (min 8 characters).
@@ -149,7 +149,7 @@ Mapping to the product lifecycle names:
 - Multer memory upload on detect-pages, simulate, and verify.
 - Files stored in a **private** Supabase Storage bucket (default `uploaded-pdfs`) at `{userId}/{orderId}/{uniqueName}`.
 - Metadata in `order_files`. Access only through authenticated admin/super-admin document routes.
-- Cleanup: files older than 24 hours (override `CLEANUP_TTL_MS`) — hourly in the Node process, `POST/GET /api/internal/cleanup-pdfs` with `CRON_SECRET`, Vercel cron hitting that path, optional Supabase Edge Function `cleanup-expired-pdfs`. Rows stay; `storage_path` is cleared and `file_deleted_at` is set.
+- Automatic cleanup is **off** (future scope): nothing schedules it. The job is kept for later — `npm run cleanup-pdfs` or `POST/GET /api/internal/cleanup-pdfs` with `CRON_SECRET` deletes files older than 24 hours (`CLEANUP_TTL_MS`) only when run by hand. Do not schedule the Supabase Edge Function `cleanup-expired-pdfs`.
 
 ### Order tracking
 
@@ -223,7 +223,7 @@ In-memory `express-session` is the session store (not Redis). Multiple server in
 | jszip | DOCX page count (`docProps/app.xml`) | `server/pageDetect.js` |
 | mysql2 | **One-off MySQL → Postgres copy** | `scripts/migrate-mysql-to-supabase.js` only |
 | nodemon | API reload in development | `npm run dev` |
-| Vercel | SPA hosting + hourly cleanup cron | `vercel.json`, `client-react/vercel.json` |
+| Vercel | SPA hosting | `vercel.json`, `client-react/vercel.json` |
 
 **Not used as the live database:** MySQL (legacy migrate script only). **Not present:** Razorpay, Redis, Docker files, GitHub Actions.
 
@@ -264,7 +264,7 @@ Campus-Print/
 ├── scripts/               # MySQL migration; leftover copy-three.js (old path)
 ├── .env.example           # Backend variable names (no secrets)
 ├── package.json           # Root scripts and API dependencies
-├── vercel.json            # Hourly cron → /api/internal/cleanup-pdfs
+├── vercel.json            # (no crons — file cleanup is off)
 └── README.md
 ```
 
@@ -434,7 +434,7 @@ Prefix `/api`. Student and payment routes use `credentials: 'include'`.
 Observed config (not a full Docker/K8s setup):
 
 **Express host (e.g. Render, VM)**  
-Set the env vars above, `NODE_ENV=production`, `FRONTEND_URL` to the exact public Vercel origin, and `PUBLIC_API_URL` to the public Render API origin. Vercel builds the frontend separately; Render can run backend-only without `client-react/dist`. If a client build is present, Express serves it; otherwise the API root returns a health response. Start Render with `npm start`. The process also runs PDF cleanup on boot and every hour.
+Set the env vars above, `NODE_ENV=production`, `FRONTEND_URL` to the exact public Vercel origin, and `PUBLIC_API_URL` to the public Render API origin. Vercel builds the frontend separately; Render can run backend-only without `client-react/dist`. If a client build is present, Express serves it; otherwise the API root returns a health response. Start Render with `npm start`. Uploaded files are not deleted automatically.
 
 **Vercel (`client-react/vercel.json`)**  
 Static build of the SPA. Rewrites `/api/*` to `https://campus-print-1yeh.onrender.com/api/$1` (the URL currently in that file). Root `vercel.json` schedules:
