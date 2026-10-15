@@ -230,7 +230,10 @@ describe('Cashfree reconciliation (server-side verification)', () => {
     function stubCashfree({ orderAmount = 50, paidAmount = 50, status = 'PAID', paymentStatus = 'SUCCESS' } = {}) {
         stubs.fetchOrder = cashfree.fetchOrder;
         stubs.fetchOrderPayments = cashfree.fetchOrderPayments;
-        cashfree.fetchOrder = async id => ({ order_id: id, order_amount: orderAmount, order_currency: 'INR', order_status: status });
+        stubs.fetchOrderUntilPaid = cashfree.fetchOrderUntilPaid;
+        const orderResult = id => ({ order_id: id, order_amount: orderAmount, order_currency: 'INR', order_status: status });
+        cashfree.fetchOrder = async id => orderResult(id);
+        cashfree.fetchOrderUntilPaid = async id => orderResult(id);
         cashfree.fetchOrderPayments = async () => [{ payment_status: paymentStatus, payment_amount: paidAmount, payment_currency: 'INR', cf_payment_id: 991 }];
     }
 
@@ -249,7 +252,8 @@ describe('Cashfree reconciliation (server-side verification)', () => {
 
     function restore() {
         for (const [name, fn] of Object.entries(stubs)) {
-            if (name.startsWith('fetch')) cashfree[name] = fn; else Order[name] = fn;
+            if (name.startsWith('fetch')) cashfree[name] = fn;
+            else if (name.startsWith('get')) Order[name] = fn;
         }
     }
 
@@ -291,6 +295,83 @@ describe('Cashfree reconciliation (server-side verification)', () => {
             assert.equal(db.orders.get(53).payment_status, 'PAYMENT_PENDING');
             assert.equal(db.orders.get(53).ticket_number, null);
         } finally {
+            restore();
+        }
+    });
+
+    it('delayed Cashfree settlement (ACTIVE → PAID on retry) finalizes correctly', async () => {
+        stubOrderLookups(54);
+        let fetchCount = 0;
+        stubs.fetchOrder = cashfree.fetchOrder;
+        stubs.fetchOrderPayments = cashfree.fetchOrderPayments;
+        stubs.fetchOrderUntilPaid = cashfree.fetchOrderUntilPaid;
+        cashfree.fetchOrderUntilPaid = async (id) => {
+            fetchCount++;
+            return { order_id: id, order_amount: 50, order_currency: 'INR', order_status: 'PAID' };
+        };
+        cashfree.fetchOrderPayments = async () => [{ payment_status: 'SUCCESS', payment_amount: 50, payment_currency: 'INR', cf_payment_id: 992 }];
+        try {
+            const result = await ordersRoute.reconcileCashfreePayment(gatewayOrderId, 'return_verify');
+            assert.equal(result.status, 'PAID');
+            assert.equal(result.ticketNumber, 'CP-054');
+            assert.equal(db.orders.get(54).payment_status, 'PAID');
+            assert.equal(fetchCount, 1, 'return_verify should use fetchOrderUntilPaid');
+        } finally {
+            cashfree.fetchOrder = stubs.fetchOrder;
+            cashfree.fetchOrderPayments = stubs.fetchOrderPayments;
+            cashfree.fetchOrderUntilPaid = stubs.fetchOrderUntilPaid;
+        }
+    });
+
+    it('status_poll uses single fetch, not retry', async () => {
+        stubCashfree({ status: 'ACTIVE', paymentStatus: 'PENDING' });
+        stubOrderLookups(55);
+        let usedRetry = false;
+        stubs.fetchOrderUntilPaid = cashfree.fetchOrderUntilPaid;
+        const origFetchOrderUntilPaid = cashfree.fetchOrderUntilPaid;
+        cashfree.fetchOrderUntilPaid = async (...args) => { usedRetry = true; return origFetchOrderUntilPaid(...args); };
+        try {
+            const result = await ordersRoute.reconcileCashfreePayment(gatewayOrderId, 'status_poll');
+            assert.equal(usedRetry, false, 'status_poll should not use fetchOrderUntilPaid');
+            assert.equal(result.status, 'PAYMENT_PROCESSING');
+        } finally {
+            cashfree.fetchOrderUntilPaid = stubs.fetchOrderUntilPaid;
+            restore();
+        }
+    });
+
+    it('ticket_view uses single fetch and finalizes a paid order', async () => {
+        stubCashfree();
+        stubOrderLookups(56);
+        let usedRetry = false;
+        const origRetry = cashfree.fetchOrderUntilPaid;
+        stubs._ticketViewRetry = origRetry;
+        cashfree.fetchOrderUntilPaid = async (...args) => { usedRetry = true; return origRetry(...args); };
+        try {
+            const result = await ordersRoute.reconcileCashfreePayment(gatewayOrderId, 'ticket_view');
+            assert.equal(usedRetry, false, 'ticket_view should not use fetchOrderUntilPaid');
+            assert.equal(result.status, 'PAID');
+            assert.equal(result.ticketNumber, 'CP-056');
+        } finally {
+            cashfree.fetchOrderUntilPaid = stubs._ticketViewRetry;
+            restore();
+        }
+    });
+
+    it('super_admin_reconcile uses single fetch and finalizes a paid order', async () => {
+        stubCashfree();
+        stubOrderLookups(57);
+        let usedRetry = false;
+        const origRetry = cashfree.fetchOrderUntilPaid;
+        stubs._adminRetry = origRetry;
+        cashfree.fetchOrderUntilPaid = async (...args) => { usedRetry = true; return origRetry(...args); };
+        try {
+            const result = await ordersRoute.reconcileCashfreePayment(gatewayOrderId, 'super_admin_reconcile');
+            assert.equal(usedRetry, false, 'super_admin_reconcile should not use fetchOrderUntilPaid');
+            assert.equal(result.status, 'PAID');
+            assert.equal(result.ticketNumber, 'CP-057');
+        } finally {
+            cashfree.fetchOrderUntilPaid = stubs._adminRetry;
             restore();
         }
     });
