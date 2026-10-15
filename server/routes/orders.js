@@ -167,6 +167,13 @@ function toRecoveryOrderSummary(order) {
 
 /** Ticket page payload: the order + its state; recovers a pending ticket on read. */
 async function buildTicketView(order) {
+    if (order.payment_status === 'PAYMENT_PENDING' && order.payment_method === 'CASHFREE' && paymentGatewayReady()) {
+        const attempt = await Order.getLatestCashfreeAttempt(order.id);
+        if (attempt && attempt.status === 'pending') {
+            try { await reconcileCashfreePayment(attempt.gateway_order_id, 'ticket_view'); } catch {}
+            order = await Order.getOrderRecord(order.id);
+        }
+    }
     if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
@@ -882,10 +889,11 @@ async function reconcileCashfreePayment(cashfreeOrderId, source) {
         return { status: 'PAYMENT_FAILED', id: intent.order_id, canRetry: true };
     }
 
-    const [providerOrder, providerPayments] = await Promise.all([
-        cashfree.fetchOrder(cashfreeOrderId),
-        cashfree.fetchOrderPayments(cashfreeOrderId)
-    ]);
+    const shouldRetry = source === 'return_verify' || source === 'cashfree_webhook';
+    const providerOrder = shouldRetry
+        ? await cashfree.fetchOrderUntilPaid(cashfreeOrderId)
+        : await cashfree.fetchOrder(cashfreeOrderId);
+    const providerPayments = await cashfree.fetchOrderPayments(cashfreeOrderId);
     if (providerOrder.order_id !== cashfreeOrderId ||
         !cashfree.amountsMatch(providerOrder.order_amount, intent.payment_amount) ||
         String(providerOrder.order_currency || '').toUpperCase() !== 'INR') {

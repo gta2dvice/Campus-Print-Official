@@ -44,6 +44,13 @@ function stateHeader(order) {
         subtitle: 'The payment QR expired before payment was confirmed. Your order is saved and still unpaid.',
         note: 'Open the Orders page to get a fresh QR, or contact the shop if you already paid.'
       };
+    case 'PAYMENT_PROCESSING':
+      return {
+        title: 'Payment processing',
+        highlight: 'almost there',
+        subtitle: 'Your payment is being processed by Cashfree. This should only take a moment.',
+        note: 'This page updates automatically.'
+      };
     default: {
       const method = order.payment?.method;
       const subtitle = method === 'cashfree'
@@ -64,6 +71,8 @@ export default function Ticket() {
   const orderId = searchParams.get('id');
   const [order, setOrder] = useState(null);
   const [ticketError, setTicketError] = useState('');
+  const [recheckKey, setRecheckKey] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     if (!ticketToken && !orderId) {
@@ -73,6 +82,7 @@ export default function Ticket() {
     let cancelled = false;
     let timer = null;
     async function loadTicket() {
+      setChecking(true);
       try {
         const endpoint = ticketToken
           ? `/api/orders/ticket/${encodeURIComponent(ticketToken)}`
@@ -91,7 +101,6 @@ export default function Ticket() {
         const data = await res.json();
         if (cancelled) return;
         setOrder(data);
-        // Keep checking the SERVER while the outcome is still open (refresh-safe).
         if (STILL_OPEN_STATES.includes(data.state)) timer = setTimeout(loadTicket, 10000);
       } catch (error) {
         console.error('[TICKET_LOAD_FAILED]', {
@@ -99,11 +108,13 @@ export default function Ticket() {
           errorName: error instanceof Error ? error.name : 'UnknownError'
         });
         if (!cancelled) setTicketError('Could not reach the server to load this ticket. Please retry.');
+      } finally {
+        if (!cancelled) setChecking(false);
       }
     }
     loadTicket();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [orderId, ticketToken]);
+  }, [orderId, ticketToken, recheckKey]);
 
   const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
   // Everything below comes from the server's state for this order, never from the URL.
@@ -317,6 +328,13 @@ export default function Ticket() {
             </div>
           </div>
 
+          {!isPaid && STILL_OPEN_STATES.includes(order?.state) && (
+            <div style={{ textAlign: 'center', margin: '0.5rem 0 1rem', color: '#6b7280', fontSize: '0.85rem' }}>
+              <span className="loading-spinner" style={{ display: 'inline-block', width: 14, height: 14, verticalAlign: 'middle', marginRight: 6 }} />
+              Checking for updates...
+            </div>
+          )}
+
           <div className="ticket-action-buttons">
             {isPaid && (
               <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => window.print()}>
@@ -327,6 +345,18 @@ export default function Ticket() {
                 </svg>
                 <span>Download Ticket</span>
               </button>
+            )}
+
+            {!isPaid && order && (
+              <button type="button" className="ticket-btn ticket-btn-outline" disabled={checking} onClick={() => setRecheckKey(k => k + 1)}>
+                {checking
+                  ? <><span className="loading-spinner" style={{ display: 'inline-block', width: 16, height: 16, verticalAlign: 'middle', marginRight: 6 }} />Checking...</>
+                  : 'Check Payment Again'}
+              </button>
+            )}
+
+            {!isPaid && order && (
+              <Link to="/orders" className="ticket-btn ticket-btn-outline">My Orders</Link>
             )}
 
             <a href="/" className="ticket-btn ticket-btn-primary">

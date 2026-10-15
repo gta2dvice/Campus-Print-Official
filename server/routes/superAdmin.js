@@ -9,6 +9,8 @@ const { requireSuperAdmin } = require('../middleware/roleAuth');
 const { sendStoredFile } = require('../sendStoredFile');
 const { financialBreakdown } = require('../services/orderFinance');
 const { processSuccessfulPayment } = require('../services/paymentFinalizer');
+const cashfree = require('../cashfree');
+const { reconcileCashfreePayment } = require('./orders');
 
 // ── Auth ──────────────────────────────────────────
 
@@ -375,6 +377,78 @@ router.put('/account/password', requireSuperAdmin, async (req, res) => {
     } catch (err) {
         console.error('Super admin change password error:', err);
         res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// POST /api/super-admin/orders/:id/reconcile-cashfree
+// Re-verifies a pending Cashfree order against the Cashfree API and finalizes if
+// confirmed paid. Use ?dry_run=true to inspect without changing anything.
+router.post('/orders/:id/reconcile-cashfree', requireSuperAdmin, async (req, res) => {
+    try {
+        const order = await Order.getOrderById(req.params.id);
+        if (!order) return res.status(404).json({ message: 'Order not found' });
+
+        if (order.payment_method !== 'CASHFREE') {
+            return res.status(400).json({ message: 'This order does not use Cashfree payment.' });
+        }
+
+        const attempt = await Order.getLatestCashfreeAttempt(order.id);
+        if (!attempt) {
+            return res.status(400).json({ message: 'No Cashfree payment attempt found for this order.' });
+        }
+
+        const dryRun = req.query.dry_run === 'true' || req.query.dry_run === '1';
+
+        if (dryRun) {
+            if (!cashfree.isConfigured()) {
+                return res.status(503).json({ message: 'Cashfree is not configured on this server.' });
+            }
+            const providerOrder = await cashfree.fetchOrder(attempt.gateway_order_id);
+            const providerPayments = await cashfree.fetchOrderPayments(attempt.gateway_order_id);
+            const successPayment = providerPayments.find(p => cashfree.isPaymentPaid(p));
+
+            return res.json({
+                dryRun: true,
+                orderId: order.id,
+                cashfreeOrderId: attempt.gateway_order_id,
+                orderAmount: Number(order.total_price),
+                currentPaymentStatus: order.payment_status,
+                currentTicketStatus: order.ticket_status,
+                cashfreeOrderStatus: providerOrder.order_status,
+                cashfreeOrderAmount: providerOrder.order_amount,
+                cashfreePaymentCount: providerPayments.length,
+                successfulPayment: successPayment ? {
+                    cfPaymentId: successPayment.cf_payment_id,
+                    status: successPayment.payment_status,
+                    amount: successPayment.payment_amount,
+                    currency: successPayment.payment_currency,
+                } : null,
+                wouldFinalize: cashfree.isOrderPaid(providerOrder) && !!successPayment,
+                amountMatch: cashfree.amountsMatch(providerOrder.order_amount, order.total_price),
+            });
+        }
+
+        const result = await reconcileCashfreePayment(attempt.gateway_order_id, 'super_admin_reconcile');
+
+        console.info('[SUPER_ADMIN_RECONCILE]', {
+            orderId: order.id,
+            cashfreeOrderId: attempt.gateway_order_id,
+            result: result.status,
+            ticketNumber: result.ticketNumber || null
+        });
+
+        res.json({
+            dryRun: false,
+            orderId: order.id,
+            cashfreeOrderId: attempt.gateway_order_id,
+            ...result
+        });
+    } catch (err) {
+        console.error('Super admin reconcile error:', err);
+        res.status(err.code === 'PAYMENT_ORDER_MISMATCH' ? 409 : 500).json({
+            message: err.message || 'Reconciliation failed.',
+            code: err.code || 'RECONCILE_FAILED'
+        });
     }
 });
 

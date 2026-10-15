@@ -206,6 +206,10 @@ export default function NewOrder() {
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
 
+  const [cfConfirm, setCfConfirm] = useState(null);
+  const cfConfirmRef = useRef(null);
+  cfConfirmRef.current = cfConfirm;
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -686,84 +690,89 @@ export default function NewOrder() {
     return formData;
   }
 
-  async function confirmPaidOrder(cashfreeOrderId) {
-    console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
-    const verifyRes = await fetch('/api/orders/payment/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ cashfree_order_id: cashfreeOrderId })
-    });
-    const verifyData = await verifyRes.json().catch(() => ({}));
-    if (verifyData.status === 'PAID' && verifyData.ticketToken) {
-      console.info('[PAYMENT_VERIFY] Backend returned created ticket:', {
-        ticketNumberPresent: Boolean(verifyData.ticketNumber)
-      });
-      await finishSuccessfulOrder(verifyData.ticketToken);
-      return 'PAID';
-    }
-    if (verifyData.status === 'PAYMENT_FAILED') {
-      // The order and its files are kept; "Try payment again" pays for the same order.
-      setCanRetryPayment(true);
-      setPaymentMessage('Cashfree reported this payment as failed. Your order is saved — you can try paying again for the same order.');
-      setPaying(false);
-      return 'PAYMENT_FAILED';
-    }
-    if (verifyData.status === 'PAYMENT_PENDING' || verifyData.status === 'PAYMENT_PROCESSING') {
-      setPaymentMessage('Payment confirmation pending. We are checking Cashfree and preparing your ticket.');
-      return 'PAYMENT_PENDING';
-    }
-    console.error('[PAYMENT_VERIFY_FAILED]', {
-      stage: 'verification_response',
-      cashfreeOrderId,
-      httpStatus: verifyRes.status,
-      code: verifyData.code || 'PAYMENT_VERIFICATION_FAILED'
-    });
-    throw new Error(verifyData.message || 'Payment verification could not reach the server.');
-  }
-  confirmPaidOrderRef.current = confirmPaidOrder;
-
-  async function recoverPayment(cashfreeOrderId, { attempts = 20 } = {}) {
-    if (!cashfreeOrderId) return;
-    setPaying(true);
-    setCanRetryPayment(false);
-    setPaymentMessage('Checking payment status with Cashfree…');
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        const status = await confirmPaidOrderRef.current(cashfreeOrderId);
-        if (status === 'PAID' || status === 'PAYMENT_FAILED') return;
-      } catch (error) {
-        setPaymentMessage('Payment confirmation pending. Check your connection and retry; do not pay again.');
-        console.warn('[PAYMENT_VERIFY_RETRY]', {
-          cashfreeOrderId,
-          attempt: attempt + 1,
-          errorName: error instanceof Error ? error.name : 'UnknownError'
-        });
-      }
-      if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-    setPaymentMessage('Payment is not confirmed yet. If you closed checkout before paying, you can open it again for the same order — you will not be charged twice. If you already paid, check again in a minute.');
-    setCanRetryPayment(true);
+  function startCashfreeConfirmation(cashfreeOrderId, orderId) {
     setPaying(false);
+    setPaymentMessage('');
+    setCfConfirm({
+      phase: 'confirming',
+      cashfreeOrderId,
+      orderId: orderId || null,
+      startedAt: Date.now(),
+      ticketToken: null,
+      ticketNumber: null,
+      canRetry: false,
+    });
   }
-  recoverPaymentRef.current = recoverPayment;
+
+  function handleConfirmRetry() {
+    setCfConfirm(prev => prev ? { ...prev, phase: 'confirming', startedAt: Date.now() } : null);
+  }
+
+  useEffect(() => {
+    if (!cfConfirm || cfConfirm.phase !== 'confirming') return;
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - cfConfirm.startedAt;
+      if (elapsed >= 120000) {
+        setCfConfirm(prev => prev?.phase === 'confirming' ? { ...prev, phase: 'timeout' } : prev);
+      } else {
+        setCfConfirm(prev => prev ? { ...prev, _tick: Date.now() } : null);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cfConfirm?.phase, cfConfirm?.startedAt]);
+
+  useEffect(() => {
+    if (!cfConfirm || cfConfirm.phase === 'success' || cfConfirm.phase === 'failed') return;
+    let cancelled = false;
+    const interval = cfConfirm.phase === 'timeout' ? 15000 : cfConfirm.phase === 'received' ? 3000 : 4000;
+
+    async function poll() {
+      if (cancelled) return;
+      const id = cfConfirmRef.current?.cashfreeOrderId;
+      if (!id) return;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const res = await fetch('/api/orders/payment/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ cashfree_order_id: id }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (cancelled) return;
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (data.status === 'PAID') {
+          if (data.ticketNumber && data.ticketToken) {
+            setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
+            setTimeout(() => { if (!cancelled) finishSuccessfulOrder(data.ticketToken); }, 2000);
+          } else {
+            setCfConfirm(prev => prev && prev.phase !== 'success' ? { ...prev, phase: 'received' } : prev);
+          }
+          return;
+        }
+        if (data.status === 'PAYMENT_FAILED') {
+          setCfConfirm(prev => prev ? { ...prev, phase: 'failed', canRetry: true } : null);
+        }
+      } catch {
+        // Network error — keep polling
+      }
+    }
+
+    poll();
+    const timer = setInterval(poll, interval);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [cfConfirm?.phase, cfConfirm?.cashfreeOrderId]);
 
   useEffect(() => {
     if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
     handledReturnOrderRef.current = recoveryOrderId;
-    console.info('[PAYMENT_RETURN] Cashfree return received:', {
-      cashfreeOrderId: recoveryOrderId
-    });
-    recoverPaymentRef.current(recoveryOrderId, payAgain ? { attempts: 1 } : undefined).catch((error) => {
-      console.error('[PAYMENT_RETURN_FAILED]', {
-        stage: 'verification_request',
-        cashfreeOrderId: recoveryOrderId,
-        errorName: error instanceof Error ? error.name : 'UnknownError'
-      });
-      setPaymentMessage('Payment confirmation pending. Retry when your connection is available.');
-      setPaying(false);
-    });
-  }, [loading, recoveryOrderId, payAgain]);
+    const savedPayment = (() => { try { return JSON.parse(localStorage.getItem('cp_pending_payment') || 'null'); } catch { return null; } })();
+    startCashfreeConfirmation(recoveryOrderId, savedPayment?.orderId || null);
+  }, [loading, recoveryOrderId]);
 
   // Opens Cashfree checkout for one payment attempt, then asks the SERVER whether it
   // was paid. Closing the modal or the return URL never counts as payment.
@@ -772,6 +781,7 @@ export default function NewOrder() {
       // Recovery hint only: the server is the source of truth for the order.
       localStorage.setItem('cp_pending_payment', JSON.stringify({
         cashfreeOrderId: session.cashfreeOrderId,
+        orderId: session.orderId || null,
         createdAt: Date.now()
       }));
     } catch {
@@ -780,7 +790,6 @@ export default function NewOrder() {
     setRecoveryOrderId(session.cashfreeOrderId);
     handledReturnOrderRef.current = session.cashfreeOrderId;
     setCanRetryPayment(false);
-    setPaymentMessage('Complete payment in Cashfree. Your ticket will be created even if you close checkout.');
 
     const started = Date.now();
     while (typeof window.Cashfree !== 'function' && Date.now() - started < 8000) {
@@ -816,20 +825,21 @@ export default function NewOrder() {
         errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
       });
     }
-    await recoverPayment(session.cashfreeOrderId);
+    startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
   }
 
   // Pays again for the SAME order after a failed / abandoned Cashfree checkout.
   async function retryCashfreePayment() {
-    if (!recoveryOrderId || paying) return;
+    const cashfreeOrderId = cfConfirmRef.current?.cashfreeOrderId || recoveryOrderId;
+    if (!cashfreeOrderId || paying) return;
     setPaying(true);
-    setPaymentMessage('Restarting payment for the same order…');
+    setCfConfirm(null);
     try {
       const res = await fetch('/api/orders/payment/cashfree/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ cashfree_order_id: recoveryOrderId })
+        body: JSON.stringify({ cashfree_order_id: cashfreeOrderId })
       });
       const data = await res.json().catch(() => ({}));
       if (data.status === 'PAID' && data.ticketToken) {
@@ -837,27 +847,26 @@ export default function NewOrder() {
         return;
       }
       if (!res.ok || !data.paymentSessionId || !data.cashfreeOrderId) {
-        setPaymentMessage(data.message || 'Could not restart the payment. Please retry shortly.');
+        showToast(data.message || 'Could not restart the payment. Please retry shortly.', 'error');
+        startCashfreeConfirmation(cashfreeOrderId, cfConfirmRef.current?.orderId);
+        setCfConfirm(prev => prev ? { ...prev, phase: 'failed', canRetry: true } : null);
         setPaying(false);
         return;
       }
       await openCashfreeCheckout(data);
     } catch {
-      setPaymentMessage('Could not reach the payment service. Please retry; you will not be charged twice.');
+      showToast('Could not reach the payment service. Please retry.', 'error');
       setPaying(false);
     }
   }
 
   // Abandons the failed checkout locally (the unpaid order stays visible on the Orders page).
   function dismissFailedPayment() {
-    try {
-      localStorage.removeItem('cp_pending_payment');
-    } catch {
-      // Nothing else to clear.
-    }
+    try { localStorage.removeItem('cp_pending_payment'); } catch {}
     setCanRetryPayment(false);
     setPaymentMessage('');
     setRecoveryOrderId('');
+    setCfConfirm(null);
   }
 
   async function handlePay() {
@@ -1039,29 +1048,9 @@ export default function NewOrder() {
         <DashboardSidebar userName={displayName} />
 
         <main className="main-content">
-          {paymentMessage && (
+          {paymentMessage && !cfConfirm && (
             <div role="status" aria-live="polite" style={{ marginBottom: '1rem', padding: '1rem', borderRadius: '0.75rem', background: '#eff6ff' }}>
               <p style={{ margin: 0 }}>{paymentMessage}</p>
-              {!paying && recoveryOrderId && (
-                <button
-                  type="button"
-                  className="ticket-btn ticket-btn-outline"
-                  style={{ marginTop: '0.75rem' }}
-                  onClick={() => recoverPaymentRef.current(recoveryOrderId)}
-                >
-                  Check payment again
-                </button>
-              )}
-              {!paying && recoveryOrderId && canRetryPayment && (
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={retryCashfreePayment}>
-                    Pay for this order again
-                  </button>
-                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={dismissFailedPayment}>
-                    Dismiss
-                  </button>
-                </div>
-              )}
             </div>
           )}
           <a href="/dashboard" className="back-link">
@@ -1670,6 +1659,89 @@ export default function NewOrder() {
           onViewTicket={() => navigate(`/ticket?token=${encodeURIComponent(upiQrData.ticketToken)}`)}
         />
       )}
+
+      {cfConfirm && (() => {
+        const timeLeft = Math.max(0, 120 - Math.floor((Date.now() - cfConfirm.startedAt) / 1000));
+        const progress = Math.min(100, ((Date.now() - cfConfirm.startedAt) / 120000) * 100);
+        return (
+          <div className="booking-overlay" style={{ zIndex: 1100 }}>
+            <div className="booking-panel" style={{ maxWidth: 440, textAlign: 'center', padding: '2rem 1.5rem', margin: '2rem auto' }}>
+
+              {cfConfirm.phase === 'confirming' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span className="loading-spinner" style={{ width: 28, height: 28 }} />
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Confirming your payment...</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>Confirming your payment with Cashfree. This usually takes a few seconds.</p>
+                <div style={{ background: '#e5e7eb', borderRadius: 999, height: 6, margin: '0 0 0.75rem', overflow: 'hidden' }}>
+                  <div style={{ background: '#3b82f6', height: '100%', width: `${progress}%`, borderRadius: 999, transition: 'width 1s linear' }} />
+                </div>
+                <p style={{ fontSize: '1.5rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#1e3a5f', margin: '0 0 0.5rem' }}>
+                  {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+                </p>
+              </>)}
+
+              {cfConfirm.phase === 'received' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment received!</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1rem' }}>Preparing your collection ticket...</p>
+                <span className="loading-spinner" style={{ display: 'block', margin: '0 auto', width: 24, height: 24 }} />
+              </>)}
+
+              {cfConfirm.phase === 'success' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#059669', margin: '0 0 0.25rem' }}>Payment successful!</h2>
+                {cfConfirm.ticketNumber && <p style={{ fontWeight: 600, fontSize: '1.1rem', margin: '0.25rem 0' }}>{cfConfirm.ticketNumber}</p>}
+                <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>Redirecting to your ticket...</p>
+              </>)}
+
+              {cfConfirm.phase === 'timeout' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment taking longer to confirm</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 0.25rem' }}>Your payment is taking longer to confirm. <strong>Please do not pay again.</strong></p>
+                <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>We're still checking in the background. Your ticket will appear automatically once confirmed.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={handleConfirmRetry}>Check Payment Again</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/orders')}>My Orders</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/dashboard')}>Back to Dashboard</button>
+                </div>
+              </>)}
+
+              {cfConfirm.phase === 'failed' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment failed</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>This payment did not go through. Your order is saved — you can try paying again.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={retryCashfreePayment}>Pay Again for This Order</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/orders')}>My Orders</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={dismissFailedPayment} style={{ color: '#6b7280' }}>Dismiss</button>
+                </div>
+              </>)}
+
+              {(cfConfirm.phase === 'confirming' || cfConfirm.phase === 'timeout') && cfConfirm.orderId && (
+                <div style={{ marginTop: '1rem', padding: '0.5rem 0.75rem', background: '#f9fafb', borderRadius: 8, fontSize: '0.8rem', color: '#9ca3af' }}>
+                  Order #{cfConfirm.orderId}
+                </div>
+              )}
+
+              {cfConfirm.phase === 'confirming' && (
+                <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: '#9ca3af', textDecoration: 'underline', padding: 0 }} onClick={() => navigate('/orders')}>My Orders</button>
+                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: '#9ca3af', textDecoration: 'underline', padding: 0 }} onClick={() => navigate('/dashboard')}>Dashboard</button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <Toast toast={toast} />
     </>
