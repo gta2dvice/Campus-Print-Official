@@ -747,8 +747,9 @@ export default function NewOrder() {
 
         if (data.status === 'PAID') {
           if (data.ticketNumber && data.ticketToken) {
+            // The redirect is scheduled by the success-phase effect below: this
+            // polling effect's cancellation flag is set as soon as the phase flips.
             setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
-            setTimeout(() => { if (!cancelled) finishSuccessfulOrder(data.ticketToken); }, 2000);
           } else {
             setCfConfirm(prev => prev && prev.phase !== 'success' ? { ...prev, phase: 'received' } : prev);
           }
@@ -766,6 +767,16 @@ export default function NewOrder() {
     const timer = setInterval(poll, interval);
     return () => { cancelled = true; clearInterval(timer); };
   }, [cfConfirm?.phase, cfConfirm?.cashfreeOrderId]);
+
+  // Redirects to the ticket once payment is confirmed and the secure token is in
+  // hand. Scheduling here (not inside the polling effect) matters: the polling
+  // effect cleans up — cancelling its pending timers — the moment the phase flips
+  // to 'success', so a timer created there would never navigate.
+  useEffect(() => {
+    if (cfConfirm?.phase !== 'success' || !cfConfirm.ticketToken) return;
+    const timer = setTimeout(() => finishSuccessfulOrder(cfConfirm.ticketToken), 2000);
+    return () => clearTimeout(timer);
+  }, [cfConfirm?.phase, cfConfirm?.ticketToken]); 
 
   useEffect(() => {
     if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
