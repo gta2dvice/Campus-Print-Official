@@ -73,6 +73,10 @@ export default function Home() {
   const [config, setConfig] = useState(null);
 
   const [bump, setBump] = useState(false);
+  // Unresolved (pending/unknown) payment left over from a previous visit. Kept in
+  // localStorage as recovery data; surfaced only as an optional explicit action.
+  const [pendingPaymentId, setPendingPaymentId] = useState('');
+  const [recoveryBannerDismissed, setRecoveryBannerDismissed] = useState(false);
   const persistReadyRef = useRef(false);
   const extraMetaRef = useRef({
     guestDetails: null,
@@ -96,8 +100,10 @@ export default function Home() {
       if (/^[a-f0-9]{64}$/i.test(ticketToken)) setLastTicketToken(ticketToken);
       if (cancelled || !pendingPayment?.cashfreeOrderId) return;
 
-      // Ask the SERVER whether this payment still needs confirmation before auto-resuming.
-      // A stale local flag alone must never redirect (and trap) every homepage visit.
+      // Ask the SERVER whether this payment is resolved. The answer is used ONLY to
+      // clean up terminal states — pending, unknown, or unreachable verifications
+      // must never hijack the homepage with an automatic redirect into the payment
+      // confirmation screen.
       let data = null;
       let httpStatus = 0;
       try {
@@ -116,7 +122,8 @@ export default function Home() {
 
       const status = data?.status;
       if (status === 'PAID') {
-        // Terminal: reuse the existing paid order's ticket instead of resuming recovery.
+        // Terminal: the money is captured. Clear the stale recovery marker and
+        // expose the existing paid order's ticket link.
         localStorage.removeItem('cp_pending_payment');
         if (typeof data.ticketToken === 'string' && /^[a-f0-9]{64}$/i.test(data.ticketToken)) {
           localStorage.setItem('cp_last_ticket', data.ticketToken);
@@ -131,12 +138,13 @@ export default function Home() {
         localStorage.removeItem('cp_pending_payment');
         return;
       }
-      // PAYMENT_PENDING / PROCESSING / gateway errors: unresolved — hand off to NewOrder,
-      // which keeps polling and always offers navigation links (timeout after 120s).
-      navigate(`/new-order?cf_order=${encodeURIComponent(pendingPayment.cashfreeOrderId)}`, { replace: true });
+      // PAYMENT_PENDING / PROCESSING / gateway errors / unreachable backend:
+      // unresolved — keep the recovery data and offer an explicit, optional action
+      // instead of redirecting. The homepage stays fully usable.
+      setPendingPaymentId(pendingPayment.cashfreeOrderId);
     })();
     return () => { cancelled = true; };
-  }, [navigate]);
+  }, []);
 
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
@@ -476,6 +484,40 @@ export default function Home() {
                   Recover your last ticket
                 </Link>
               </p>
+            )}
+
+            {pendingPaymentId && !recoveryBannerDismissed && (
+              <div style={{
+                marginTop: '1rem',
+                padding: '0.75rem 1rem',
+                maxWidth: '460px',
+                margin: '1rem auto 0',
+                background: 'rgba(255, 255, 255,0.85)',
+                border: '1px solid #e5e7eb',
+                borderRadius: '0.75rem',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
+              }}>
+                <p style={{ fontSize: '0.9rem', color: '#374151', margin: '0 0 0.75rem' }}>
+                  You have an order whose payment hasn't been confirmed yet. Nothing is lost —
+                  you can check its status or resume paying whenever you like.
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.85rem', padding: '0.4rem 0.9rem' }}
+                    onClick={() => navigate(`/new-order?cf_order=${encodeURIComponent(pendingPaymentId)}`)}
+                  >
+                    Check Payment Status / Resume Payment
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.85rem', padding: '0.4rem 0.9rem' }}
+                    onClick={() => setRecoveryBannerDismissed(true)}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
