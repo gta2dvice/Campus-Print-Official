@@ -118,7 +118,7 @@ function serializeMeta(meta = {}) {
     id: CURRENT_UNFINISHED_ORDER,
     guestDetails: guest,
     colorOption: meta.colorOption === 'color' ? 'color' : 'bw',
-    paperSize: 'A4',
+    paperSize: meta.paperSize === 'A3' ? 'A3' : 'A4',
     printingSide: meta.printingSide === 'double' ? 'double' : 'single',
     spiralBinding: !!meta.spiralBinding,
     expressDelivery: !!meta.expressDelivery,

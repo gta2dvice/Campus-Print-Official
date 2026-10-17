@@ -16,6 +16,7 @@ import {
   loadCurrentOrder,
   removeCurrentOrder,
   saveCurrentOrder,
+  scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
@@ -200,6 +201,11 @@ export default function NewOrder() {
   const [upiQrData, setUpiQrData] = useState(null);
   const upiSubmittingRef = useRef(false); // guards against creating duplicate UPI orders
   const persistReadyRef = useRef(false);
+  // Set before discarding the current draft so the persist effect skips that one change.
+  const skipPersistRef = useRef(false);
+  // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
+  // so re-enabling persistence here doesn't reset them to defaults.
+  const draftMetaRef = useRef({ colorOption: 'bw', printingSide: 'single' });
   const handledReturnOrderRef = useRef(null);
   const confirmPaidOrderRef = useRef(null);
   const recoverPaymentRef = useRef(null);
@@ -227,6 +233,10 @@ export default function NewOrder() {
         if (pendingCashfreeOrderId) setRecoveryOrderId(pendingCashfreeOrderId);
 
         if (unfinished) {
+          draftMetaRef.current = {
+            colorOption: unfinished.colorOption === 'color' ? 'color' : 'bw',
+            printingSide: unfinished.printingSide === 'double' ? 'double' : 'single',
+          };
           if (unfinished.files?.length) {
             const restoredKeys = unfinished.files.map((entry) => Number(entry.key)).filter((n) => Number.isFinite(n));
             if (restoredKeys.length) fileKeySeq = Math.max(fileKeySeq, ...restoredKeys);
@@ -262,7 +272,8 @@ export default function NewOrder() {
         try {
           const pending = JSON.parse(localStorage.getItem('cp_pending_order') || 'null');
           if (pending) {
-            if (pending.color === 'bw' || pending.color === 'color') setColorOption(pending.color);
+            // 'color' has no state here (color is per-file now as colorMode). Calling the
+            // previously-undefined setColorOption threw, silently skipping the restores below.
             if (pending.size === 'A4' || pending.size === 'A3') setPaperSize(pending.size);
             setSpiralBinding(!!pending.spiral);
             setExpressDelivery(!!pending.express);
@@ -310,33 +321,35 @@ export default function NewOrder() {
     };
   }, [navigate, returnedCashfreeOrderId]);
 
+  // Persists the CURRENT draft (files + selections) to IndexedDB on every change so a
+  // refresh restores the latest state — file deletions and replacements included.
   useEffect(() => {
-    // Temporarily disabled to diagnose runtime crash
-    // if (!persistReadyRef.current) return;
-    // if (skipPersistRef.current) {
-    //   skipPersistRef.current = false;
-    //   return;
-    // }
-    // scheduleSaveCurrentOrder({
-    //   meta: {
-    //     guestDetails,
-    //     paperSize,
-    //     spiralBinding,
-    //     expressDelivery,
-    //     classroomDelivery,
-    //     selectedLocationId,
-    //     selectedLocationName,
-    //     selectedTimeSlot,
-    //   },
-    //   files,
-    //   onError: (err) => {
-    //     if (typeof showToast === 'function') {
-    //       showToast(storageErrorMessage(err), 'error');
-    //     } else if (showToastRef.current) {
-    //       showToastRef.current(storageErrorMessage(err), 'error');
-    //     }
-    //   },
-    // });
+    if (!persistReadyRef.current) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    scheduleSaveCurrentOrder({
+      meta: {
+        ...draftMetaRef.current,
+        guestDetails,
+        paperSize,
+        spiralBinding,
+        expressDelivery,
+        classroomDelivery,
+        selectedLocationId,
+        selectedLocationName,
+        selectedTimeSlot,
+      },
+      files,
+      onError: (err) => {
+        if (typeof showToast === 'function') {
+          showToast(storageErrorMessage(err), 'error');
+        } else if (showToastRef.current) {
+          showToastRef.current(storageErrorMessage(err), 'error');
+        }
+      },
+    });
   }, [
     guestDetails,
     files,
@@ -709,11 +722,14 @@ export default function NewOrder() {
   }
 
   useEffect(() => {
-    if (!cfConfirm || cfConfirm.phase !== 'confirming') return;
+    // Both automated phases must escalate to 'timeout' after 120s: 'received' also polls
+    // without any buttons, and without this a stuck verification would trap the user.
+    if (!cfConfirm || (cfConfirm.phase !== 'confirming' && cfConfirm.phase !== 'received')) return;
     const timer = setInterval(() => {
       const elapsed = Date.now() - cfConfirm.startedAt;
       if (elapsed >= 120000) {
-        setCfConfirm(prev => prev?.phase === 'confirming' ? { ...prev, phase: 'timeout' } : prev);
+        setCfConfirm(prev => (prev?.phase === 'confirming' || prev?.phase === 'received')
+          ? { ...prev, phase: 'timeout' } : prev);
       } else {
         setCfConfirm(prev => prev ? { ...prev, _tick: Date.now() } : null);
       }
@@ -751,7 +767,10 @@ export default function NewOrder() {
             // polling effect's cancellation flag is set as soon as the phase flips.
             setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
           } else {
-            setCfConfirm(prev => prev && prev.phase !== 'success' ? { ...prev, phase: 'received' } : prev);
+            // PAID but the ticket/token isn't ready yet. Never regress out of 'timeout'
+            // (its polling keeps retrying while its buttons keep navigation available).
+            setCfConfirm(prev => prev && prev.phase !== 'success' && prev.phase !== 'timeout'
+              ? { ...prev, phase: 'received' } : prev);
           }
           return;
         }

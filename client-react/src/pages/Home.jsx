@@ -84,17 +84,58 @@ export default function Home() {
   });
 
   useEffect(() => {
-    try {
-      const pendingPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
-      if (pendingPayment?.cashfreeOrderId) {
-        navigate(`/new-order?cf_order=${encodeURIComponent(pendingPayment.cashfreeOrderId)}`, { replace: true });
-        return;
+    let cancelled = false;
+    (async () => {
+      let pendingPayment = null;
+      try {
+        pendingPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
+      } catch {
+        localStorage.removeItem('cp_pending_payment');
       }
       const ticketToken = localStorage.getItem('cp_last_ticket') || '';
       if (/^[a-f0-9]{64}$/i.test(ticketToken)) setLastTicketToken(ticketToken);
-    } catch {
-      localStorage.removeItem('cp_pending_payment');
-    }
+      if (cancelled || !pendingPayment?.cashfreeOrderId) return;
+
+      // Ask the SERVER whether this payment still needs confirmation before auto-resuming.
+      // A stale local flag alone must never redirect (and trap) every homepage visit.
+      let data = null;
+      let httpStatus = 0;
+      try {
+        const res = await fetch('/api/orders/payment/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ cashfree_order_id: pendingPayment.cashfreeOrderId }),
+        });
+        httpStatus = res.status;
+        data = await res.json().catch(() => ({}));
+      } catch {
+        // Network error: payment state is genuinely uncertain — keep the flag, recover below.
+      }
+      if (cancelled) return;
+
+      const status = data?.status;
+      if (status === 'PAID') {
+        // Terminal: reuse the existing paid order's ticket instead of resuming recovery.
+        localStorage.removeItem('cp_pending_payment');
+        if (typeof data.ticketToken === 'string' && /^[a-f0-9]{64}$/i.test(data.ticketToken)) {
+          localStorage.setItem('cp_last_ticket', data.ticketToken);
+          setLastTicketToken(data.ticketToken);
+        }
+        return;
+      }
+      if (status === 'NOT_FOUND' || status === 'PAYMENT_FAILED' || httpStatus === 400) {
+        // This attempt can never complete (no order / rejected by gateway / malformed id).
+        // The unpaid order itself stays on the Orders page with Pay Again — nothing
+        // genuinely unresolved is discarded.
+        localStorage.removeItem('cp_pending_payment');
+        return;
+      }
+      // PAYMENT_PENDING / PROCESSING / gateway errors: unresolved — hand off to NewOrder,
+      // which keeps polling and always offers navigation links (timeout after 120s).
+      navigate(`/new-order?cf_order=${encodeURIComponent(pendingPayment.cashfreeOrderId)}`, { replace: true });
+    })();
+    return () => { cancelled = true; };
   }, [navigate]);
 
   function formatSize(bytes) {
