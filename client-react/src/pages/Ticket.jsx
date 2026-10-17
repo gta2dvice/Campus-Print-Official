@@ -146,6 +146,10 @@ export default function Ticket() {
           ) : (
             <>
 
+          {/* Captured by "Download Ticket" (window.print) — scoped to the success
+              header + ticket only via the @media print rules in styles/ticket.css. */}
+          <div className="ticket-print-area">
+
           {isPaid ? (
             <section className="ticket-success-header">
               <div className="success-badge-circle">
@@ -311,6 +315,7 @@ export default function Ticket() {
               </div>
             </div>
           </div>
+          </div>
 
           <div className="ticket-reminder-box">
             <div className="reminder-icon">
@@ -329,7 +334,7 @@ export default function Ticket() {
           </div>
 
           {!isPaid && STILL_OPEN_STATES.includes(order?.state) && (
-            <div style={{ textAlign: 'center', margin: '0.5rem 0 1rem', color: '#6b7280', fontSize: '0.85rem' }}>
+            <div className="ticket-checking-indicator" style={{ textAlign: 'center', margin: '0.5rem 0 1rem', color: '#6b7280', fontSize: '0.85rem' }}>
               <span className="loading-spinner" style={{ display: 'inline-block', width: 14, height: 14, verticalAlign: 'middle', marginRight: 6 }} />
               Checking for updates...
             </div>

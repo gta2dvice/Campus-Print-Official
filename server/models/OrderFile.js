@@ -6,8 +6,8 @@ async function createFiles(orderId, files) {
     await pool.transaction(async tx => {
         for (const f of files) {
             const [result] = await tx.execute(
-                `INSERT INTO order_files (order_id, original_name, stored_name, storage_path, mime_type, size_bytes, printing_side, copies, color_mode, file_type, page_count, printing_charge)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO order_files (order_id, original_name, stored_name, storage_path, mime_type, size_bytes, printing_side, copies, color_mode, file_type, page_count, page_range, printing_charge)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  RETURNING id`,
                 [
                     orderId,
@@ -21,6 +21,7 @@ async function createFiles(orderId, files) {
                     f.colorMode || 'bw',
                     f.fileType || null,
                     f.pageCount || null,
+                    f.pageRange || null,
                     f.printingCharge ?? null
                 ]
             );
@@ -32,7 +33,7 @@ async function createFiles(orderId, files) {
 
 async function getFilesByOrder(orderId) {
     const [rows] = await pool.execute(
-        `SELECT id, order_id, original_name, mime_type, size_bytes, file_type, page_count, printing_side, copies, color_mode, printing_charge, created_at, file_deleted_at
+        `SELECT id, order_id, original_name, mime_type, size_bytes, file_type, page_count, page_range, printing_side, copies, color_mode, printing_charge, created_at, file_deleted_at
          FROM order_files WHERE order_id = ?`,
         [orderId]
     );

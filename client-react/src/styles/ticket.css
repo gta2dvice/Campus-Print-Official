@@ -367,9 +367,64 @@ html, body.ticket-page-body {
     background: #1d4ed8;
 }
 
+/* ── Download Ticket capture area ─────────────────────────────────
+   The Download Ticket button triggers window.print(); only the content inside
+   .ticket-print-area (Payment Successful / Order Confirmed header + the
+   generated ticket) is exported. On screen the wrapper is transparent
+   (display: contents) so the layout is completely unchanged. */
+.ticket-print-area {
+    display: contents;
+}
+
 @media print {
-    .delivery-call-btn {
-        display: none;
+    .delivery-call-btn,
+    .site-footer,
+    .ticket-action-buttons,
+    .ticket-reminder-box,
+    .ticket-checking-indicator,
+    .booking-orb,
+    .logo-link {
+        display: none !important;
+    }
+
+    /* Hide every part of the page outside the capture area. */
+    body * {
+        visibility: hidden !important;
+    }
+
+    .ticket-print-area,
+    .ticket-print-area * {
+        visibility: visible !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Export only that content as one self-contained block on a clean page. */
+    .ticket-print-area {
+        display: block !important;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 1.25rem 1rem;
+        background: linear-gradient(160deg, #0f172a 0%, #1e3a8a 45%, #0c4a6e 100%);
+    }
+
+    html,
+    body.ticket-page-body,
+    .ticket-page-wrapper,
+    .ticket-main-content {
+        display: block !important;
+        background: #ffffff !important;
+        min-height: 0 !important;
+        height: auto !important;
+        padding: 0 !important;
+        overflow: visible !important;
+    }
+
+    .ticket-page-wrapper {
+        position: static !important;
     }
 }
 

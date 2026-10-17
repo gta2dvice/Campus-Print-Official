@@ -37,7 +37,7 @@ const PRINTER_ORDER_FIELDS = [
 
 const PRINTER_FILE_FIELDS = [
     'id', 'order_id', 'original_name', 'mime_type', 'size_bytes', 'file_type',
-    'page_count', 'printing_side', 'copies', 'color_mode', 'created_at', 'file_deleted_at'
+    'page_count', 'page_range', 'printing_side', 'copies', 'color_mode', 'created_at', 'file_deleted_at'
 ];
 
 function pick(source, fields) {

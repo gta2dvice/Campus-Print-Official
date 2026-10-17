@@ -261,6 +261,32 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             pages = Math.max(1, Math.min(MAX_DECLARED_PAGES, Number.isFinite(declared) ? declared : 1));
         }
 
+        // Optional PDF page range (e.g. "33-55"). It is validated against the REAL
+        // page count, then drives both the price and the printable page count, so the
+        // printer only ever receives the selected pages (see sendStoredFile.js).
+        const rawRange = typeof setting.pageRange === 'string' ? setting.pageRange.trim() : '';
+        let pageRange = null;
+        if (rawRange) {
+            const rangeError = (message, code = 'PAGE_RANGE_INVALID') => {
+                const e = new Error(message);
+                e.code = code; e.httpStatus = 400; return e;
+            };
+            if (type.key !== 'pdf') {
+                throw rangeError('A page range is only supported for PDF files.', 'PAGE_RANGE_UNSUPPORTED');
+            }
+            const match = /^(\d+)\s*-\s*(\d+)$/.exec(rawRange);
+            if (!match) {
+                throw rangeError('Use a page range like 33-55 (numbers only, e.g. 10-20).');
+            }
+            const start = parseInt(match[1], 10);
+            const end = parseInt(match[2], 10);
+            if (start < 1) throw rangeError('Pages start at 1 — the page range cannot start at 0.');
+            if (start > end) throw rangeError('The start page must be less than or equal to the end page.');
+            if (end > pages) throw rangeError(`The page range must be within 1-${pages} pages for this file.`);
+            pageRange = `${start}-${end}`;
+            pages = end - start + 1; // printable pages: price + stored page_count use the range
+        }
+
         resolved.push({
             file,
             originalname: file.originalname,
@@ -268,6 +294,7 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             size: file.size,
             fileType: type.label,
             pages,
+            pageRange,
             copies: Math.max(1, parseInt(setting.copies, 10) || 1),
             printingSide: setting.printingSide === 'double' ? 'double' : 'single',
             colorMode: setting.colorMode === 'color' ? 'color' : 'bw'
@@ -310,9 +337,18 @@ async function validateAndPriceSubmission(req, res) {
         res.status(400).json({ message: 'Please configure printing settings for all files.' });
         return null;
     }
-    const { fullName, phone, classroom, batch, classSection } = req.body;
+    const { fullName, phone, classroom, batch, classSection, email } = req.body;
     if (!fullName || !phone || !classroom || !classroom.trim()) {
         res.status(400).json({ message: 'Full Name, Phone, and Classroom/Room Number are required.' });
+        return null;
+    }
+    const trimmedEmail = String(email || '').trim();
+    if (!trimmedEmail) {
+        res.status(400).json({ message: 'Email address is required.', code: 'EMAIL_REQUIRED' });
+        return null;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        res.status(400).json({ message: 'Enter a valid email address.', code: 'EMAIL_INVALID' });
         return null;
     }
     if (!/^[6-9][0-9]{9}$/.test(phone)) {
@@ -376,6 +412,7 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
                 size: rf.size,
                 fileType: rf.fileType,
                 pageCount: rf.pages,
+                pageRange: rf.pageRange || null,
                 printingSide: rf.printingSide,
                 copies: rf.copies,
                 colorMode: rf.colorMode,
@@ -719,6 +756,7 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
             fileId: f.id,
             name: f.original_name,
             sizeBytes: f.size_bytes,
+            pageRange: f.page_range || null,
             // Uploaded files are purged after 24h; surface that instead of a dead link.
             expired: Boolean(f.file_deleted_at),
             createdAt: f.created_at
