@@ -109,6 +109,7 @@ function serializeMeta(meta = {}) {
   const guest = meta.guestDetails && typeof meta.guestDetails === 'object'
     ? {
       fullName: String(meta.guestDetails.fullName || meta.guestDetails.name || ''),
+      email: String(meta.guestDetails.email || ''),
       phone: String(meta.guestDetails.phone || ''),
       classroom: String(meta.guestDetails.classroom || meta.guestDetails.classSection || ''),
     }
@@ -153,6 +154,7 @@ function fileEntriesFromInput(files) {
         copies: Math.max(1, parseInt(entry.copies, 10) || 1),
         printingSide: entry.printingSide === 'double' ? 'double' : 'single',
         colorMode: entry.colorMode === 'color' ? 'color' : 'bw',
+        pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
         blob: file,
       };
     });
@@ -252,6 +254,7 @@ export async function loadCurrentOrder() {
         copies: Math.max(1, parseInt(info.copies, 10) || 1),
         printingSide: info.printingSide || 'single',
         colorMode: info.colorMode || 'bw',
+        pageRange: typeof info.pageRange === 'string' ? info.pageRange : '',
       });
     }
 
@@ -265,6 +268,7 @@ export async function loadCurrentOrder() {
           pages: null,
           estimated: false,
           copies: 1,
+          pageRange: '',
         });
       }
     }

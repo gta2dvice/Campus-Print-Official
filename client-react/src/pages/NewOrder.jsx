@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
+import GuestDetailsModal from '../components/GuestDetailsModal';
 import Toast from '../components/Toast';
 import PaymentWarningModal from '../components/PaymentWarningModal';
 import WhatsAppOrderModal, { WA_ORDER_TEMPLATE } from '../components/WhatsAppOrderModal';
@@ -20,6 +21,7 @@ import {
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
+import { printablePages, parsePageRange, showPageRangeInput, hasInvalidPageRange } from '../lib/pageRange';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 
@@ -48,6 +50,8 @@ function fileExtLabel(name) {
 function isImageName(name) {
   return /\.(png|jpg|jpeg)$/i.test(name || '');
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isFileSupported(file) {
   if (!file) return false;
@@ -136,7 +140,7 @@ function isSlotPast(time) {
 // (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
 // Keep in sync with filePrintingCost() in server/routes/orders.js, which verifies the total.
 function filePrintingCost(f) {
-  const pages = f?.pages || 1;
+  const pages = printablePages(f);
   const copies = f?.copies || 1;
   if (f?.colorMode === 'color') return pages * copies * 5;
   if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
@@ -168,7 +172,7 @@ export default function NewOrder() {
   const [config, setConfig] = useState(null);
 
   // ── Order configuration state ──
-  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode }]
+  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode, pageRange }]
   const [paperSize, setPaperSize] = useState('A4');
   const [spiralBinding, setSpiralBinding] = useState(false);
   const [expressDelivery, setExpressDelivery] = useState(false);
@@ -196,6 +200,8 @@ export default function NewOrder() {
   const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
   const confirmingPaymentRef = useRef(false); // guards against double-firing the pay flow
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  // Shown when a saved draft has no (valid) email — email is mandatory before ordering.
+  const [guestDetailsModalOpen, setGuestDetailsModalOpen] = useState(false);
   const [whatsappOpening, setWhatsappOpening] = useState(false);
   const whatsappOpenedRef = useRef(false); // guards against opening WhatsApp more than once
   const [upiQrData, setUpiQrData] = useState(null);
@@ -415,7 +421,8 @@ export default function NewOrder() {
         estimated: false,
         copies: 1,
         printingSide: 'single',
-        colorMode: 'bw'
+        colorMode: 'bw',
+        pageRange: ''
       });
     }
     if (accepted.length === 0) return;
@@ -477,7 +484,20 @@ export default function NewOrder() {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, colorMode: mode } : f)));
   }
 
+  function updateFilePageRange(key, value) {
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pageRange: value } : f)));
+  }
+
   function updateFileCopies(key, delta) {
+    if (delta < 0) {
+      const target = files.find((f) => f.key === key);
+      // Minus at 1 copy removes the document — reuses the existing deletion path
+      // (state, totals, pricing and the stored draft all follow along).
+      if (target && (target.copies || 1) <= 1) {
+        removeFile(key);
+        return;
+      }
+    }
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, copies: Math.max(1, f.copies + delta) } : f)));
   }
 
@@ -519,7 +539,7 @@ export default function NewOrder() {
     navigate(`/ticket?token=${encodeURIComponent(ticketToken)}`);
   }
 
-  const totalPagesCount = files.reduce((sum, f) => sum + ((f.pages || 1) * f.copies), 0);
+  const totalPagesCount = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
@@ -552,6 +572,8 @@ export default function NewOrder() {
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
+    const invalidRange = files.find((f) => hasInvalidPageRange(f));
+    if (invalidRange) { showToast(`Fix the page range for “${invalidRange.file.name}” before continuing.`, 'error'); return; }
     setModalOpen(true);
     goToStep('slot');
   }
@@ -691,6 +713,7 @@ export default function NewOrder() {
 
     // Guest Details
     formData.append('fullName', guestDetails?.fullName || '');
+    formData.append('email', guestDetails?.email || '');
     formData.append('phone', guestDetails?.phone || '');
     formData.append('classroom', guestDetails?.classroom || '');
 
@@ -700,7 +723,8 @@ export default function NewOrder() {
       pages: f.pages,
       copies: f.copies,
       printingSide: f.printingSide,
-      colorMode: f.colorMode || 'bw'
+      colorMode: f.colorMode || 'bw',
+      pageRange: f.pageRange || ''
     }));
     formData.append('fileSettings', JSON.stringify(fileSettings));
 
@@ -720,10 +744,6 @@ export default function NewOrder() {
       ticketNumber: null,
       canRetry: false,
     });
-  }
-
-  function handleConfirmRetry() {
-    setCfConfirm(prev => prev ? { ...prev, phase: 'confirming', startedAt: Date.now() } : null);
   }
 
   useEffect(() => {
@@ -806,6 +826,12 @@ export default function NewOrder() {
     if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
     handledReturnOrderRef.current = recoveryOrderId;
     const savedPayment = (() => { try { return JSON.parse(localStorage.getItem('cp_pending_payment') || 'null'); } catch { return null; } })();
+    if (payAgain) {
+      // Orders → "Resume Payment": reopen checkout for the SAME order. The server's
+      // retry endpoint reuses the existing order and never creates a duplicate.
+      retryCashfreePayment();
+      return;
+    }
     startCashfreeConfirmation(recoveryOrderId, savedPayment?.orderId || null);
   }, [loading, recoveryOrderId]);
 
@@ -844,11 +870,13 @@ export default function NewOrder() {
       cashfreeOrderId: session.cashfreeOrderId,
       mode: session.mode
     });
+    let paymentDetails = null;
     try {
       const checkoutResult = await cashfreeCheckout.checkout({
         paymentSessionId: session.paymentSessionId,
         redirectTarget: '_modal',
       });
+      paymentDetails = checkoutResult?.paymentDetails || null;
       console.info('[PAYMENT_RETURN] Cashfree checkout returned control:', {
         cashfreeOrderId: session.cashfreeOrderId,
         hasError: Boolean(checkoutResult?.error),
@@ -860,7 +888,48 @@ export default function NewOrder() {
         errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
       });
     }
-    startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
+
+    if (paymentDetails) {
+      // The student actually went through the payment flow — monitor it with the
+      // existing 2-minute confirmation timer.
+      startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
+      return;
+    }
+
+    // Checkout was left / closed without completing a payment. Explicitly leaving is
+    // NOT a confirmed pending payment: never start the 2-minute timer just for leaving.
+    // One quick server check catches the rare case where the money was captured anyway.
+    let verifiedStatus = null;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const verifyRes = await fetch('/api/orders/payment/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cashfree_order_id: session.cashfreeOrderId }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      verifiedStatus = verifyData?.status || null;
+    } catch {
+      // Could not check — treat as not paid; recovery stays on the Orders page.
+    }
+    setPaying(false);
+    if (verifiedStatus === 'PAID' || verifiedStatus === 'PAYMENT_PROCESSING') {
+      // Money is genuinely captured / in flight — this IS a pending payment.
+      startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
+      return;
+    }
+    // Explicitly left before paying: back to Step 4 (Review Order). The draft, files,
+    // copies, page settings, location, time slot and payment method are untouched;
+    // no duplicate order, no ticket and no pending-payment timer is created.
+    setPaymentMessage('');
+    if (modalOpen) {
+      setStep('review');
+    }
+    showToast('Payment was not completed. Your order is saved — review it and try checkout again.', 'success');
   }
 
   // Pays again for the SAME order after a failed / abandoned Cashfree checkout.
@@ -911,6 +980,8 @@ export default function NewOrder() {
     }
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
+    const badRange = files.find((f) => hasInvalidPageRange(f));
+    if (badRange) { showToast(`Fix the page range for “${badRange.file.name}” before continuing.`, 'error'); return; }
 
     // Location-based classroom validation
     const needsClassroom = ['main-gate', 'academic-block', 'classroom-delivery'].includes(selectedLocationId) || classroomDelivery;
@@ -984,6 +1055,11 @@ export default function NewOrder() {
   //  'upi_qr' → create the order + show the UPI QR screen
   //  else     → the pre-payment warning (Cashfree)
   function requestPayment() {
+    // Email is mandatory for every order — older saved drafts may predate the field.
+    if (!EMAIL_REGEX.test(String(guestDetails?.email || '').trim())) {
+      setGuestDetailsModalOpen(true);
+      return;
+    }
     if (paymentMethod === 'none') {
       whatsappOpenedRef.current = false;
       setWhatsappModalOpen(true);
@@ -1075,6 +1151,7 @@ export default function NewOrder() {
   let summaryNote = '';
   if (!hasFiles) summaryNote = 'Please upload at least one file to continue.';
   else if (pagesStillDetecting) summaryNote = 'Detecting page count…';
+  else if (files.some((f) => hasInvalidPageRange(f))) summaryNote = 'Fix the invalid page range to continue.';
   else if (filesMissingSettings) summaryNote = 'Please choose printing settings for all files.';
 
   return (
@@ -1141,15 +1218,14 @@ export default function NewOrder() {
                   {files.length === 0 ? (
                     <div className="empty-files-state" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                       <p>No files uploaded yet</p>
-                      <p style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>Upload your files to start your print order.</p>
-                      <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-                        + Upload Files
-                      </button>
+                      <p style={{ fontSize: '0.85rem', marginBottom: 0 }}>Upload your files to start your print order.</p>
                     </div>
                   ) : (
                     <>
                       {files.map((f) => {
                         const typeLabel = fileExtLabel(f.file.name);
+                        const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
+                        const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
                         let pagesText;
                         if (f.pages === null) {
                           pagesText = (
@@ -1195,7 +1271,14 @@ export default function NewOrder() {
                                   </div>
                                 </div>
                               </div>
-                              <button className="file-remove" title="Remove" onClick={() => removeFile(f.key)}>✕</button>
+                              <button type="button" className="file-remove" aria-label={`Remove ${f.file.name}`} title="Remove document" onClick={() => removeFile(f.key)}>
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                                  <polyline points="3 6 5 6 21 6"></polyline>
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                              </button>
                             </div>
 
                             <div className="file-item-settings">
@@ -1242,6 +1325,26 @@ export default function NewOrder() {
                                   </button>
                                 </div>
                               </div>
+                              {showPageRangeInput(f) && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <label htmlFor={`page-range-${f.key}`} style={{ fontSize: '0.85rem', color: '#666' }}>Page Range:</label>
+                                    <input
+                                      id={`page-range-${f.key}`}
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={f.pageRange || ''}
+                                      placeholder={`e.g. 33-55 (of ${f.pages})`}
+                                      onChange={(e) => updateFilePageRange(f.key, e.target.value)}
+                                      style={{ width: '7.5rem', padding: '0.25rem 0.5rem', border: `1px solid ${rangeErr ? '#ef4444' : '#ddd'}`, borderRadius: '6px', fontSize: '0.85rem' }}
+                                    />
+                                    <span style={{ fontSize: '0.75rem', color: '#888' }}>Leave empty to print all {f.pages} pages</span>
+                                  </div>
+                                  {rangeErr && (
+                                    <span role="alert" style={{ fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600 }}>{rangeErr}</span>
+                                  )}
+                                </div>
+                              )}
                               <div style={{ textAlign: 'right', fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
                                 PDF Total: ₹{pdfTotal}
                               </div>
@@ -1310,7 +1413,7 @@ export default function NewOrder() {
                 <span className="summary-total-amount">₹{p.total}</span>
               </div>
 
-              <button className="confirm-btn" disabled={!hasFiles || pagesStillDetecting} onClick={openBookingModal}>
+              <button className="confirm-btn" disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))} onClick={openBookingModal}>
                 Start Order
               </button>
               <p className="summary-note">{summaryNote}</p>
@@ -1742,9 +1845,7 @@ export default function NewOrder() {
                 <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 0.25rem' }}>Your payment is taking longer to confirm. <strong>Please do not pay again.</strong></p>
                 <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>We're still checking in the background. Your ticket will appear automatically once confirmed.</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={handleConfirmRetry}>Check Payment Again</button>
-                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/orders')}>My Orders</button>
-                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/dashboard')}>Back to Dashboard</button>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={() => navigate('/orders')}>Go to Orders</button>
                 </div>
               </>)}
 
@@ -1767,16 +1868,40 @@ export default function NewOrder() {
                 </div>
               )}
 
-              {cfConfirm.phase === 'confirming' && (
-                <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: '#9ca3af', textDecoration: 'underline', padding: 0 }} onClick={() => navigate('/orders')}>My Orders</button>
-                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: '#9ca3af', textDecoration: 'underline', padding: 0 }} onClick={() => navigate('/dashboard')}>Dashboard</button>
-                </div>
-              )}
+
             </div>
           </div>
         );
       })()}
+
+      {guestDetailsModalOpen && (
+        <GuestDetailsModal
+          isOpen
+          initialValues={{
+            fullName: guestDetails?.fullName || '',
+            email: guestDetails?.email || '',
+            phone: guestDetails?.phone || '',
+            classroom: guestDetails?.classroom || '',
+          }}
+          onClose={() => setGuestDetailsModalOpen(false)}
+          onSubmit={(details) => {
+            const guest = {
+              fullName: details.fullName,
+              email: details.email,
+              phone: details.phone,
+              classroom: details.classroom,
+            };
+            setGuestDetails(guest);
+            setDisplayName(details.fullName || displayName);
+            try {
+              localStorage.setItem('cp_guest_details', JSON.stringify(guest));
+            } catch {
+              // localStorage unavailable
+            }
+            setGuestDetailsModalOpen(false);
+          }}
+        />
+      )}
 
       <Toast toast={toast} />
     </>

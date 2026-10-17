@@ -505,6 +505,7 @@ export default function Orders() {
                                 <div className="admin-doc-size">{(f.size_bytes / 1024).toFixed(0)} KB</div>
                                 <div className="admin-doc-size">
                                   {f.page_count ? `${f.page_count} page${f.page_count === 1 ? '' : 's'}` : 'Pages: —'}
+                                  {f.page_range && <> · Range <strong>{f.page_range}</strong></>}
                                   {' · '}{f.copies || 1} cop{(f.copies || 1) === 1 ? 'y' : 'ies'}
                                   {' · '}{f.color_mode === 'color' ? 'Color' : 'B&W'}
                                   {' · '}{f.printing_side === 'double' ? 'Double-sided' : 'Single-sided'}
