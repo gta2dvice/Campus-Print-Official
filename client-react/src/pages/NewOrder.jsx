@@ -230,7 +230,12 @@ export default function NewOrder() {
           savedPayment = null;
         }
         const pendingCashfreeOrderId = returnedCashfreeOrderId || savedPayment?.cashfreeOrderId || '';
-        if (pendingCashfreeOrderId) setRecoveryOrderId(pendingCashfreeOrderId);
+        // Auto-resume the confirmation flow ONLY for an explicit return/resume URL
+        // (cf_order / order_id: Cashfree return, Home's resume banner, Orders' Pay Again).
+        // A stale cp_pending_payment marker alone must never hijack a normal visit
+        // with the 120s confirmation modal — it is still used below for the logged-out
+        // access check and the retry fallback.
+        if (returnedCashfreeOrderId) setRecoveryOrderId(returnedCashfreeOrderId);
 
         if (unfinished) {
           draftMetaRef.current = {
