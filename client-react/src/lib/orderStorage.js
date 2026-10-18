@@ -133,6 +133,7 @@ function serializeMeta(meta = {}) {
   const guest = meta.guestDetails && typeof meta.guestDetails === 'object'
     ? {
       fullName: String(meta.guestDetails.fullName || meta.guestDetails.name || ''),
+      email: String(meta.guestDetails.email || ''),
       phone: String(meta.guestDetails.phone || ''),
       classroom: String(meta.guestDetails.classroom || meta.guestDetails.classSection || ''),
     }
@@ -142,7 +143,7 @@ function serializeMeta(meta = {}) {
     id: CURRENT_UNFINISHED_ORDER,
     guestDetails: guest,
     colorOption: meta.colorOption === 'color' ? 'color' : 'bw',
-    paperSize: 'A4',
+    paperSize: meta.paperSize === 'A3' ? 'A3' : 'A4',
     printingSide: meta.printingSide === 'double' ? 'double' : 'single',
     spiralBinding: !!meta.spiralBinding,
     expressDelivery: !!meta.expressDelivery,
@@ -173,6 +174,7 @@ function fileEntriesFromInput(files) {
         type,
         size,
         ...normalizeFileSettings(entry),
+        pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
         blob: file,
       };
     });
@@ -268,6 +270,7 @@ export async function loadCurrentOrder() {
         ...normalizeFileSettings({ ...info, key: info.key ?? info.id }),
         key: info.key ?? info.id,
         file,
+        pageRange: typeof info.pageRange === 'string' ? info.pageRange : '',
       });
     }
 
@@ -283,6 +286,7 @@ export async function loadCurrentOrder() {
           copies: null,
           printingSide: null,
           colorMode: null,
+          pageRange: '',
         });
       }
     }

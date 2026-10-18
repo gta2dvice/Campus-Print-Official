@@ -13,6 +13,7 @@ import {
   scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
+import { printablePages, parsePageRange, showPageRangeInput, hasInvalidPageRange } from '../lib/pageRange';
 import '../styles/style.css';
 
 const STUDENTS = [
@@ -73,6 +74,10 @@ export default function Home() {
   const [config, setConfig] = useState(null);
 
   const [bump, setBump] = useState(false);
+  // Unresolved (pending/unknown) payment left over from a previous visit. Kept in
+  // localStorage as recovery data. The homepage recovery UI was removed; recovery is
+  // surfaced from the Orders page instead.
+  const [pendingPaymentId, setPendingPaymentId] = useState('');
   const persistReadyRef = useRef(false);
   const extraMetaRef = useRef({
     guestDetails: null,
@@ -84,18 +89,63 @@ export default function Home() {
   });
 
   useEffect(() => {
-    try {
-      const pendingPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
-      if (pendingPayment?.cashfreeOrderId) {
-        navigate(`/new-order?cf_order=${encodeURIComponent(pendingPayment.cashfreeOrderId)}`, { replace: true });
-        return;
+    let cancelled = false;
+    (async () => {
+      let pendingPayment = null;
+      try {
+        pendingPayment = JSON.parse(localStorage.getItem('cp_pending_payment') || 'null');
+      } catch {
+        localStorage.removeItem('cp_pending_payment');
       }
       const ticketToken = localStorage.getItem('cp_last_ticket') || '';
       if (/^[a-f0-9]{64}$/i.test(ticketToken)) setLastTicketToken(ticketToken);
-    } catch {
-      localStorage.removeItem('cp_pending_payment');
-    }
-  }, [navigate]);
+      if (cancelled || !pendingPayment?.cashfreeOrderId) return;
+
+      // Ask the SERVER whether this payment is resolved. The answer is used ONLY to
+      // clean up terminal states — pending, unknown, or unreachable verifications
+      // must never hijack the homepage with an automatic redirect into the payment
+      // confirmation screen.
+      let data = null;
+      let httpStatus = 0;
+      try {
+        const res = await fetch('/api/orders/payment/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ cashfree_order_id: pendingPayment.cashfreeOrderId }),
+        });
+        httpStatus = res.status;
+        data = await res.json().catch(() => ({}));
+      } catch {
+        // Network error: payment state is genuinely uncertain — keep the flag, recover below.
+      }
+      if (cancelled) return;
+
+      const status = data?.status;
+      if (status === 'PAID') {
+        // Terminal: the money is captured. Clear the stale recovery marker and
+        // expose the existing paid order's ticket link.
+        localStorage.removeItem('cp_pending_payment');
+        if (typeof data.ticketToken === 'string' && /^[a-f0-9]{64}$/i.test(data.ticketToken)) {
+          localStorage.setItem('cp_last_ticket', data.ticketToken);
+          setLastTicketToken(data.ticketToken);
+        }
+        return;
+      }
+      if (status === 'NOT_FOUND' || status === 'PAYMENT_FAILED' || httpStatus === 400) {
+        // This attempt can never complete (no order / rejected by gateway / malformed id).
+        // The unpaid order itself stays on the Orders page with Pay Again — nothing
+        // genuinely unresolved is discarded.
+        localStorage.removeItem('cp_pending_payment');
+        return;
+      }
+      // PAYMENT_PENDING / PROCESSING / gateway errors / unreachable backend:
+      // unresolved — keep the recovery data and offer an explicit, optional action
+      // instead of redirecting. The homepage stays fully usable.
+      setPendingPaymentId(pendingPayment.cashfreeOrderId);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
@@ -146,7 +196,8 @@ export default function Home() {
         estimated: false,
         copies: 1,
         printingSide: 'single',
-        colorMode: 'bw'
+        colorMode: 'bw',
+        pageRange: ''
       });
     }
     if (accepted.length === 0) return;
@@ -198,20 +249,33 @@ export default function Home() {
   function updateFileColorMode(key, mode) {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, colorMode: mode } : f)));
   }
+
+  function updateFilePageRange(key, value) {
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pageRange: value } : f)));
+  }
   function updateFilePrintingSide(key, side) {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, printingSide: side } : f)));
   }
 
   function updateFileCopies(key, delta) {
+    if (delta < 0) {
+      const target = files.find((f) => f.key === key);
+      // Minus at 1 copy removes the document — reuses the existing deletion path
+      // (state, totals, pricing and the stored draft all follow along).
+      if (target && (target.copies || 1) <= 1) {
+        removeFile(key);
+        return;
+      }
+    }
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, copies: Math.max(1, f.copies + delta) } : f)));
   }
 
-  const totalPages = files.reduce((sum, f) => sum + ((f.pages || 1) * f.copies), 0);
+  const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
 
   function calcPrice() {
     // Same rule as NewOrder.jsx / server: B&W double-sided is per physical sheet (2 pages per sheet).
     const printingSubtotal = files.reduce((sum, f) => {
-      const pages = f?.pages || 1;
+      const pages = printablePages(f);
       const copies = f?.copies || 1;
       if (f?.colorMode === 'color') return sum + pages * copies * 5;
       if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
@@ -387,6 +451,11 @@ export default function Home() {
   }
 
   async function handleOrderClick() {
+    const invalidRange = files.find((f) => hasInvalidPageRange(f));
+    if (invalidRange) {
+      alert(`Fix the page range for “${invalidRange.file.name}” before continuing.`);
+      return;
+    }
     try {
       localStorage.setItem('cp_pending_order', JSON.stringify({
         size, printingSide,
@@ -429,13 +498,6 @@ export default function Home() {
                 See Services &amp; Pricing
               </button>
             </div>
-            {lastTicketToken && (
-              <p>
-                <Link className="btn btn-secondary" to={`/ticket?token=${encodeURIComponent(lastTicketToken)}`}>
-                  Recover your last ticket
-                </Link>
-              </p>
-            )}
           </div>
 
           <div className="scroll-arrow" id="scrollArrow" onClick={() => scrollToId('main-content')}>
@@ -673,7 +735,10 @@ export default function Home() {
                       <h4 style={{ fontSize: '1rem', fontWeight: '600' }}>Uploaded Files ({files.length})</h4>
                       <button onClick={clearAllFiles} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '500' }}>Clear All</button>
                     </div>
-                    {files.map((f) => (
+                    {files.map((f) => {
+                      const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
+                      const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
+                      return (
                       <div key={f.key} style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -701,7 +766,14 @@ export default function Home() {
                               <span style={{ minWidth: '1.5rem', textAlign: 'center', fontSize: '0.9rem', fontWeight: '600' }}>{f.copies}</span>
                               <button className="counter-btn" style={{ width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }} onClick={() => updateFileCopies(f.key, 1)}>+</button>
                             </div>
-                            <button onClick={() => removeFile(f.key)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+                            <button type="button" onClick={() => removeFile(f.key)} aria-label={`Remove ${f.file.name}`} title="Remove document" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
+                              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                              </svg>
+                            </button>
                           </div>
                         </div>
 
@@ -744,9 +816,30 @@ export default function Home() {
                               </button>
                             </div>
                           </div>
+                          {showPageRangeInput(f) && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.35rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <label htmlFor={`page-range-${f.key}`} style={{ fontSize: '0.8rem', fontWeight: 600, color: '#666' }}>Page Range</label>
+                                <input
+                                  id={`page-range-${f.key}`}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={f.pageRange || ''}
+                                  placeholder={`e.g. 33-55 (of ${f.pages})`}
+                                  onChange={(e) => updateFilePageRange(f.key, e.target.value)}
+                                  style={{ width: '7.5rem', padding: '0.3rem 0.5rem', border: `1px solid ${rangeErr ? '#ef4444' : '#ddd'}`, borderRadius: '6px', fontSize: '0.85rem' }}
+                                />
+                                <span style={{ fontSize: '0.75rem', color: '#888' }}>Leave empty to print all {f.pages} pages</span>
+                              </div>
+                              {rangeErr && (
+                                <span role="alert" style={{ fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600 }}>{rangeErr}</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <button className="btn btn-secondary" style={{ width: 'fit-content', alignHelf: 'center', fontSize: '0.85rem' }} onClick={() => fileInputRef.current?.click()}>+ Add More PDFs</button>
                   </div>
                 )}

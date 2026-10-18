@@ -29,7 +29,6 @@ export default function About() {
           <nav>
             <Link to="/" className="nav-link">Home</Link>
             <Link to="/about" className="nav-link nav-link--active">About Us</Link>
-            <a href="/#location-section" className="nav-link">Location</a>
           </nav>
         </header>
 

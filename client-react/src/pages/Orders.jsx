@@ -417,7 +417,10 @@ export default function Orders() {
               const docState = docsByOrder[o.orderId];
               const isPaid = o.paymentStatus === 'PAID';
               const isOpen = ['PAYMENT_PENDING', 'PAYMENT_PROCESSING', 'EXPIRED', 'TICKET_GENERATION_PENDING'].includes(o.state);
-              const canPayAgain = Boolean(o.cashfreeOrderId) && ['PAYMENT_PENDING', 'PAYMENT_FAILED'].includes(o.state);
+              // Resume Payment: only for a genuinely pending Cashfree payment. Paid,
+              // failed and completed orders keep their existing actions.
+              const canResumePayment = Boolean(o.cashfreeOrderId) && o.state === 'PAYMENT_PENDING';
+              const canPayAgain = Boolean(o.cashfreeOrderId) && o.state === 'PAYMENT_FAILED';
               const canShowQr = o.paymentMethod === 'UPI_QR' && ['PAYMENT_PENDING', 'EXPIRED'].includes(o.state);
               const payPill = STATE_PILLS[o.state] || { label: o.state, tone: 'neutral' };
               const fulfillPill = FULFILLMENT_PILLS[o.orderStatus] || { label: o.orderStatus, tone: 'neutral' };
@@ -447,6 +450,17 @@ export default function Orders() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: '1rem' }}>
                     {isPaid && (
                       <button className="btn btn-primary" style={{ flex: '1 1 auto' }} onClick={() => viewTicket(o)}>View Ticket</button>
+                    )}
+                    {canResumePayment && (
+                      <button className="btn btn-primary" style={{ flex: '1 1 auto' }} onClick={() => payAgain(o)}>Resume Payment</button>
+                    )}
+                    {canResumePayment && (
+                      <span
+                        tabIndex={0}
+                        title="You have an order whose payment hasn't been confirmed yet. Nothing is lost — you can check its status or resume paying whenever you like."
+                        aria-label="About resuming this payment"
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1.5rem', height: '1.5rem', borderRadius: '50%', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', fontSize: '0.8rem', fontWeight: 700, fontStyle: 'italic', cursor: 'help', flexShrink: 0, alignSelf: 'center' }}
+                      >i</span>
                     )}
                     {canPayAgain && (
                       <button className="btn btn-primary" style={{ flex: '1 1 auto' }} onClick={() => payAgain(o)}>Pay Again</button>

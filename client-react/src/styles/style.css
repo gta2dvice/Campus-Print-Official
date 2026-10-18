@@ -944,6 +944,11 @@ img[src=""] {
     padding: 2.5rem;
     width: 90%;
     max-width: 400px;
+    /* Keep the modal inside the viewport; long forms scroll internally. */
+    max-height: calc(100vh - 3rem);
+    max-height: calc(100dvh - 3rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.1);
     position: relative;
     transform: scale(0.95) translateY(20px);

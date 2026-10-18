@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
+import GuestDetailsModal from '../components/GuestDetailsModal';
 import Toast from '../components/Toast';
 import PaymentWarningModal from '../components/PaymentWarningModal';
 import WhatsAppOrderModal, { WA_ORDER_TEMPLATE } from '../components/WhatsAppOrderModal';
@@ -18,9 +19,11 @@ import {
   loadCurrentOrder,
   removeCurrentOrder,
   saveCurrentOrder,
+  scheduleSaveCurrentOrder,
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
+import { printablePages, parsePageRange, showPageRangeInput, hasInvalidPageRange } from '../lib/pageRange';
 import '../styles/style.css';
 import '../styles/dashboard.css';
 
@@ -49,6 +52,8 @@ function fileExtLabel(name) {
 function isImageName(name) {
   return /\.(png|jpg|jpeg)$/i.test(name || '');
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isFileSupported(file) {
   if (!file) return false;
@@ -137,7 +142,7 @@ function isSlotPast(time) {
 // (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
 // Keep in sync with filePrintingCost() in server/routes/orders.js, which verifies the total.
 function filePrintingCost(f) {
-  const pages = f?.pages || 1;
+  const pages = printablePages(f);
   const copies = f?.copies || 1;
   if (f?.colorMode === 'color') return pages * copies * 5;
   if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
@@ -169,7 +174,7 @@ export default function NewOrder() {
   const [config, setConfig] = useState(null);
 
   // ── Order configuration state ──
-  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode }]
+  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode, pageRange }]
   const [paperSize, setPaperSize] = useState('A4');
   const [spiralBinding, setSpiralBinding] = useState(false);
   const [expressDelivery, setExpressDelivery] = useState(false);
@@ -197,16 +202,27 @@ export default function NewOrder() {
   const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
   const confirmingPaymentRef = useRef(false); // guards against double-firing the pay flow
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  // Shown when a saved draft has no (valid) email — email is mandatory before ordering.
+  const [guestDetailsModalOpen, setGuestDetailsModalOpen] = useState(false);
   const [whatsappOpening, setWhatsappOpening] = useState(false);
   const whatsappOpenedRef = useRef(false); // guards against opening WhatsApp more than once
   const [upiQrData, setUpiQrData] = useState(null);
   const upiSubmittingRef = useRef(false); // guards against creating duplicate UPI orders
   const persistReadyRef = useRef(false);
+  // Set before discarding the current draft so the persist effect skips that one change.
+  const skipPersistRef = useRef(false);
+  // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
+  // so re-enabling persistence here doesn't reset them to defaults.
+  const draftMetaRef = useRef({ colorOption: 'bw', printingSide: 'single' });
   const handledReturnOrderRef = useRef(null);
   const confirmPaidOrderRef = useRef(null);
   const recoverPaymentRef = useRef(null);
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
+
+  const [cfConfirm, setCfConfirm] = useState(null);
+  const cfConfirmRef = useRef(null);
+  cfConfirmRef.current = cfConfirm;
 
   useEffect(() => {
     let cancelled = false;
@@ -222,9 +238,18 @@ export default function NewOrder() {
           savedPayment = null;
         }
         const pendingCashfreeOrderId = returnedCashfreeOrderId || savedPayment?.cashfreeOrderId || '';
-        if (pendingCashfreeOrderId) setRecoveryOrderId(pendingCashfreeOrderId);
+        // Auto-resume the confirmation flow ONLY for an explicit return/resume URL
+        // (cf_order / order_id: Cashfree return, Home's resume banner, Orders' Pay Again).
+        // A stale cp_pending_payment marker alone must never hijack a normal visit
+        // with the 120s confirmation modal — it is still used below for the logged-out
+        // access check and the retry fallback.
+        if (returnedCashfreeOrderId) setRecoveryOrderId(returnedCashfreeOrderId);
 
         if (unfinished) {
+          draftMetaRef.current = {
+            colorOption: unfinished.colorOption === 'color' ? 'color' : 'bw',
+            printingSide: unfinished.printingSide === 'double' ? 'double' : 'single',
+          };
           if (unfinished.files?.length) {
             const restoredKeys = unfinished.files.map((entry) => Number(entry.key)).filter((n) => Number.isFinite(n));
             if (restoredKeys.length) fileKeySeq = Math.max(fileKeySeq, ...restoredKeys);
@@ -260,7 +285,8 @@ export default function NewOrder() {
         try {
           const pending = JSON.parse(localStorage.getItem('cp_pending_order') || 'null');
           if (pending) {
-            if (pending.color === 'bw' || pending.color === 'color') setColorOption(pending.color);
+            // 'color' has no state here (color is per-file now as colorMode). Calling the
+            // previously-undefined setColorOption threw, silently skipping the restores below.
             if (pending.size === 'A4' || pending.size === 'A3') setPaperSize(pending.size);
             setSpiralBinding(!!pending.spiral);
             setExpressDelivery(!!pending.express);
@@ -308,33 +334,35 @@ export default function NewOrder() {
     };
   }, [navigate, returnedCashfreeOrderId]);
 
+  // Persists the CURRENT draft (files + selections) to IndexedDB on every change so a
+  // refresh restores the latest state — file deletions and replacements included.
   useEffect(() => {
-    // Temporarily disabled to diagnose runtime crash
-    // if (!persistReadyRef.current) return;
-    // if (skipPersistRef.current) {
-    //   skipPersistRef.current = false;
-    //   return;
-    // }
-    // scheduleSaveCurrentOrder({
-    //   meta: {
-    //     guestDetails,
-    //     paperSize,
-    //     spiralBinding,
-    //     expressDelivery,
-    //     classroomDelivery,
-    //     selectedLocationId,
-    //     selectedLocationName,
-    //     selectedTimeSlot,
-    //   },
-    //   files,
-    //   onError: (err) => {
-    //     if (typeof showToast === 'function') {
-    //       showToast(storageErrorMessage(err), 'error');
-    //     } else if (showToastRef.current) {
-    //       showToastRef.current(storageErrorMessage(err), 'error');
-    //     }
-    //   },
-    // });
+    if (!persistReadyRef.current) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    scheduleSaveCurrentOrder({
+      meta: {
+        ...draftMetaRef.current,
+        guestDetails,
+        paperSize,
+        spiralBinding,
+        expressDelivery,
+        classroomDelivery,
+        selectedLocationId,
+        selectedLocationName,
+        selectedTimeSlot,
+      },
+      files,
+      onError: (err) => {
+        if (typeof showToast === 'function') {
+          showToast(storageErrorMessage(err), 'error');
+        } else if (showToastRef.current) {
+          showToastRef.current(storageErrorMessage(err), 'error');
+        }
+      },
+    });
   }, [
     guestDetails,
     files,
@@ -395,7 +423,8 @@ export default function NewOrder() {
         estimated: false,
         copies: 1,
         printingSide: 'single',
-        colorMode: 'bw'
+        colorMode: 'bw',
+        pageRange: ''
       });
     }
     if (accepted.length === 0) return;
@@ -457,10 +486,23 @@ export default function NewOrder() {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, colorMode: mode } : f)));
   }
 
+  function updateFilePageRange(key, value) {
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pageRange: value } : f)));
+  }
+
   function updateFileCopies(key, delta) {
+    if (delta < 0) {
+      const target = files.find((f) => f.key === key);
+      // Minus at 1 copy removes the document — reuses the existing deletion path
+      // (state, totals, pricing and the stored draft all follow along).
+      if (target && (Number.isSafeInteger(target.copies) ? target.copies : 1) <= 1) {
+        removeFile(key);
+        return;
+      }
+    }
     setFiles((prev) => prev.map((f) => (
       f.key === key
-        ? { ...f, copies: Math.max(1, (Number.isSafeInteger(f.copies) ? f.copies : 0) + delta) }
+        ? { ...f, copies: Math.max(1, (Number.isSafeInteger(f.copies) ? f.copies : 1) + delta) }
         : f
     )));
   }
@@ -503,7 +545,7 @@ export default function NewOrder() {
     navigate(`/ticket?token=${encodeURIComponent(ticketToken)}`);
   }
 
-  const totalPagesCount = files.reduce((sum, f) => sum + ((f.pages || 1) * f.copies), 0);
+  const totalPagesCount = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
@@ -536,6 +578,8 @@ export default function NewOrder() {
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
+    const invalidRange = files.find((f) => hasInvalidPageRange(f));
+    if (invalidRange) { showToast(`Fix the page range for “${invalidRange.file.name}” before continuing.`, 'error'); return; }
     setModalOpen(true);
     goToStep('slot');
   }
@@ -687,84 +731,108 @@ export default function NewOrder() {
     return formData;
   }
 
-  async function confirmPaidOrder(cashfreeOrderId) {
-    console.info('[PAYMENT_VERIFY] Verification request started:', { cashfreeOrderId });
-    const verifyRes = await fetch('/api/orders/payment/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ cashfree_order_id: cashfreeOrderId })
-    });
-    const verifyData = await verifyRes.json().catch(() => ({}));
-    if (verifyData.status === 'PAID' && verifyData.ticketToken) {
-      console.info('[PAYMENT_VERIFY] Backend returned created ticket:', {
-        ticketNumberPresent: Boolean(verifyData.ticketNumber)
-      });
-      await finishSuccessfulOrder(verifyData.ticketToken);
-      return 'PAID';
-    }
-    if (verifyData.status === 'PAYMENT_FAILED') {
-      // The order and its files are kept; "Try payment again" pays for the same order.
-      setCanRetryPayment(true);
-      setPaymentMessage('Cashfree reported this payment as failed. Your order is saved — you can try paying again for the same order.');
-      setPaying(false);
-      return 'PAYMENT_FAILED';
-    }
-    if (verifyData.status === 'PAYMENT_PENDING' || verifyData.status === 'PAYMENT_PROCESSING') {
-      setPaymentMessage('Payment confirmation pending. We are checking Cashfree and preparing your ticket.');
-      return 'PAYMENT_PENDING';
-    }
-    console.error('[PAYMENT_VERIFY_FAILED]', {
-      stage: 'verification_response',
-      cashfreeOrderId,
-      httpStatus: verifyRes.status,
-      code: verifyData.code || 'PAYMENT_VERIFICATION_FAILED'
-    });
-    throw new Error(verifyData.message || 'Payment verification could not reach the server.');
-  }
-  confirmPaidOrderRef.current = confirmPaidOrder;
-
-  async function recoverPayment(cashfreeOrderId, { attempts = 20 } = {}) {
-    if (!cashfreeOrderId) return;
-    setPaying(true);
-    setCanRetryPayment(false);
-    setPaymentMessage('Checking payment status with Cashfree…');
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        const status = await confirmPaidOrderRef.current(cashfreeOrderId);
-        if (status === 'PAID' || status === 'PAYMENT_FAILED') return;
-      } catch (error) {
-        setPaymentMessage('Payment confirmation pending. Check your connection and retry; do not pay again.');
-        console.warn('[PAYMENT_VERIFY_RETRY]', {
-          cashfreeOrderId,
-          attempt: attempt + 1,
-          errorName: error instanceof Error ? error.name : 'UnknownError'
-        });
-      }
-      if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-    setPaymentMessage('Payment is not confirmed yet. If you closed checkout before paying, you can open it again for the same order — you will not be charged twice. If you already paid, check again in a minute.');
-    setCanRetryPayment(true);
+  function startCashfreeConfirmation(cashfreeOrderId, orderId) {
     setPaying(false);
+    setPaymentMessage('');
+    setCfConfirm({
+      phase: 'confirming',
+      cashfreeOrderId,
+      orderId: orderId || null,
+      startedAt: Date.now(),
+      ticketToken: null,
+      ticketNumber: null,
+      canRetry: false,
+    });
   }
-  recoverPaymentRef.current = recoverPayment;
+
+  useEffect(() => {
+    // Both automated phases must escalate to 'timeout' after 120s: 'received' also polls
+    // without any buttons, and without this a stuck verification would trap the user.
+    if (!cfConfirm || (cfConfirm.phase !== 'confirming' && cfConfirm.phase !== 'received')) return;
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - cfConfirm.startedAt;
+      if (elapsed >= 120000) {
+        setCfConfirm(prev => (prev?.phase === 'confirming' || prev?.phase === 'received')
+          ? { ...prev, phase: 'timeout' } : prev);
+      } else {
+        setCfConfirm(prev => prev ? { ...prev, _tick: Date.now() } : null);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cfConfirm?.phase, cfConfirm?.startedAt]);
+
+  useEffect(() => {
+    if (!cfConfirm || cfConfirm.phase === 'success' || cfConfirm.phase === 'failed') return;
+    let cancelled = false;
+    const interval = cfConfirm.phase === 'timeout' ? 15000 : cfConfirm.phase === 'received' ? 3000 : 4000;
+
+    async function poll() {
+      if (cancelled) return;
+      const id = cfConfirmRef.current?.cashfreeOrderId;
+      if (!id) return;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const res = await fetch('/api/orders/payment/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ cashfree_order_id: id }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (cancelled) return;
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (data.status === 'PAID') {
+          if (data.ticketNumber && data.ticketToken) {
+            // The redirect is scheduled by the success-phase effect below: this
+            // polling effect's cancellation flag is set as soon as the phase flips.
+            setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
+          } else {
+            // PAID but the ticket/token isn't ready yet. Never regress out of 'timeout'
+            // (its polling keeps retrying while its buttons keep navigation available).
+            setCfConfirm(prev => prev && prev.phase !== 'success' && prev.phase !== 'timeout'
+              ? { ...prev, phase: 'received' } : prev);
+          }
+          return;
+        }
+        if (data.status === 'PAYMENT_FAILED') {
+          setCfConfirm(prev => prev ? { ...prev, phase: 'failed', canRetry: true } : null);
+        }
+      } catch {
+        // Network error — keep polling
+      }
+    }
+
+    poll();
+    const timer = setInterval(poll, interval);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [cfConfirm?.phase, cfConfirm?.cashfreeOrderId]);
+
+  // Redirects to the ticket once payment is confirmed and the secure token is in
+  // hand. Scheduling here (not inside the polling effect) matters: the polling
+  // effect cleans up — cancelling its pending timers — the moment the phase flips
+  // to 'success', so a timer created there would never navigate.
+  useEffect(() => {
+    if (cfConfirm?.phase !== 'success' || !cfConfirm.ticketToken) return;
+    const timer = setTimeout(() => finishSuccessfulOrder(cfConfirm.ticketToken), 2000);
+    return () => clearTimeout(timer);
+  }, [cfConfirm?.phase, cfConfirm?.ticketToken]);
 
   useEffect(() => {
     if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
     handledReturnOrderRef.current = recoveryOrderId;
-    console.info('[PAYMENT_RETURN] Cashfree return received:', {
-      cashfreeOrderId: recoveryOrderId
-    });
-    recoverPaymentRef.current(recoveryOrderId, payAgain ? { attempts: 1 } : undefined).catch((error) => {
-      console.error('[PAYMENT_RETURN_FAILED]', {
-        stage: 'verification_request',
-        cashfreeOrderId: recoveryOrderId,
-        errorName: error instanceof Error ? error.name : 'UnknownError'
-      });
-      setPaymentMessage('Payment confirmation pending. Retry when your connection is available.');
-      setPaying(false);
-    });
-  }, [loading, recoveryOrderId, payAgain]);
+    const savedPayment = (() => { try { return JSON.parse(localStorage.getItem('cp_pending_payment') || 'null'); } catch { return null; } })();
+    if (payAgain) {
+      // Orders → "Resume Payment": reopen checkout for the SAME order. The server's
+      // retry endpoint reuses the existing order and never creates a duplicate.
+      retryCashfreePayment();
+      return;
+    }
+    startCashfreeConfirmation(recoveryOrderId, savedPayment?.orderId || null);
+  }, [loading, recoveryOrderId]);
 
   // Opens Cashfree checkout for one payment attempt, then asks the SERVER whether it
   // was paid. Closing the modal or the return URL never counts as payment.
@@ -773,6 +841,7 @@ export default function NewOrder() {
       // Recovery hint only: the server is the source of truth for the order.
       localStorage.setItem('cp_pending_payment', JSON.stringify({
         cashfreeOrderId: session.cashfreeOrderId,
+        orderId: session.orderId || null,
         createdAt: Date.now()
       }));
     } catch {
@@ -781,7 +850,6 @@ export default function NewOrder() {
     setRecoveryOrderId(session.cashfreeOrderId);
     handledReturnOrderRef.current = session.cashfreeOrderId;
     setCanRetryPayment(false);
-    setPaymentMessage('Complete payment in Cashfree. Your ticket will be created even if you close checkout.');
 
     const started = Date.now();
     while (typeof window.Cashfree !== 'function' && Date.now() - started < 8000) {
@@ -801,11 +869,13 @@ export default function NewOrder() {
       cashfreeOrderId: session.cashfreeOrderId,
       mode: session.mode
     });
+    let paymentDetails = null;
     try {
       const checkoutResult = await cashfreeCheckout.checkout({
         paymentSessionId: session.paymentSessionId,
         redirectTarget: '_modal',
       });
+      paymentDetails = checkoutResult?.paymentDetails || null;
       console.info('[PAYMENT_RETURN] Cashfree checkout returned control:', {
         cashfreeOrderId: session.cashfreeOrderId,
         hasError: Boolean(checkoutResult?.error),
@@ -817,20 +887,62 @@ export default function NewOrder() {
         errorName: checkoutError instanceof Error ? checkoutError.name : 'UnknownError'
       });
     }
-    await recoverPayment(session.cashfreeOrderId);
+
+    if (paymentDetails) {
+      // The student actually went through the payment flow — monitor it with the
+      // existing 2-minute confirmation timer.
+      startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
+      return;
+    }
+
+    // Checkout was left / closed without completing a payment. Explicitly leaving is
+    // NOT a confirmed pending payment: never start the 2-minute timer just for leaving.
+    // One quick server check catches the rare case where the money was captured anyway.
+    let verifiedStatus = null;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const verifyRes = await fetch('/api/orders/payment/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cashfree_order_id: session.cashfreeOrderId }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      verifiedStatus = verifyData?.status || null;
+    } catch {
+      // Could not check — treat as not paid; recovery stays on the Orders page.
+    }
+    setPaying(false);
+    if (verifiedStatus === 'PAID' || verifiedStatus === 'PAYMENT_PROCESSING') {
+      // Money is genuinely captured / in flight — this IS a pending payment.
+      startCashfreeConfirmation(session.cashfreeOrderId, session.orderId);
+      return;
+    }
+    // Explicitly left before paying: back to Step 4 (Review Order). The draft, files,
+    // copies, page settings, location, time slot and payment method are untouched;
+    // no duplicate order, no ticket and no pending-payment timer is created.
+    setPaymentMessage('');
+    if (modalOpen) {
+      setStep('review');
+    }
+    showToast('Payment was not completed. Your order is saved — review it and try checkout again.', 'success');
   }
 
   // Pays again for the SAME order after a failed / abandoned Cashfree checkout.
   async function retryCashfreePayment() {
-    if (!recoveryOrderId || paying) return;
+    const cashfreeOrderId = cfConfirmRef.current?.cashfreeOrderId || recoveryOrderId;
+    if (!cashfreeOrderId || paying) return;
     setPaying(true);
-    setPaymentMessage('Restarting payment for the same order…');
+    setCfConfirm(null);
     try {
       const res = await fetch('/api/orders/payment/cashfree/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ cashfree_order_id: recoveryOrderId })
+        body: JSON.stringify({ cashfree_order_id: cashfreeOrderId })
       });
       const data = await res.json().catch(() => ({}));
       if (data.status === 'PAID' && data.ticketToken) {
@@ -838,27 +950,26 @@ export default function NewOrder() {
         return;
       }
       if (!res.ok || !data.paymentSessionId || !data.cashfreeOrderId) {
-        setPaymentMessage(data.message || 'Could not restart the payment. Please retry shortly.');
+        showToast(data.message || 'Could not restart the payment. Please retry shortly.', 'error');
+        startCashfreeConfirmation(cashfreeOrderId, cfConfirmRef.current?.orderId);
+        setCfConfirm(prev => prev ? { ...prev, phase: 'failed', canRetry: true } : null);
         setPaying(false);
         return;
       }
       await openCashfreeCheckout(data);
     } catch {
-      setPaymentMessage('Could not reach the payment service. Please retry; you will not be charged twice.');
+      showToast('Could not reach the payment service. Please retry.', 'error');
       setPaying(false);
     }
   }
 
   // Abandons the failed checkout locally (the unpaid order stays visible on the Orders page).
   function dismissFailedPayment() {
-    try {
-      localStorage.removeItem('cp_pending_payment');
-    } catch {
-      // Nothing else to clear.
-    }
+    try { localStorage.removeItem('cp_pending_payment'); } catch {}
     setCanRetryPayment(false);
     setPaymentMessage('');
     setRecoveryOrderId('');
+    setCfConfirm(null);
   }
 
   async function handlePay() {
@@ -872,6 +983,8 @@ export default function NewOrder() {
     }
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
+    const badRange = files.find((f) => hasInvalidPageRange(f));
+    if (badRange) { showToast(`Fix the page range for “${badRange.file.name}” before continuing.`, 'error'); return; }
 
     // Location-based classroom validation
     const needsClassroom = ['main-gate', 'academic-block', 'classroom-delivery'].includes(selectedLocationId) || classroomDelivery;
@@ -957,6 +1070,11 @@ export default function NewOrder() {
   //  'upi_qr' → create the order + show the UPI QR screen
   //  else     → the pre-payment warning (Cashfree)
   function requestPayment() {
+    // Email is mandatory for every order — older saved drafts may predate the field.
+    if (!EMAIL_REGEX.test(String(guestDetails?.email || '').trim())) {
+      setGuestDetailsModalOpen(true);
+      return;
+    }
     if (paymentMethod === 'none') {
       whatsappOpenedRef.current = false;
       setWhatsappModalOpen(true);
@@ -1048,6 +1166,7 @@ export default function NewOrder() {
   let summaryNote = '';
   if (!hasFiles) summaryNote = 'Please upload at least one file to continue.';
   else if (pagesStillDetecting) summaryNote = 'Detecting page count…';
+  else if (files.some((f) => hasInvalidPageRange(f))) summaryNote = 'Fix the invalid page range to continue.';
   else if (filesMissingSettings) summaryNote = 'Please choose printing settings for all files.';
 
   return (
@@ -1056,29 +1175,9 @@ export default function NewOrder() {
         <DashboardSidebar userName={displayName} />
 
         <main className="main-content">
-          {paymentMessage && (
+          {paymentMessage && !cfConfirm && (
             <div role="status" aria-live="polite" style={{ marginBottom: '1rem', padding: '1rem', borderRadius: '0.75rem', background: '#eff6ff' }}>
               <p style={{ margin: 0 }}>{paymentMessage}</p>
-              {!paying && recoveryOrderId && (
-                <button
-                  type="button"
-                  className="ticket-btn ticket-btn-outline"
-                  style={{ marginTop: '0.75rem' }}
-                  onClick={() => recoverPaymentRef.current(recoveryOrderId)}
-                >
-                  Check payment again
-                </button>
-              )}
-              {!paying && recoveryOrderId && canRetryPayment && (
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={retryCashfreePayment}>
-                    Pay for this order again
-                  </button>
-                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={dismissFailedPayment}>
-                    Dismiss
-                  </button>
-                </div>
-              )}
             </div>
           )}
           <a href="/dashboard" className="back-link">
@@ -1134,15 +1233,14 @@ export default function NewOrder() {
                   {files.length === 0 ? (
                     <div className="empty-files-state" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                       <p>No files uploaded yet</p>
-                      <p style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>Upload your files to start your print order.</p>
-                      <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-                        + Upload Files
-                      </button>
+                      <p style={{ fontSize: '0.85rem', marginBottom: 0 }}>Upload your files to start your print order.</p>
                     </div>
                   ) : (
                     <>
                       {files.map((f) => {
                         const typeLabel = fileExtLabel(f.file.name);
+                        const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
+                        const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
                         let pagesText;
                         if (f.pages === null) {
                           pagesText = (
@@ -1188,7 +1286,14 @@ export default function NewOrder() {
                                   </div>
                                 </div>
                               </div>
-                              <button className="file-remove" title="Remove" onClick={() => removeFile(f.key)}>✕</button>
+                              <button type="button" className="file-remove" aria-label={`Remove ${f.file.name}`} title="Remove document" onClick={() => removeFile(f.key)}>
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                                  <polyline points="3 6 5 6 21 6"></polyline>
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                              </button>
                             </div>
 
                             <div className="file-item-settings">
@@ -1235,6 +1340,26 @@ export default function NewOrder() {
                                   </button>
                                 </div>
                               </div>
+                              {showPageRangeInput(f) && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <label htmlFor={`page-range-${f.key}`} style={{ fontSize: '0.85rem', color: '#666' }}>Page Range:</label>
+                                    <input
+                                      id={`page-range-${f.key}`}
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={f.pageRange || ''}
+                                      placeholder={`e.g. 33-55 (of ${f.pages})`}
+                                      onChange={(e) => updateFilePageRange(f.key, e.target.value)}
+                                      style={{ width: '7.5rem', padding: '0.25rem 0.5rem', border: `1px solid ${rangeErr ? '#ef4444' : '#ddd'}`, borderRadius: '6px', fontSize: '0.85rem' }}
+                                    />
+                                    <span style={{ fontSize: '0.75rem', color: '#888' }}>Leave empty to print all {f.pages} pages</span>
+                                  </div>
+                                  {rangeErr && (
+                                    <span role="alert" style={{ fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600 }}>{rangeErr}</span>
+                                  )}
+                                </div>
+                              )}
                               <div style={{ textAlign: 'right', fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
                                 PDF Total: ₹{pdfTotal}
                               </div>
@@ -1303,7 +1428,7 @@ export default function NewOrder() {
                 <span className="summary-total-amount">₹{p.total}</span>
               </div>
 
-              <button className="confirm-btn" disabled={!hasFiles || pagesStillDetecting} onClick={openBookingModal}>
+              <button className="confirm-btn" disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))} onClick={openBookingModal}>
                 Start Order
               </button>
               <p className="summary-note">{summaryNote}</p>
@@ -1689,6 +1814,111 @@ export default function NewOrder() {
           showToast={showToast}
           onClose={() => setUpiQrData(null)}
           onViewTicket={() => navigate(`/ticket?token=${encodeURIComponent(upiQrData.ticketToken)}`)}
+        />
+      )}
+
+      {cfConfirm && (() => {
+        const timeLeft = Math.max(0, 120 - Math.floor((Date.now() - cfConfirm.startedAt) / 1000));
+        const progress = Math.min(100, ((Date.now() - cfConfirm.startedAt) / 120000) * 100);
+        return (
+          <div className="booking-overlay" style={{ zIndex: 1100 }}>
+            <div className="booking-panel" style={{ maxWidth: 440, textAlign: 'center', padding: '2rem 1.5rem', margin: '2rem auto' }}>
+
+              {cfConfirm.phase === 'confirming' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span className="loading-spinner" style={{ width: 28, height: 28 }} />
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Confirming your payment...</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>Confirming your payment with Cashfree. This usually takes a few seconds.</p>
+                <div style={{ background: '#e5e7eb', borderRadius: 999, height: 6, margin: '0 0 0.75rem', overflow: 'hidden' }}>
+                  <div style={{ background: '#3b82f6', height: '100%', width: `${progress}%`, borderRadius: 999, transition: 'width 1s linear' }} />
+                </div>
+                <p style={{ fontSize: '1.5rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#1e3a5f', margin: '0 0 0.5rem' }}>
+                  {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+                </p>
+              </>)}
+
+              {cfConfirm.phase === 'received' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment received!</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1rem' }}>Preparing your collection ticket...</p>
+                <span className="loading-spinner" style={{ display: 'block', margin: '0 auto', width: 24, height: 24 }} />
+              </>)}
+
+              {cfConfirm.phase === 'success' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#059669', margin: '0 0 0.25rem' }}>Payment successful!</h2>
+                {cfConfirm.ticketNumber && <p style={{ fontWeight: 600, fontSize: '1.1rem', margin: '0.25rem 0' }}>{cfConfirm.ticketNumber}</p>}
+                <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>Redirecting to your ticket...</p>
+              </>)}
+
+              {cfConfirm.phase === 'timeout' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment taking longer to confirm</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 0.25rem' }}>Your payment is taking longer to confirm. <strong>Please do not pay again.</strong></p>
+                <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>We're still checking in the background. Your ticket will appear automatically once confirmed.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={() => navigate('/orders')}>Go to Orders</button>
+                </div>
+              </>)}
+
+              {cfConfirm.phase === 'failed' && (<>
+                <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                </div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Payment failed</h2>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>This payment did not go through. Your order is saved — you can try paying again.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <button type="button" className="ticket-btn ticket-btn-primary" onClick={retryCashfreePayment}>Pay Again for This Order</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={() => navigate('/orders')}>My Orders</button>
+                  <button type="button" className="ticket-btn ticket-btn-outline" onClick={dismissFailedPayment} style={{ color: '#6b7280' }}>Dismiss</button>
+                </div>
+              </>)}
+
+              {(cfConfirm.phase === 'confirming' || cfConfirm.phase === 'timeout') && cfConfirm.orderId && (
+                <div style={{ marginTop: '1rem', padding: '0.5rem 0.75rem', background: '#f9fafb', borderRadius: 8, fontSize: '0.8rem', color: '#9ca3af' }}>
+                  Order #{cfConfirm.orderId}
+                </div>
+              )}
+
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {guestDetailsModalOpen && (
+        <GuestDetailsModal
+          isOpen
+          initialValues={{
+            fullName: guestDetails?.fullName || '',
+            email: guestDetails?.email || '',
+            phone: guestDetails?.phone || '',
+            classroom: guestDetails?.classroom || '',
+          }}
+          onClose={() => setGuestDetailsModalOpen(false)}
+          onSubmit={(details) => {
+            const guest = {
+              fullName: details.fullName,
+              email: details.email,
+              phone: details.phone,
+              classroom: details.classroom,
+            };
+            setGuestDetails(guest);
+            setDisplayName(details.fullName || displayName);
+            try {
+              localStorage.setItem('cp_guest_details', JSON.stringify(guest));
+            } catch {
+              // localStorage unavailable
+            }
+            setGuestDetailsModalOpen(false);
+          }}
         />
       )}
 

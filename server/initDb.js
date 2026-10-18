@@ -33,6 +33,7 @@ async function initDb() {
     await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw'`);
     await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS file_type VARCHAR(10) NULL`);
     await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS page_count INTEGER NULL`);
+    await pool.query(`ALTER TABLE order_files ADD COLUMN IF NOT EXISTS page_range TEXT NULL`);
     await pool.query(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS payment_upi VARCHAR(100)`);
     await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(40)`);
     await pool.query(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_expires_at TIMESTAMPTZ`);

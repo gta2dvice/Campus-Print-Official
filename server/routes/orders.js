@@ -192,6 +192,13 @@ function toRecoveryOrderSummary(order) {
 
 /** Ticket page payload: the order + its state; recovers a pending ticket on read. */
 async function buildTicketView(order) {
+    if (order.payment_status === 'PAYMENT_PENDING' && order.payment_method === 'CASHFREE' && paymentGatewayReady()) {
+        const attempt = await Order.getLatestCashfreeAttempt(order.id);
+        if (attempt && attempt.status === 'pending') {
+            try { await reconcileCashfreePayment(attempt.gateway_order_id, 'ticket_view'); } catch {}
+            order = await Order.getOrderRecord(order.id);
+        }
+    }
     if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
@@ -279,6 +286,32 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             pages = Math.max(1, Math.min(MAX_DECLARED_PAGES, Number.isFinite(declared) ? declared : 1));
         }
 
+        // Optional PDF page range (e.g. "33-55"). It is validated against the REAL
+        // page count, then drives both the price and the printable page count, so the
+        // printer only ever receives the selected pages (see sendStoredFile.js).
+        const rawRange = typeof setting.pageRange === 'string' ? setting.pageRange.trim() : '';
+        let pageRange = null;
+        if (rawRange) {
+            const rangeError = (message, code = 'PAGE_RANGE_INVALID') => {
+                const e = new Error(message);
+                e.code = code; e.httpStatus = 400; return e;
+            };
+            if (type.key !== 'pdf') {
+                throw rangeError('A page range is only supported for PDF files.', 'PAGE_RANGE_UNSUPPORTED');
+            }
+            const match = /^(\d+)\s*-\s*(\d+)$/.exec(rawRange);
+            if (!match) {
+                throw rangeError('Use a page range like 33-55 (numbers only, e.g. 10-20).');
+            }
+            const start = parseInt(match[1], 10);
+            const end = parseInt(match[2], 10);
+            if (start < 1) throw rangeError('Pages start at 1 — the page range cannot start at 0.');
+            if (start > end) throw rangeError('The start page must be less than or equal to the end page.');
+            if (end > pages) throw rangeError(`The page range must be within 1-${pages} pages for this file.`);
+            pageRange = `${start}-${end}`;
+            pages = end - start + 1; // printable pages: price + stored page_count use the range
+        }
+
         resolved.push({
             file,
             originalname: file.originalname,
@@ -286,6 +319,7 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             size: file.size,
             fileType: type.label,
             pages,
+            pageRange,
             copies: Math.max(1, parseInt(setting.copies, 10) || 1),
             printingSide: setting.printingSide === 'double' ? 'double' : 'single',
             colorMode: setting.colorMode === 'color' ? 'color' : 'bw'
@@ -333,10 +367,17 @@ async function validateAndPriceSubmission(req, res) {
         res.status(400).json({ message: 'Full Name, Phone, and Classroom/Room Number are required.' });
         return null;
     }
-    const rawEmail = (email || guestEmail || '').trim();
+    const rawEmail = String(email || guestEmail || '').trim();
     const normalizedEmail = normalizeEmail(rawEmail);
-    if (!req.session?.userId && !normalizedEmail) {
-        res.status(400).json({ message: 'A valid email address is required for order notifications and recovery.' });
+    if (!rawEmail) {
+        res.status(400).json({ message: 'Email address is required.', code: 'EMAIL_REQUIRED' });
+        return null;
+    }
+    if (!normalizedEmail) {
+        res.status(400).json({
+            message: 'Enter a valid email address for order notifications and recovery.',
+            code: 'EMAIL_INVALID'
+        });
         return null;
     }
     if (!/^[6-9][0-9]{9}$/.test(phone)) {
@@ -401,6 +442,7 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
                 size: rf.size,
                 fileType: rf.fileType,
                 pageCount: rf.pages,
+                pageRange: rf.pageRange || null,
                 printingSide: rf.printingSide,
                 copies: rf.copies,
                 colorMode: rf.colorMode,
@@ -829,6 +871,7 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
             fileId: f.id,
             name: f.original_name,
             sizeBytes: f.size_bytes,
+            pageRange: f.page_range || null,
             // Uploaded files are purged after 24h; surface that instead of a dead link.
             expired: Boolean(f.file_deleted_at),
             createdAt: f.created_at
@@ -1000,10 +1043,11 @@ async function reconcileCashfreePayment(cashfreeOrderId, source) {
         return { status: 'PAYMENT_FAILED', id: intent.order_id, canRetry: true };
     }
 
-    const [providerOrder, providerPayments] = await Promise.all([
-        cashfree.fetchOrder(cashfreeOrderId),
-        cashfree.fetchOrderPayments(cashfreeOrderId)
-    ]);
+    const shouldRetry = source === 'return_verify' || source === 'cashfree_webhook';
+    const providerOrder = shouldRetry
+        ? await cashfree.fetchOrderUntilPaid(cashfreeOrderId)
+        : await cashfree.fetchOrder(cashfreeOrderId);
+    const providerPayments = await cashfree.fetchOrderPayments(cashfreeOrderId);
     if (providerOrder.order_id !== cashfreeOrderId ||
         !cashfree.amountsMatch(providerOrder.order_amount, intent.payment_amount) ||
         String(providerOrder.order_currency || '').toUpperCase() !== 'INR') {
@@ -1084,7 +1128,7 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
             cashfreeOrderId,
             amount,
             phone: req.body.phone,
-            email: req.body.email || req.body.guestEmail
+            email: data.guestEmail
         });
         logPaymentEvent('PAYMENT_INITIATED', { orderId, paymentId: order.paymentId, method: 'cashfree', cashfreeOrderId, amount });
         res.json({

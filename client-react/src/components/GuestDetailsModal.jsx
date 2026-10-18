@@ -1,15 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialValues = {} }) {
   const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    phone: '',
-    classroom: '',
-    batch: '',
-    classSection: ''
+    fullName: initialValues.fullName || '',
+    email: initialValues.email || '',
+    phone: initialValues.phone || '',
+    classroom: initialValues.classroom || '',
+    batch: initialValues.batch || '',
+    classSection: initialValues.classSection || ''
   });
   const [error, setError] = useState('');
+
+  // Keep the latest onClose without re-running the open/close effects.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // While open: keep the background page from scrolling, close on Escape,
+  // and restore normal scrolling on close.
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e) {
+      if (e.key === 'Escape') onCloseRef.current();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -35,8 +57,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
       return;
     }
 
-    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
-    if (!email || !emailRegex.test(email)) {
+    if (!email || !EMAIL_REGEX.test(email)) {
       setError('Enter a valid email address for order notifications and recovery.');
       return;
     }
@@ -72,13 +93,16 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
       }
     }
 
-    onSubmit({ ...formData, email });
+    onSubmit({ ...formData, email, fullName: name, phone, classroom, batch, classSection });
   };
 
   return (
-    <div className="modal-overlay active">
+    <div
+      className="modal-overlay active"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div className="modal-content">
-        <button className="close-btn" onClick={onClose}>✕</button>
+        <button className="close-btn" type="button" onClick={onClose} aria-label="Close">✕</button>
 
         <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
@@ -99,6 +123,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
               placeholder="Enter your full name"
               value={formData.fullName}
               onChange={handleChange}
+              autoComplete="name"
               required
             />
           </div>
@@ -112,6 +137,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
               placeholder="e.g. name@university.edu"
               value={formData.email}
               onChange={handleChange}
+              autoComplete="email"
               required
             />
           </div>
@@ -125,6 +151,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
               placeholder="Enter your phone number"
               value={formData.phone}
               onChange={handleChange}
+              autoComplete="tel"
               required
             />
           </div>
@@ -168,7 +195,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
             <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px', display: 'block' }}>Optional</span>
           </div>
 
-          {error && <div className="auth-error">{error}</div>}
+          {error && <div className="auth-error" role="alert">{error}</div>}
 
           <button type="submit" className="btn btn-primary submit-btn">
             Continue
