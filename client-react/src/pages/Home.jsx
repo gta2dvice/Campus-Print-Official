@@ -785,6 +785,7 @@ export default function Home() {
         onSubmit={async (details) => {
           const guest = {
             fullName: details.fullName,
+            email: details.email,
             phone: details.phone,
             classroom: details.classroom,
           };

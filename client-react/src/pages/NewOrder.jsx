@@ -12,7 +12,9 @@ import {
   MAX_FILE_BYTES,
   MAX_ORDER_FILES,
   clearCompletedOrder,
+  buildFileSettingsPayload,
   flushSaveCurrentOrder,
+  hasCompleteFileSettings,
   loadCurrentOrder,
   removeCurrentOrder,
   saveCurrentOrder,
@@ -456,7 +458,11 @@ export default function NewOrder() {
   }
 
   function updateFileCopies(key, delta) {
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, copies: Math.max(1, f.copies + delta) } : f)));
+    setFiles((prev) => prev.map((f) => (
+      f.key === key
+        ? { ...f, copies: Math.max(1, (Number.isSafeInteger(f.copies) ? f.copies : 0) + delta) }
+        : f
+    )));
   }
 
   function clearAllFiles() {
@@ -525,7 +531,7 @@ export default function NewOrder() {
 
   const p = calcPrice();
   const hasFiles = files.length > 0;
-  const filesMissingSettings = files.some(f => !f.printingSide || !f.colorMode);
+  const filesMissingSettings = files.some(f => !hasCompleteFileSettings(f));
 
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
@@ -669,17 +675,12 @@ export default function NewOrder() {
 
     // Guest Details
     formData.append('fullName', guestDetails?.fullName || '');
+    formData.append('email', guestDetails?.email || currentUser?.email || '');
     formData.append('phone', guestDetails?.phone || '');
     formData.append('classroom', guestDetails?.classroom || '');
 
     // Per-file settings for backend verification and storage
-    const fileSettings = files.map(f => ({
-      key: f.key,
-      pages: f.pages,
-      copies: f.copies,
-      printingSide: f.printingSide,
-      colorMode: f.colorMode || 'bw'
-    }));
+    const fileSettings = buildFileSettingsPayload(files);
     formData.append('fileSettings', JSON.stringify(fileSettings));
 
     files.forEach((f) => formData.append('files', f.file));
@@ -861,6 +862,10 @@ export default function NewOrder() {
   }
 
   async function handlePay() {
+    if (recoveryOrderId) {
+      showToast('A payment attempt is already saved. Check its status before starting another order.', 'error');
+      return;
+    }
     if (!selectedLocationId || !selectedTimeSlot) {
       showToast('Please select a collection location and time slot.', 'error');
       return;
@@ -916,6 +921,18 @@ export default function NewOrder() {
 
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok) {
+        if (createData.cashfreeOrderId) {
+          try {
+            localStorage.setItem('cp_pending_payment', JSON.stringify({
+              cashfreeOrderId: createData.cashfreeOrderId,
+              createdAt: Date.now()
+            }));
+          } catch {
+            // The current page still retains the order ID for reconciliation.
+          }
+          setRecoveryOrderId(createData.cashfreeOrderId);
+          setPaymentMessage('Your order intent was saved, but checkout setup did not finish. Check payment status before trying again.');
+        }
         const code = createData.code ? ` (${createData.code})` : '';
         showToast(`${createData.message || 'Could not start payment session.'}${code}`, 'error');
         setPaying(false);
@@ -1179,7 +1196,7 @@ export default function NewOrder() {
                                 <div className="counter" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                   <span style={{ fontSize: '0.85rem', color: '#666' }}>Copies:</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, -1)}>−</button>
-                                  <span className="counter-value" style={{ minWidth: '1.5rem', textAlign: 'center' }}>{f.copies || 1}</span>
+                                  <span className="counter-value" style={{ minWidth: '1.5rem', textAlign: 'center' }}>{f.copies ?? 'Set'}</span>
                                   <button className="counter-btn" onClick={() => updateFileCopies(f.key, 1)}>+</button>
                                 </div>
                                 <div className="file-item-options">
@@ -1552,6 +1569,10 @@ export default function NewOrder() {
                   <div className="cp-review-line">
                     <span>Delivery Option</span>
                     <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Email</span>
+                    <strong>{guestDetails?.email || currentUser?.email || '—'}</strong>
                   </div>
                   <div className="cp-review-line">
                     <span>Phone</span>

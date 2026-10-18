@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
   const [formData, setFormData] = useState({
     fullName: '',
+    email: '',
     phone: '',
     classroom: '',
     batch: '',
@@ -24,6 +24,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
     setError('');
 
     const name = formData.fullName.trim();
+    const email = formData.email.trim().toLowerCase();
     const phone = formData.phone.trim();
     const classroom = formData.classroom.trim();
     const batch = formData.batch.trim();
@@ -31,6 +32,12 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
 
     if (!name || name.length < 2) {
       setError('Please enter your full name.');
+      return;
+    }
+
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+    if (!email || !emailRegex.test(email)) {
+      setError('Enter a valid email address for order notifications and recovery.');
       return;
     }
 
@@ -65,7 +72,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
       }
     }
 
-    onSubmit(formData);
+    onSubmit({ ...formData, email });
   };
 
   return (
@@ -91,6 +98,19 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit }) {
               name="fullName"
               placeholder="Enter your full name"
               value={formData.fullName}
+              onChange={handleChange}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="email">Email Address *</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              placeholder="e.g. name@university.edu"
+              value={formData.email}
               onChange={handleChange}
               required
             />

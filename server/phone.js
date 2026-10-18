@@ -14,7 +14,7 @@ function normalizePhone(raw) {
 function maskPhone(raw) {
     const digits = String(raw || '').replace(/\D/g, '');
     const p = digits.length >= 10 ? digits.slice(-10) : digits;
-    if (p.length < 4) return '****';
+    if (p.length !== 10) return '****';
     return `${p.slice(0, 2)}****${p.slice(-2)}`;
 }
 

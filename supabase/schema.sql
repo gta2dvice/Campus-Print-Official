@@ -219,32 +219,37 @@ CREATE INDEX IF NOT EXISTS idx_student_profiles_user_id ON student_profiles (use
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES student_profiles(id) ON DELETE SET NULL;
 
--- ── Guest orders & phone-based order recovery ───────────────────────────────
+-- ── Guest orders & order recovery ───────────────────────────────────────────
 -- Guest checkout stores the customer directly on the order (no user account).
 -- These columns are written by server/models/Order.js; declared here so a fresh
 -- `npm run init-db` produces a schema that matches the running application.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_full_name VARCHAR(255) NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_email     VARCHAR(255) NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone     VARCHAR(20)  NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_classroom VARCHAR(100) NULL;
 
 -- Guest orders have no user_id. The primary key stays orders.id (unchanged);
--- phone is only an indexed lookup field — one phone can own many orders.
+-- email is an indexed lookup field — one email can own many orders.
 ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_guest_phone ON orders (guest_phone);
+CREATE INDEX IF NOT EXISTS idx_orders_guest_email ON orders (LOWER(guest_email)) WHERE guest_email IS NOT NULL;
 
 -- Short-lived OTPs for guest order recovery. The OTP itself is never stored in
 -- plaintext (HMAC hash only). Rows are disposable and periodically cleaned up.
 CREATE TABLE IF NOT EXISTS order_recovery_otps (
     id          SERIAL PRIMARY KEY,
-    phone       VARCHAR(20)  NOT NULL,
+    email       VARCHAR(255) NULL,
+    phone       VARCHAR(20)  NULL,
     otp_hash    VARCHAR(255) NOT NULL,
     attempts    INTEGER      NOT NULL DEFAULT 0,
     expires_at  TIMESTAMPTZ  NOT NULL,
     consumed_at TIMESTAMPTZ  NULL,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_email ON order_recovery_otps (LOWER(email)) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_phone ON order_recovery_otps (phone);
 CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_expires_at ON order_recovery_otps (expires_at);
+CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_created_at ON order_recovery_otps (created_at);
 
 -- Fixed-window rate-limit counters. DB-backed so limits hold on serverless
 -- (Vercel), where per-process in-memory counters would not persist.

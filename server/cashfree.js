@@ -22,7 +22,12 @@ function sanitizeDiagnostic(value) {
     for (const secret of [process.env.CASHFREE_APP_ID, process.env.CASHFREE_SECRET_KEY].filter(Boolean)) {
         message = message.split(secret).join('[redacted]');
     }
-    return message.replace(/cfsk_[a-zA-Z0-9_-]+/g, '[redacted]');
+    return message
+        .replace(/cfsk_[a-zA-Z0-9_-]+/g, '[redacted]')
+        .replace(/(\b(?:app.?id|secret(?:.?key)?|passphrase|passkey|payment.?session.?id|access.?token)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
+        .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1[redacted]')
+        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted]')
+        .replace(/\b[6-9][0-9]{9}\b/g, '[redacted]');
 }
 
 function getErrorDetails(error) {
