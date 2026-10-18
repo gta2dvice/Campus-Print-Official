@@ -72,7 +72,13 @@ async function retryPendingTickets(limit = 50) {
     let issued = 0;
     for (const row of rows) {
         const result = await tryEnsureTicket(row.id);
-        if (result.ticketStatus === 'READY') issued += 1;
+        if (result.ticketStatus === 'READY') {
+            issued += 1;
+            try {
+                const { sendTicketEmail } = require('./ticketEmailService');
+                await sendTicketEmail(row.id, { source: 'ticket_recovery_sweep' });
+            } catch {}
+        }
     }
     return { pending: rows.length, issued };
 }

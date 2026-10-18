@@ -261,3 +261,26 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 
 ALTER TABLE order_recovery_otps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
+
+-- ── Automatic Ticket Email Delivery (Outbox) ─────────────────────────────────
+-- Idempotent email delivery tracking for verified paid orders.
+CREATE TABLE IF NOT EXISTS order_ticket_emails (
+    id                  SERIAL PRIMARY KEY,
+    order_id            INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    recipient_email     VARCHAR(255) NOT NULL,
+    status              VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+                        CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED')),
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    provider            VARCHAR(50) NULL,
+    provider_message_id VARCHAR(100) NULL,
+    last_error          TEXT NULL,
+    sent_at             TIMESTAMPTZ NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ticket_emails_order_id ON order_ticket_emails (order_id);
+CREATE INDEX IF NOT EXISTS idx_order_ticket_emails_status ON order_ticket_emails (status);
+CREATE INDEX IF NOT EXISTS idx_order_ticket_emails_recipient_email ON order_ticket_emails (LOWER(recipient_email));
+
+ALTER TABLE order_ticket_emails ENABLE ROW LEVEL SECURITY;

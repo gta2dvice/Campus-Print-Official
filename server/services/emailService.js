@@ -57,9 +57,10 @@ function sanitizeErrorDiagnostic(err) {
  * @param {string} options.subject - Email subject
  * @param {string} options.html - HTML body
  * @param {string} [options.text] - Plain text fallback
+ * @param {Array<{ filename: string, content: Buffer | string, contentType?: string }>} [options.attachments] - Optional file attachments
  * @returns {Promise<{ delivered: boolean, messageId?: string, provider: string }>}
  */
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, attachments }) {
     const config = getResendConfig();
 
     if (!config) {
@@ -81,13 +82,17 @@ async function sendEmail({ to, subject, html, text }) {
 
     let result;
     try {
-        result = await resend.emails.send({
+        const payload = {
             from: config.fromEmail,
             to,
             subject,
             html,
             text: text || html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-        });
+        };
+        if (Array.isArray(attachments) && attachments.length > 0) {
+            payload.attachments = attachments;
+        }
+        result = await resend.emails.send(payload);
     } catch (networkError) {
         console.error('[EMAIL_DELIVERY_NETWORK_ERROR]', {
             maskedTo: maskEmail(to),

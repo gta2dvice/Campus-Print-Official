@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('./db');
 const { PAYMENT_FINALIZATION_STATEMENTS } = require('./migrate_payment_finalization');
 const { ORDER_CHARGES_STATEMENTS } = require('./migrate_order_charges');
+const { TICKET_EMAIL_STATEMENTS } = require('./migrate_ticket_emails');
 
 function splitSql(sql) {
     return sql
@@ -71,6 +72,11 @@ async function initDb() {
 
     // ── Itemised order charges: printing vs Campus Print extras (idempotent) ──
     for (const statement of ORDER_CHARGES_STATEMENTS) {
+        await pool.query(statement);
+    }
+
+    // ── Ticket email delivery (outbox) ───────────────────────────
+    for (const statement of TICKET_EMAIL_STATEMENTS) {
         await pool.query(statement);
     }
 

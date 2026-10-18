@@ -73,6 +73,8 @@ export default function Ticket() {
   const [ticketError, setTicketError] = useState('');
   const [recheckKey, setRecheckKey] = useState(0);
   const [checking, setChecking] = useState(false);
+  const [retryingEmail, setRetryingEmail] = useState(false);
+  const [retryFeedback, setRetryFeedback] = useState('');
 
   useEffect(() => {
     if (!ticketToken && !orderId) {
@@ -123,6 +125,31 @@ export default function Ticket() {
   const deliveryContact = order ? getDeliveryContact(order.collection_location_id, order.collection_location) : null;
   const header = order ? stateHeader(order) : null;
 
+  async function handleRetryEmail() {
+    setRetryingEmail(true);
+    setRetryFeedback('');
+    try {
+      const endpoint = ticketToken
+        ? `/api/orders/ticket/${encodeURIComponent(ticketToken)}/retry-email`
+        : `/api/orders/${encodeURIComponent(orderId)}/retry-email`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setOrder(prev => ({ ...prev, emailDelivery: data.emailDelivery }));
+        setRetryFeedback('Email sent successfully!');
+      } else {
+        setRetryFeedback(data.message || 'Email delivery failed. Please retry later.');
+      }
+    } catch {
+      setRetryFeedback('Could not connect to server to retry email.');
+    } finally {
+      setRetryingEmail(false);
+    }
+  }
+
   return (
     <>
       <PageBackground />
@@ -160,8 +187,59 @@ export default function Ticket() {
               <h1 className="success-heading">
                 Payment <span className="highlight-cyan">Successful!</span>
               </h1>
-              <p className="success-subtitle">Your collection ticket is ready.</p>
-              <p className="success-note">Keep this ticket handy when collecting your prints.</p>
+              {order.emailDelivery?.status === 'SENT' ? (
+                <>
+                  <p className="success-subtitle">
+                    Your ticket has been generated. A copy has been sent to your registered email address
+                    {order.emailDelivery.recipientMasked ? ` (${order.emailDelivery.recipientMasked})` : ''}.
+                  </p>
+                  <p className="success-note">
+                    You can also retrieve it anytime from Orders. Keep this ticket handy when collecting your prints.
+                  </p>
+                </>
+              ) : order.emailDelivery?.status === 'FAILED' ? (
+                <>
+                  <p className="success-subtitle" style={{ color: '#f87171' }}>
+                    Your order was created and your ticket is available below. However, email delivery could not be completed at this time and needs retrying.
+                  </p>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="ticket-btn ticket-btn-outline"
+                      style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                      disabled={retryingEmail}
+                      onClick={handleRetryEmail}
+                    >
+                      {retryingEmail ? 'Retrying Email...' : 'Retry Email Delivery'}
+                    </button>
+                    {retryFeedback && (
+                      <span style={{ fontSize: '0.85rem', color: retryFeedback.includes('successfully') ? '#4ade80' : '#f87171' }}>
+                        {retryFeedback}
+                      </span>
+                    )}
+                  </div>
+                  <p className="success-note" style={{ marginTop: '0.75rem' }}>
+                    You can retrieve your ticket anytime from Orders.
+                  </p>
+                </>
+              ) : order.emailDelivery?.status === 'SENDING' || order.emailDelivery?.status === 'PENDING' ? (
+                <>
+                  <p className="success-subtitle">
+                    Your ticket has been generated. We are sending a copy to your registered email address
+                    {order.emailDelivery?.recipientMasked ? ` (${order.emailDelivery.recipientMasked})` : ''}.
+                  </p>
+                  <p className="success-note">
+                    You can also retrieve it anytime from Orders. Keep this ticket handy when collecting your prints.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="success-subtitle">Your collection ticket is ready.</p>
+                  <p className="success-note">
+                    You can also retrieve it anytime from Orders. Keep this ticket handy when collecting your prints.
+                  </p>
+                </>
+              )}
             </section>
           ) : (
             <section className="ticket-success-header">

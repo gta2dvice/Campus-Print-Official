@@ -21,6 +21,7 @@ const RecoveryOtp = require('../models/RecoveryOtp');
 const otpService = require('../services/otp');
 const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { tryEnsureTicket } = require('../services/ticketService');
+const { sendTicketEmail, getTicketEmailStatus, retryTicketEmail } = require('../services/ticketEmailService');
 const { logPaymentEvent } = require('../services/paymentLog');
 const { normalizePhone, maskPhone } = require('../phone');
 const { normalizeEmail, maskEmail, emailRateLimitKey } = require('../email');
@@ -202,6 +203,9 @@ async function buildTicketView(order) {
     if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
+        if (order?.ticket_status === 'READY') {
+            try { await sendTicketEmail(order.id, { source: 'ticket_view' }); } catch {}
+        }
     }
     // Prefer the successful attempt; otherwise the latest one.
     const [[payment]] = await pool.query(
@@ -212,6 +216,7 @@ async function buildTicketView(order) {
     const view = { ...order };
     delete view.ticket_access_token_hash;
     const state = orderState(order, payment);
+    const emailDelivery = await getTicketEmailStatus(order.id).catch(() => null);
     return {
         ...view,
         // Never ship the full phone number to the client; the ticket shows a mask.
@@ -223,6 +228,7 @@ async function buildTicketView(order) {
             amount: Number(payment.amount),
             transaction_ref: payment.status === 'success' ? payment.transaction_ref : null
         } : null,
+        emailDelivery,
         ...state
     };
 }
@@ -794,6 +800,30 @@ router.get('/ticket/:token', ticketLimiter, async (req, res) => {
     }
 });
 
+// POST /api/orders/ticket/:token/retry-email — controlled email retry via valid ticket token.
+router.post('/ticket/:token/retry-email', ticketLimiter, async (req, res) => {
+    try {
+        const token = req.params.token;
+        const order = await Order.getOrderByTicketTokenHash(hashTicketToken(token));
+        if (!order || !isValidTicketToken(token, order.ticket_access_token_hash)) {
+            return res.status(404).json({ message: 'Ticket not found.', code: 'TICKET_NOT_FOUND' });
+        }
+        if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
+            return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
+        }
+        const result = await retryTicketEmail(order.id);
+        const emailStatus = await getTicketEmailStatus(order.id);
+        return res.json({
+            success: result.status === 'SENT',
+            emailDelivery: emailStatus,
+            message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
+        });
+    } catch (err) {
+        console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
+    }
+});
+
 // GET /api/orders/:id — single order ticket. Requires a recovery session (matching
 // guest_phone), this order's ticket token, or account ownership. A bare id is never enough.
 router.get('/:id', ticketLimiter, async (req, res) => {
@@ -811,6 +841,29 @@ router.get('/:id', ticketLimiter, async (req, res) => {
         const safeError = safeOrderError(err);
         console.error('[TICKET_LOAD_FAILED]', { orderId: req.params.id, code: safeError.code, message: safeError.message });
         res.status(500).json({ message: 'Unable to load this ticket right now. Please retry.', code: 'TICKET_LOAD_FAILED' });
+    }
+});
+
+// POST /api/orders/:id/retry-email — retry sending ticket email for authenticated order.
+router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderRecord(req.params.id);
+        if (!order || !isAuthorizedForOrder(req, order)) {
+            return res.status(404).json({ message: 'Order not found.', code: 'ORDER_NOT_FOUND' });
+        }
+        if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
+            return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
+        }
+        const result = await retryTicketEmail(order.id);
+        const emailStatus = await getTicketEmailStatus(order.id);
+        return res.json({
+            success: result.status === 'SENT',
+            emailDelivery: emailStatus,
+            message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
+        });
+    } catch (err) {
+        console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
     }
 });
 
@@ -839,17 +892,23 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             }
         } else if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
             await tryEnsureTicket(order.id);
+            const updated = await Order.getOrderRecord(order.id);
+            if (updated?.ticket_status === 'READY') {
+                try { await sendTicketEmail(order.id, { source: 'payment_status_poll' }); } catch {}
+            }
         }
         order = await Order.getOrderRecord(order.id);
 
         const payment = await Payment.findByOrderId(order.id);
         const state = orderState(order, payment, { processing });
+        const emailDelivery = await getTicketEmailStatus(order.id).catch(() => null);
         return res.json({
             orderId: order.id,
             orderReference: `#${order.id}`,
             ticketId: state.ticketStatus === 'READY' ? order.ticket_number : null,
             paymentMethod: order.payment_method,
             paymentReference: payment?.payment_reference || null,
+            emailDelivery,
             ...state
         });
     } catch (err) {
@@ -1018,12 +1077,14 @@ async function cashfreeTicketToken(orderId) {
 }
 
 async function paidResult(orderId, ticket) {
+    const emailDelivery = ticket.emailDelivery || (await getTicketEmailStatus(orderId).catch(() => null));
     return {
         status: 'PAID',
         id: orderId,
         ticketNumber: ticket.ticketNumber,
         ticketStatus: ticket.ticketStatus,
-        ticketToken: await cashfreeTicketToken(orderId)
+        ticketToken: await cashfreeTicketToken(orderId),
+        emailDelivery
     };
 }
 
