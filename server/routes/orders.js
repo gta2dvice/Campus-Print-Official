@@ -305,12 +305,12 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             if (type.key !== 'pdf') {
                 throw rangeError('A page range is only supported for PDF files.', 'PAGE_RANGE_UNSUPPORTED');
             }
-            const match = /^(\d+)\s*-\s*(\d+)$/.exec(rawRange);
+            const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(rawRange);
             if (!match) {
-                throw rangeError('Use a page range like 33-55 (numbers only, e.g. 10-20).');
+                throw rangeError('Use a page range like 1-5 or single page like 5.');
             }
             const start = parseInt(match[1], 10);
-            const end = parseInt(match[2], 10);
+            const end = match[2] !== undefined ? parseInt(match[2], 10) : start;
             if (start < 1) throw rangeError('Pages start at 1 — the page range cannot start at 0.');
             if (start > end) throw rangeError('The start page must be less than or equal to the end page.');
             if (end > pages) throw rangeError(`The page range must be within 1-${pages} pages for this file.`);

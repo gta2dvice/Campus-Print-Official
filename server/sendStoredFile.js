@@ -20,10 +20,10 @@ function isMissingObjectError(error) {
  * applied — callers then send the original bytes unchanged.
  */
 async function slicePdfPages(buffer, range) {
-    const match = /^(\d+)\s*-\s*(\d+)$/.exec(String(range || '').trim());
+    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(String(range || '').trim());
     if (!match) return null;
     const start = parseInt(match[1], 10);
-    const end = parseInt(match[2], 10);
+    const end = match[2] !== undefined ? parseInt(match[2], 10) : start;
     if (start < 1 || end < start) return null;
 
     const source = await PDFDocument.load(buffer, { ignoreEncryption: true });

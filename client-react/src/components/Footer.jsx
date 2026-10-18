@@ -50,9 +50,8 @@ export default function Footer() {
                     </div>
                     <div className="footer-col">
                         <h4>Connect</h4>
-                        <a href="https://instagram.com" target="_blank" rel="noreferrer">Instagram</a>
-                        <a href="https://linkedin.com" target="_blank" rel="noreferrer">LinkedIn</a>
-                        <a href="mailto:ayjn15@gmail.com">Email Us</a>
+                        <a href="https://www.instagram.com/srm_campusprint?utm_source=ig_web_button_share_sheet&obrf=ZDNlZDc0MzIxNw==" target="_blank" rel="noreferrer">Instagram</a>
+                        <a href="https://mail.google.com/mail/?view=cm&fs=1&to=orders%40campusprint.shop" target="_blank" rel="noreferrer">Email Us</a>
                     </div>
                 </div>
             </div>

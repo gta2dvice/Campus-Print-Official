@@ -72,6 +72,7 @@ export default function Home() {
   const [printingSide, setPrintingSide] = useState('single');
   const [classroomDelivery, setClassroomDelivery] = useState(false); // Verified state
   const [config, setConfig] = useState(null);
+  const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
 
   const [bump, setBump] = useState(false);
   // Unresolved (pending/unknown) payment left over from a previous visit. Kept in
@@ -292,6 +293,33 @@ export default function Home() {
   }
 
   const { basePrice, a3Extra, total } = calcPrice();
+
+  function getFileCost(f) {
+    const pages = printablePages(f);
+    const copies = f?.copies || 1;
+    if (pages === 0) return 0;
+    if (f?.colorMode === 'color') return pages * copies * 5;
+    if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+    return pages * copies * 2;
+  }
+
+  function getFileCostFormula(f) {
+    const pages = printablePages(f);
+    const copies = f?.copies || 1;
+    if (pages === 0) return '0 pages';
+    if (f?.colorMode === 'color') {
+      return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹5/pg`;
+    }
+    if (f?.printingSide === 'double') {
+      const sheets = Math.ceil(pages / 2);
+      return `${pages} pgs (${sheets} sheet${sheets > 1 ? 's' : ''}) × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹3/sheet`;
+    }
+    return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹2/pg`;
+  }
+
+  const isDetectingPages = files.some((f) => f.pages === null);
+  const hasRangeErrors = files.some((f) => hasInvalidPageRange(f));
+  const canOrder = files.length > 0 && !isDetectingPages && !hasRangeErrors;
 
   useEffect(() => {
     async function loadConfig() {
@@ -538,7 +566,7 @@ export default function Home() {
                     <span className="detail-icon">📞</span>
                     <div>
                       <strong>Contact</strong>
-                      <p>+91 8076756723<br />ayjn15@gmail.com</p>
+                      <p>+91 8076756723<br />orders@campusprint.shop</p>
                     </div>
                   </div>
                 </div>
