@@ -9,7 +9,7 @@ const PRICING = {
     double: 3,              // ₹ per sheet (2 pages), B&W double-sided
     color: 5,               // ₹ per page, colour (either side)
     serviceCharge: 3,       // Campus Print service charge, every order
-    hostelSurcharge: 4,     // Campus Print delivery charge to Hostel Gate
+    hostelSurcharge: 3,     // Campus Print delivery charge to Hostel Gate
     classroomDelivery: 10   // Campus Print classroom delivery (Academic Block)
 };
 
