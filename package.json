@@ -12,7 +12,7 @@
     "migrate-mysql": "node scripts/migrate-mysql-to-supabase.js",
     "cleanup-pdfs": "node -e \"require('./server/loadEnv'); require('./server/jobs/cleanupExpiredPdfs').cleanupExpiredPdfs().then(r => { console.log(r); process.exit(0); }).catch(e => { console.error(e); process.exit(1); })\"",
     "postinstall": "npm --prefix client-react install",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -32,7 +32,8 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "resend": "^6.34.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

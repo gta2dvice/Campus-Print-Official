@@ -21,11 +21,14 @@ const RecoveryOtp = require('../models/RecoveryOtp');
 const otpService = require('../services/otp');
 const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { tryEnsureTicket } = require('../services/ticketService');
+const { sendTicketEmail, getTicketEmailStatus, retryTicketEmail } = require('../services/ticketEmailService');
 const { logPaymentEvent } = require('../services/paymentLog');
 const { normalizePhone, maskPhone } = require('../phone');
-const { rateLimit } = require('../middleware/rateLimit');
+const { normalizeEmail, maskEmail, emailRateLimitKey } = require('../email');
+const { rateLimit, phoneRateLimitKey } = require('../middleware/rateLimit');
 const {
     establishRecoverySession,
+    clearRecoverySession,
     requireRecoverySession,
     isAuthorizedForOrder
 } = require('../middleware/recoveryAuth');
@@ -39,8 +42,25 @@ const DEFAULT_SHOP_ID = 1;
 
 // ── Rate limiters for recovery / ticket / document endpoints ────────────────
 const WINDOW_15_MIN = 15 * 60 * 1000;
-const lookupLimiter = rateLimit({ prefix: 'rec-lookup', windowMs: WINDOW_15_MIN, max: 5, key: (req) => normalizePhone(req.body?.phone) || '' });
-const verifyLimiter = rateLimit({ prefix: 'rec-verify', windowMs: WINDOW_15_MIN, max: 10, key: (req) => normalizePhone(req.body?.phone) || '' });
+const WINDOW_1_HOUR = 60 * 60 * 1000;
+const lookupLimiter = rateLimit({
+    prefix: 'rec-lookup',
+    windowMs: WINDOW_15_MIN,
+    max: 5,
+    key: req => emailRateLimitKey(normalizeEmail(req.body?.email) || '')
+});
+const lookupHourlyLimiter = rateLimit({
+    prefix: 'rec-lookup-hr',
+    windowMs: WINDOW_1_HOUR,
+    max: 10,
+    key: req => emailRateLimitKey(normalizeEmail(req.body?.email) || '')
+});
+const verifyLimiter = rateLimit({
+    prefix: 'rec-verify',
+    windowMs: WINDOW_15_MIN,
+    max: 10,
+    key: req => emailRateLimitKey(normalizeEmail(req.body?.email) || '')
+});
 const historyLimiter = rateLimit({ prefix: 'rec-history', windowMs: WINDOW_15_MIN, max: 60 });
 const ticketLimiter = rateLimit({ prefix: 'rec-ticket', windowMs: WINDOW_15_MIN, max: 120 });
 const documentLimiter = rateLimit({ prefix: 'rec-doc', windowMs: WINDOW_15_MIN, max: 120 });
@@ -105,6 +125,12 @@ function safeOrderError(error) {
     };
 }
 
+function safeRecoveryErrorCode(error) {
+    return String(error?.code || 'RECOVERY_REQUEST_FAILED')
+        .replace(/[^A-Za-z0-9_-]/g, '')
+        .slice(0, 64) || 'RECOVERY_REQUEST_FAILED';
+}
+
 // ── Order / payment / ticket state (the one view every client screen reads) ──
 
 /**
@@ -147,7 +173,7 @@ function toRecoveryOrderSummary(order) {
         orderId: order.id,
         orderReference: `#${order.id}`,
         ticketId: ticketStatus === 'READY' ? order.ticket_number : null,
-        paymentMethod: order.payment_method || null,
+        paymentMethod: order.payment_method || order.latest_payment_method || null,
         paymentStatus,
         ticketStatus,
         state,
@@ -177,6 +203,9 @@ async function buildTicketView(order) {
     if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
+        if (order?.ticket_status === 'READY') {
+            try { await sendTicketEmail(order.id, { source: 'ticket_view' }); } catch {}
+        }
     }
     // Prefer the successful attempt; otherwise the latest one.
     const [[payment]] = await pool.query(
@@ -187,6 +216,7 @@ async function buildTicketView(order) {
     const view = { ...order };
     delete view.ticket_access_token_hash;
     const state = orderState(order, payment);
+    const emailDelivery = await getTicketEmailStatus(order.id).catch(() => null);
     return {
         ...view,
         // Never ship the full phone number to the client; the ticket shows a mask.
@@ -198,6 +228,7 @@ async function buildTicketView(order) {
             amount: Number(payment.amount),
             transaction_ref: payment.status === 'success' ? payment.transaction_ref : null
         } : null,
+        emailDelivery,
         ...state
     };
 }
@@ -274,12 +305,12 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             if (type.key !== 'pdf') {
                 throw rangeError('A page range is only supported for PDF files.', 'PAGE_RANGE_UNSUPPORTED');
             }
-            const match = /^(\d+)\s*-\s*(\d+)$/.exec(rawRange);
+            const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(rawRange);
             if (!match) {
-                throw rangeError('Use a page range like 33-55 (numbers only, e.g. 10-20).');
+                throw rangeError('Use a page range like 1-5 or single page like 5.');
             }
             const start = parseInt(match[1], 10);
-            const end = parseInt(match[2], 10);
+            const end = match[2] !== undefined ? parseInt(match[2], 10) : start;
             if (start < 1) throw rangeError('Pages start at 1 — the page range cannot start at 0.');
             if (start > end) throw rangeError('The start page must be less than or equal to the end page.');
             if (end > pages) throw rangeError(`The page range must be within 1-${pages} pages for this file.`);
@@ -337,18 +368,22 @@ async function validateAndPriceSubmission(req, res) {
         res.status(400).json({ message: 'Please configure printing settings for all files.' });
         return null;
     }
-    const { fullName, phone, classroom, batch, classSection, email } = req.body;
+    const { fullName, phone, email, guestEmail, classroom, batch, classSection } = req.body;
     if (!fullName || !phone || !classroom || !classroom.trim()) {
         res.status(400).json({ message: 'Full Name, Phone, and Classroom/Room Number are required.' });
         return null;
     }
-    const trimmedEmail = String(email || '').trim();
-    if (!trimmedEmail) {
+    const rawEmail = String(email || guestEmail || '').trim();
+    const normalizedEmail = normalizeEmail(rawEmail);
+    if (!rawEmail) {
         res.status(400).json({ message: 'Email address is required.', code: 'EMAIL_REQUIRED' });
         return null;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-        res.status(400).json({ message: 'Enter a valid email address.', code: 'EMAIL_INVALID' });
+    if (!normalizedEmail) {
+        res.status(400).json({
+            message: 'Enter a valid email address for order notifications and recovery.',
+            code: 'EMAIL_INVALID'
+        });
         return null;
     }
     if (!/^[6-9][0-9]{9}$/.test(phone)) {
@@ -393,6 +428,7 @@ async function validateAndPriceSubmission(req, res) {
     data.totalPrice = amount;
     data.fileCount = resolved.length;
     data.guestFullName = fullName;
+    data.guestEmail = normalizedEmail || null;
     data.guestPhone = phone;
     data.guestClassroom = classroom;
     return { data, resolved, amount };
@@ -584,81 +620,166 @@ router.get('/payment-options/qr', async (req, res) => {
     }
 });
 
-// ── Guest order recovery (phone → OTP → recovery session) ───────────────────
-// Declared before GET '/:id' so '/lookup', '/verify-recovery' and '/history' are
-// never swallowed by the ':id' route.
+// ── Guest order recovery (email → OTP → recovery session) ───────────────────
+// Declared before GET '/:id' so '/lookup', '/verify-recovery', '/history' and
+// '/logout-recovery' are never swallowed by the ':id' route.
 
-// POST /api/orders/lookup — start recovery: validate phone, issue an OTP.
-// Always responds generically; it never reveals whether orders exist for a phone.
-router.post('/lookup', lookupLimiter, async (req, res) => {
+// POST /api/orders/lookup — start recovery: validate email, issue an OTP via Resend.
+// Always responds generically; it never reveals whether orders exist for an email.
+router.post('/lookup', lookupHourlyLimiter, lookupLimiter, async (req, res) => {
+    const rawEmail = req.body?.email;
+    const email = normalizeEmail(rawEmail);
+    if (!email) {
+        return res.status(400).json({ message: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
+    }
+
+    const cooldown = await RecoveryOtp.checkCooldown(email);
+    if (cooldown.inCooldown) {
+        return res.status(429).json({
+            message: `Please wait ${cooldown.remainingSeconds}s before requesting a new code.`,
+            code: 'RESEND_COOLDOWN',
+            retryAfter: cooldown.remainingSeconds
+        });
+    }
+
+    let record;
     try {
-        const phone = normalizePhone(req.body?.phone);
-        if (!phone) {
-            return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.', code: 'INVALID_PHONE' });
+        record = await RecoveryOtp.createOtp(email);
+    } catch (error) {
+        console.error('[RECOVERY_LOOKUP_FAILED]', {
+            stage: 'otp_persistence',
+            code: safeRecoveryErrorCode(error)
+        });
+        return res.status(500).json({
+            message: 'We could not start order verification. Please try again.',
+            code: 'RECOVERY_STORAGE_FAILED'
+        });
+    }
+
+    try {
+        const delivery = await otpService.sendOtp(email, record.otp);
+        if (!delivery?.delivered) {
+            const error = new Error('The email service did not confirm delivery.');
+            error.code = 'OTP_PROVIDER_UNCONFIRMED';
+            error.status = 503;
+            throw error;
+        }
+        console.info('[RECOVERY_OTP_DELIVERY_SUCCEEDED]', {
+            provider: delivery.provider || 'development'
+        });
+        try {
+            await RecoveryOtp.cleanupExpired();
+        } catch (cleanupError) {
+            console.warn('[RECOVERY_OTP_CLEANUP_FAILED]', {
+                stage: 'expired_code_cleanup',
+                code: safeRecoveryErrorCode(cleanupError)
+            });
+        }
+        return res.json({
+            message: 'If this address is eligible, you will receive a verification code.',
+            emailMasked: maskEmail(email),
+            cooldownSeconds: 60,
+            ...(delivery.devOtp ? {
+                devOtp: delivery.devOtp,
+                devNote: 'Development-only code for local testing.'
+            } : {})
+        });
+    } catch (error) {
+        try {
+            await RecoveryOtp.invalidateOtp(record.id);
+        } catch (invalidateError) {
+            console.error('[RECOVERY_OTP_INVALIDATION_FAILED]', {
+                stage: 'failed_delivery_cleanup',
+                code: safeRecoveryErrorCode(invalidateError)
+            });
         }
 
-        const otp = await RecoveryOtp.createOtp(phone);
-        const { devOtp } = await otpService.sendOtp(phone, otp);
-        RecoveryOtp.cleanupExpired().catch(() => {});
-
-        const response = {
-            message: 'If this number has placed orders, a verification code has been sent.',
-            phoneMasked: maskPhone(phone),
-            // The OTP is echoed back ONLY outside production (no SMS provider wired yet).
-            otpDeliveryConfigured: !otpService.isProduction()
-        };
-        if (devOtp) {
-            response.devOtp = devOtp;
-            response.devNote = 'Development mode: OTP shown for testing only. Never returned in production.';
-        }
-        return res.json(response);
-    } catch (err) {
-        console.error('[RECOVERY_LOOKUP_FAILED]', err.message);
-        return res.status(500).json({ message: 'Unable to start recovery right now. Please retry.' });
+        const status = [429, 502, 503].includes(error.status) ? error.status : 503;
+        const code = safeRecoveryErrorCode(error);
+        console.warn('[RECOVERY_OTP_DELIVERY_FAILED]', {
+            stage: 'email_delivery',
+            code,
+            status
+        });
+        return res.status(status).json({
+            message: error.message || 'We could not send a verification code. Please try again later.',
+            code
+        });
     }
 });
 
 // POST /api/orders/verify-recovery — verify OTP, open a short-lived recovery session.
 router.post('/verify-recovery', verifyLimiter, async (req, res) => {
     try {
-        const phone = normalizePhone(req.body?.phone);
+        const email = normalizeEmail(req.body?.email);
         const otp = String(req.body?.otp || '').trim();
-        if (!phone) {
-            return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.', code: 'INVALID_PHONE' });
+        if (!email) {
+            return res.status(400).json({ message: 'Enter a valid email address.', code: 'INVALID_EMAIL' });
         }
         if (!/^[0-9]{6}$/.test(otp)) {
             return res.status(400).json({ message: 'Enter the 6-digit verification code.', code: 'INVALID_OTP' });
         }
 
-        const result = await RecoveryOtp.verifyOtp(phone, otp);
+        const result = await RecoveryOtp.verifyOtp(email, otp);
         if (!result.ok) {
-            const msg = result.reason === 'locked'
-                ? 'Too many incorrect attempts. Request a new code.'
-                : 'That code is invalid or has expired. Please try again.';
-            return res.status(400).json({ message: msg, code: 'OTP_VERIFICATION_FAILED' });
+            if (result.reason === 'locked') {
+                return res.status(429).json({
+                    message: 'Too many incorrect attempts. Request a new code.',
+                    code: 'OTP_ATTEMPTS_EXCEEDED'
+                });
+            }
+            if (result.reason === 'expired') {
+                return res.status(400).json({
+                    message: 'Your code has expired. Request a new code.',
+                    code: 'OTP_EXPIRED'
+                });
+            }
+            return res.status(400).json({
+                message: 'That code is invalid. Please try again.',
+                code: 'OTP_VERIFICATION_FAILED',
+                attemptsLeft: result.attemptsLeft
+            });
         }
 
-        establishRecoverySession(req, phone);
-        return res.json({ verified: true, phoneMasked: maskPhone(phone) });
-    } catch (err) {
-        console.error('[RECOVERY_VERIFY_FAILED]', err.message);
-        return res.status(500).json({ message: 'Unable to verify right now. Please retry.' });
+        establishRecoverySession(req, email);
+        return res.json({ verified: true, emailMasked: maskEmail(email) });
+    } catch (error) {
+        console.error('[RECOVERY_VERIFY_FAILED]', {
+            stage: 'otp_verification',
+            code: safeRecoveryErrorCode(error)
+        });
+        return res.status(500).json({
+            message: 'We could not verify that code right now. Please try again.',
+            code: 'RECOVERY_VERIFY_FAILED'
+        });
     }
 });
 
 // GET /api/orders/history — every order (Cashfree, UPI QR, …) for the verified
-// recovery session's phone, from the database.
+// recovery session's email, from the database.
 router.get('/history', historyLimiter, requireRecoverySession, async (req, res) => {
     try {
-        const orders = await Order.getGuestOrdersByPhone(req.recoveryPhone);
+        const orders = await Order.getOrdersByVerifiedEmail(req.recoveryEmail);
         return res.json({
-            phoneMasked: maskPhone(req.recoveryPhone),
+            emailMasked: maskEmail(req.recoveryEmail),
             orders: orders.map(toRecoveryOrderSummary)
         });
-    } catch (err) {
-        console.error('[RECOVERY_HISTORY_FAILED]', err.message);
-        return res.status(500).json({ message: 'Unable to load your orders right now. Please retry.' });
+    } catch (error) {
+        console.error('[RECOVERY_HISTORY_FAILED]', {
+            stage: 'order_history_query',
+            code: safeRecoveryErrorCode(error)
+        });
+        return res.status(500).json({
+            message: 'We could not load your orders right now. Please try again.',
+            code: 'RECOVERY_HISTORY_FAILED'
+        });
     }
+});
+
+// POST /api/orders/logout-recovery — end the recovery session.
+router.post('/logout-recovery', (req, res) => {
+    clearRecoverySession(req);
+    return res.json({ success: true, message: 'Recovery session ended.' });
 });
 
 // GET /api/orders/ticket/:token — ticket link (bearer token; only its hash is stored).
@@ -681,6 +802,30 @@ router.get('/ticket/:token', ticketLimiter, async (req, res) => {
     }
 });
 
+// POST /api/orders/ticket/:token/retry-email — controlled email retry via valid ticket token.
+router.post('/ticket/:token/retry-email', ticketLimiter, async (req, res) => {
+    try {
+        const token = req.params.token;
+        const order = await Order.getOrderByTicketTokenHash(hashTicketToken(token));
+        if (!order || !isValidTicketToken(token, order.ticket_access_token_hash)) {
+            return res.status(404).json({ message: 'Ticket not found.', code: 'TICKET_NOT_FOUND' });
+        }
+        if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
+            return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
+        }
+        const result = await retryTicketEmail(order.id);
+        const emailStatus = await getTicketEmailStatus(order.id);
+        return res.json({
+            success: result.status === 'SENT',
+            emailDelivery: emailStatus,
+            message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
+        });
+    } catch (err) {
+        console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
+    }
+});
+
 // GET /api/orders/:id — single order ticket. Requires a recovery session (matching
 // guest_phone), this order's ticket token, or account ownership. A bare id is never enough.
 router.get('/:id', ticketLimiter, async (req, res) => {
@@ -698,6 +843,29 @@ router.get('/:id', ticketLimiter, async (req, res) => {
         const safeError = safeOrderError(err);
         console.error('[TICKET_LOAD_FAILED]', { orderId: req.params.id, code: safeError.code, message: safeError.message });
         res.status(500).json({ message: 'Unable to load this ticket right now. Please retry.', code: 'TICKET_LOAD_FAILED' });
+    }
+});
+
+// POST /api/orders/:id/retry-email — retry sending ticket email for authenticated order.
+router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
+    try {
+        const order = await Order.getOrderRecord(req.params.id);
+        if (!order || !isAuthorizedForOrder(req, order)) {
+            return res.status(404).json({ message: 'Order not found.', code: 'ORDER_NOT_FOUND' });
+        }
+        if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
+            return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
+        }
+        const result = await retryTicketEmail(order.id);
+        const emailStatus = await getTicketEmailStatus(order.id);
+        return res.json({
+            success: result.status === 'SENT',
+            emailDelivery: emailStatus,
+            message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
+        });
+    } catch (err) {
+        console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
+        return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
     }
 });
 
@@ -726,17 +894,23 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             }
         } else if (order.payment_status === 'PAID' && order.ticket_status !== 'READY') {
             await tryEnsureTicket(order.id);
+            const updated = await Order.getOrderRecord(order.id);
+            if (updated?.ticket_status === 'READY') {
+                try { await sendTicketEmail(order.id, { source: 'payment_status_poll' }); } catch {}
+            }
         }
         order = await Order.getOrderRecord(order.id);
 
         const payment = await Payment.findByOrderId(order.id);
         const state = orderState(order, payment, { processing });
+        const emailDelivery = await getTicketEmailStatus(order.id).catch(() => null);
         return res.json({
             orderId: order.id,
             orderReference: `#${order.id}`,
             ticketId: state.ticketStatus === 'READY' ? order.ticket_number : null,
             paymentMethod: order.payment_method,
             paymentReference: payment?.payment_reference || null,
+            emailDelivery,
             ...state
         });
     } catch (err) {
@@ -867,17 +1041,18 @@ function cashfreeUrls(req) {
 }
 
 /** Opens a Cashfree checkout for one attempt and checks the response matches it. */
-async function openCashfreeCheckout(req, { cashfreeOrderId, amount, phone }) {
+async function openCashfreeCheckout(req, { cashfreeOrderId, amount, phone, email }) {
     const userId = req.session?.userId || null;
     const User = require('../models/User');
     const user = userId ? await User.findById(userId) : null;
     const { returnUrl, notifyUrl } = cashfreeUrls(req);
 
+    const customerEmail = user?.email || normalizeEmail(email) || `${phone}@guest.campusprint.com`;
     const session = await cashfree.createPaymentSession({
         orderId: cashfreeOrderId,
         amount,
         customerId: `cust_${userId || 'guest'}_${Date.now()}`,
-        customerEmail: user?.email || `${phone}@guest.campusprint.com`,
+        customerEmail,
         customerPhone: phone,
         returnUrl,
         notifyUrl
@@ -904,12 +1079,14 @@ async function cashfreeTicketToken(orderId) {
 }
 
 async function paidResult(orderId, ticket) {
+    const emailDelivery = ticket.emailDelivery || (await getTicketEmailStatus(orderId).catch(() => null));
     return {
         status: 'PAID',
         id: orderId,
         ticketNumber: ticket.ticketNumber,
         ticketStatus: ticket.ticketStatus,
-        ticketToken: await cashfreeTicketToken(orderId)
+        ticketToken: await cashfreeTicketToken(orderId),
+        emailDelivery
     };
 }
 
@@ -1010,7 +1187,12 @@ router.post('/payment/create', upload.array('files', 10), async (req, res) => {
         orderId = order.id;
 
         stage = 'cashfree_order_create';
-        const session = await openCashfreeCheckout(req, { cashfreeOrderId, amount, phone: req.body.phone });
+        const session = await openCashfreeCheckout(req, {
+            cashfreeOrderId,
+            amount,
+            phone: req.body.phone,
+            email: data.guestEmail
+        });
         logPaymentEvent('PAYMENT_INITIATED', { orderId, paymentId: order.paymentId, method: 'cashfree', cashfreeOrderId, amount });
         res.json({
             orderId,
@@ -1079,7 +1261,12 @@ router.post('/payment/cashfree/retry', pollLimiter, async (req, res) => {
             return res.status(409).json({ message: 'This order already has a payment in progress or is paid. Check its status from the Orders page.' });
         }
         try {
-            const session = await openCashfreeCheckout(req, { cashfreeOrderId, amount: attempt.amount, phone: intent.guest_phone });
+            const session = await openCashfreeCheckout(req, {
+                cashfreeOrderId,
+                amount: attempt.amount,
+                phone: intent.guest_phone,
+                email: intent.guest_email
+            });
             logPaymentEvent('PAYMENT_INITIATED', { orderId: attempt.id, paymentId: attempt.paymentId, method: 'cashfree', cashfreeOrderId, retry: true });
             return res.json({
                 status: 'PAYMENT_PENDING',

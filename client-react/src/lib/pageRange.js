@@ -6,11 +6,11 @@
  * document" — the pre-existing behavior.
  */
 
-/** A range input may only appear for PDFs with more than 2 pages. */
+/** A range input may only appear for PDFs with 2 or more pages. */
 export function showPageRangeInput(file) {
   if (!file) return false;
   const isPdf = file.file?.type === 'application/pdf' || /\.pdf$/i.test(file.file?.name || '');
-  return isPdf && Number.isFinite(file.pages) && file.pages > 2;
+  return isPdf && Number.isFinite(file.pages) && file.pages >= 2;
 }
 
 /**
@@ -22,13 +22,13 @@ export function parsePageRange(raw, totalPages) {
   const value = String(raw || '').trim();
   if (!value) return { ok: false, empty: true, message: '' };
 
-  const match = /^(\d+)\s*-\s*(\d+)$/.exec(value);
+  const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(value);
   if (!match) {
-    return { ok: false, message: 'Use a page range like 33-55 (numbers only, e.g. 10-20).' };
+    return { ok: false, message: 'Use a page range like 1-5 or single page like 5.' };
   }
 
   const start = parseInt(match[1], 10);
-  const end = parseInt(match[2], 10);
+  const end = match[2] !== undefined ? parseInt(match[2], 10) : start;
   const total = Number(totalPages);
 
   if (start < 1) {

@@ -35,6 +35,30 @@ export const EMPTY_ORDER_META = {
   selectedTimeSlot: null,
 };
 
+export function normalizeFileSettings(entry = {}) {
+  const validInteger = (value) => Number.isSafeInteger(value) && value >= 1;
+  return {
+    ...(entry.key !== undefined ? { key: entry.key } : {}),
+    pages: validInteger(entry.pages) ? entry.pages : null,
+    estimated: !!entry.estimated,
+    copies: validInteger(entry.copies) ? entry.copies : null,
+    printingSide: ['single', 'double'].includes(entry.printingSide) ? entry.printingSide : null,
+    colorMode: ['bw', 'color'].includes(entry.colorMode) ? entry.colorMode : null,
+  };
+}
+
+export function hasCompleteFileSettings(entry) {
+  const settings = normalizeFileSettings(entry);
+  return settings.pages !== null &&
+    settings.copies !== null &&
+    settings.printingSide !== null &&
+    settings.colorMode !== null;
+}
+
+export function buildFileSettingsPayload(files) {
+  return Array.isArray(files) ? files.map(normalizeFileSettings) : [];
+}
+
 function isQuotaError(err) {
   if (!err) return false;
   if (err instanceof OrderStorageError) return err.quota;
@@ -149,11 +173,7 @@ function fileEntriesFromInput(files) {
         name,
         type,
         size,
-        pages: entry.pages == null ? null : Number(entry.pages),
-        estimated: !!entry.estimated,
-        copies: Math.max(1, parseInt(entry.copies, 10) || 1),
-        printingSide: entry.printingSide === 'double' ? 'double' : 'single',
-        colorMode: entry.colorMode === 'color' ? 'color' : 'bw',
+        ...normalizeFileSettings(entry),
         pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
         blob: file,
       };
@@ -247,13 +267,9 @@ export async function loadCurrentOrder() {
       if (!row?.blob) continue;
       const file = blobToFile(row.blob, info.name || row.name, info.type || row.type);
       files.push({
+        ...normalizeFileSettings({ ...info, key: info.key ?? info.id }),
         key: info.key ?? info.id,
         file,
-        pages: info.pages == null ? null : info.pages,
-        estimated: !!info.estimated,
-        copies: Math.max(1, parseInt(info.copies, 10) || 1),
-        printingSide: info.printingSide || 'single',
-        colorMode: info.colorMode || 'bw',
         pageRange: typeof info.pageRange === 'string' ? info.pageRange : '',
       });
     }
@@ -267,7 +283,9 @@ export async function loadCurrentOrder() {
           file: blobToFile(row.blob, row.name, row.type),
           pages: null,
           estimated: false,
-          copies: 1,
+          copies: null,
+          printingSide: null,
+          colorMode: null,
           pageRange: '',
         });
       }

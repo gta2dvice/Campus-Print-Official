@@ -13,6 +13,7 @@
 const pool = require('../db');
 const { logPaymentEvent } = require('./paymentLog');
 const { tryEnsureTicket } = require('./ticketService');
+const { sendTicketEmail } = require('./ticketEmailService');
 
 const AMOUNT_TOLERANCE = 0.05;
 
@@ -113,13 +114,22 @@ async function processSuccessfulPayment(orderId, details) {
     }
 
     const ticket = await tryEnsureTicket(orderId);
+    let emailDelivery = null;
+    if (ticket.ticketStatus === 'READY') {
+        try {
+            emailDelivery = await sendTicketEmail(orderId, { source });
+        } catch (emailErr) {
+            console.error('[TICKET_EMAIL_DISPATCH_FAILED]', { orderId, error: emailErr.message });
+        }
+    }
     return {
         orderId,
         paymentId,
         alreadyFinalized: settled.alreadyFinalized,
         duplicateCapture: Boolean(settled.duplicateCapture),
         ticketStatus: ticket.ticketStatus,
-        ticketNumber: ticket.ticketNumber
+        ticketNumber: ticket.ticketNumber,
+        emailDelivery
     };
 }
 

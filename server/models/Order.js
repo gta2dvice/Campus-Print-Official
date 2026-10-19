@@ -40,7 +40,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
     const {
         paperSize, copies, spiralBinding, expressDelivery, totalPrice, fileCount,
         collectionLocationId, collectionLocationName, collectionTime, collectionDate, totalPages,
-        guestFullName, guestPhone, guestClassroom
+        guestFullName, guestEmail, guestPhone, guestClassroom
     } = data;
     // Itemised charge split, saved once at creation so the order keeps its own
     // historical amounts even if rates change later (server/pricing.js).
@@ -84,6 +84,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 guestClassroom || null,
                 orderPaymentMethod,
                 ticketTokenHash,
+                guestEmail ? String(guestEmail).trim().toLowerCase() : null,
                 charges.printingAmount ?? null,
                 charges.serviceCharge ?? null,
                 charges.deliveryCharge ?? null,
@@ -161,7 +162,7 @@ async function getPaymentIntentByGatewayOrderId(gatewayOrderId) {
         `SELECT p.id AS payment_id, p.order_id, p.amount AS payment_amount, p.currency AS payment_currency,
                 p.status AS payment_status, p.transaction_ref, p.gateway_order_id,
                 o.total_price, o.payment_status AS order_payment_status, o.ticket_status,
-                o.ticket_number, o.ticket_access_token_hash, o.user_id, o.guest_full_name, o.guest_phone
+                o.ticket_number, o.ticket_access_token_hash, o.user_id, o.guest_full_name, o.guest_email, o.guest_phone
          FROM payments p
          JOIN orders o ON o.id = p.order_id
          WHERE p.gateway_order_id = ? LIMIT 1`,
@@ -297,6 +298,60 @@ async function getGuestOrdersByPhone(phone) {
          ORDER BY o.created_at DESC
          LIMIT 50`,
         [phone]
+    );
+    return rows;
+}
+
+async function getOrdersByVerifiedPhone(phone) {
+    const [rows] = await pool.execute(
+        `SELECT o.*,
+                pay.status AS latest_payment_status,
+                pay.method AS latest_payment_method,
+                pay.qr_expires_at AS latest_qr_expires_at,
+                pay.gateway_order_id AS latest_gateway_order_id
+         FROM orders o
+         LEFT JOIN student_profiles sp ON sp.id = o.student_id
+         LEFT JOIN LATERAL (
+             SELECT status, method, qr_expires_at, gateway_order_id
+             FROM payments
+             WHERE order_id = o.id
+             ORDER BY id DESC
+             LIMIT 1
+         ) pay ON true
+         WHERE RIGHT(REGEXP_REPLACE(COALESCE(o.guest_phone, ''), '[^0-9]', '', 'g'), 10) = ?
+            OR RIGHT(REGEXP_REPLACE(COALESCE(sp.phone_number, ''), '[^0-9]', '', 'g'), 10) = ?
+         ORDER BY o.created_at DESC
+         LIMIT 50`,
+        [phone, phone]
+    );
+    return rows;
+}
+
+// Guest & user order recovery by verified email: newest first, each with its latest payment attempt.
+async function getOrdersByVerifiedEmail(email) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return [];
+    const [rows] = await pool.execute(
+        `SELECT o.*,
+                pay.status AS latest_payment_status,
+                pay.method AS latest_payment_method,
+                pay.qr_expires_at AS latest_qr_expires_at,
+                pay.gateway_order_id AS latest_gateway_order_id,
+                COALESCE(o.guest_email, u.email) AS customer_email
+         FROM orders o
+         LEFT JOIN users u ON u.id = o.user_id
+         LEFT JOIN LATERAL (
+             SELECT status, method, qr_expires_at, gateway_order_id
+             FROM payments
+             WHERE order_id = o.id
+             ORDER BY id DESC
+             LIMIT 1
+         ) pay ON true
+         WHERE LOWER(COALESCE(o.guest_email, '')) = ?
+            OR LOWER(COALESCE(u.email, '')) = ?
+         ORDER BY o.created_at DESC
+         LIMIT 50`,
+        [normalized, normalized]
     );
     return rows;
 }
@@ -688,6 +743,8 @@ module.exports = {
     getOrderForUser,
     getOrdersByUser,
     getGuestOrdersByPhone,
+    getOrdersByVerifiedPhone,
+    getOrdersByVerifiedEmail,
     getOrderStats,
     VALID_STATUSES,
     ALLOWED_TRANSITIONS,

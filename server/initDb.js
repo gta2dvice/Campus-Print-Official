@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('./db');
 const { PAYMENT_FINALIZATION_STATEMENTS } = require('./migrate_payment_finalization');
 const { ORDER_CHARGES_STATEMENTS } = require('./migrate_order_charges');
+const { TICKET_EMAIL_STATEMENTS } = require('./migrate_ticket_emails');
 
 function splitSql(sql) {
     return sql
@@ -74,23 +75,35 @@ async function initDb() {
         await pool.query(statement);
     }
 
-    // ── Guest orders & phone-based order recovery (idempotent) ──────────────
+    // ── Ticket email delivery (outbox) ───────────────────────────
+    for (const statement of TICKET_EMAIL_STATEMENTS) {
+        await pool.query(statement);
+    }
+
+    // ── Guest orders & order recovery (idempotent) ──────────────
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_full_name VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_email VARCHAR(255) NULL`);
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone VARCHAR(20) NULL`);
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_classroom VARCHAR(100) NULL`);
     await pool.query(`ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_guest_phone ON orders (guest_phone)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_guest_email ON orders (LOWER(guest_email)) WHERE guest_email IS NOT NULL`);
     await pool.query(`CREATE TABLE IF NOT EXISTS order_recovery_otps (
         id          SERIAL PRIMARY KEY,
-        phone       VARCHAR(20)  NOT NULL,
+        email       VARCHAR(255) NULL,
+        phone       VARCHAR(20)  NULL,
         otp_hash    VARCHAR(255) NOT NULL,
         attempts    INTEGER      NOT NULL DEFAULT 0,
         expires_at  TIMESTAMPTZ  NOT NULL,
         consumed_at TIMESTAMPTZ  NULL,
         created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
     )`);
+    await pool.query(`ALTER TABLE order_recovery_otps ADD COLUMN IF NOT EXISTS email VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE order_recovery_otps ALTER COLUMN phone DROP NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_email ON order_recovery_otps (LOWER(email)) WHERE email IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_phone ON order_recovery_otps (phone)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_expires_at ON order_recovery_otps (expires_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_recovery_otps_created_at ON order_recovery_otps (created_at)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS rate_limits (
         bucket       VARCHAR(255) PRIMARY KEY,
         count        INTEGER      NOT NULL DEFAULT 0,

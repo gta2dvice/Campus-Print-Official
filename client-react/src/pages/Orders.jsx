@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
 import UpiQrPayment from '../components/UpiQrPayment';
@@ -7,8 +7,8 @@ import LogoLink from '../components/LogoLink';
 import useDocumentTitle from '../lib/useDocumentTitle';
 import '../styles/style.css';
 
-// Guest order recovery: phone → OTP → recovery session → order history.
-// A phone number alone never exposes orders; the OTP step gates everything.
+// Guest & user order recovery: email → OTP → recovery session → order history.
+// An email address alone never exposes orders; the OTP step gates everything.
 // Every order (Cashfree or UPI QR) comes from the same database-backed history.
 
 const METHOD_LABELS = {
@@ -30,7 +30,16 @@ const STATE_PILLS = {
   REFUNDED: { label: 'Refunded', tone: 'neutral' },
 };
 
-const STEP = { PHONE: 'phone', OTP: 'otp', LIST: 'list' };
+const FULFILLMENT_PILLS = {
+  PENDING: { label: 'Received', tone: 'pending' },
+  ACCEPTED: { label: 'In Queue', tone: 'ready' },
+  PRINTING: { label: 'Printing', tone: 'ready' },
+  READY: { label: 'Ready for Pickup', tone: 'paid' },
+  COMPLETED: { label: 'Completed', tone: 'paid' },
+  REJECTED: { label: 'Cancelled', tone: 'failed' },
+};
+
+const STEP = { EMAIL: 'email', OTP: 'otp', LIST: 'list' };
 
 const CARD = {
   width: '100%',
@@ -64,11 +73,13 @@ export default function Orders() {
   useDocumentTitle('Your Orders – Campus Prints');
   const navigate = useNavigate();
 
-  const [step, setStep] = useState(STEP.PHONE);
-  const [phone, setPhone] = useState('');
+  const [step, setStep] = useState(STEP.EMAIL);
+  const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [phoneMasked, setPhoneMasked] = useState('');
+  const [emailMasked, setEmailMasked] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [devOtp, setDevOtp] = useState('');
@@ -76,14 +87,30 @@ export default function Orders() {
   const [docsByOrder, setDocsByOrder] = useState({}); // orderId -> { loading, documents, error }
   const [upiQrData, setUpiQrData] = useState(null); // fresh QR for an unpaid UPI order
 
+  const cooldownTimerRef = useRef(null);
+
+  // Countdown timer for OTP resend cooldown
+  useEffect(() => {
+    if (cooldown > 0) {
+      cooldownTimerRef.current = setTimeout(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    };
+  }, [cooldown]);
+
   function resetMessages() { setError(''); setNotice(''); }
 
-  async function submitPhone(e) {
-    e.preventDefault();
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+  async function submitEmail(e) {
+    if (e && e.preventDefault) e.preventDefault();
     resetMessages();
-    const digits = phone.replace(/\D/g, '').slice(-10);
-    if (!/^[6-9][0-9]{9}$/.test(digits)) {
-      setError('Enter a valid 10-digit mobile number.');
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      setError('Enter a valid email address.');
       return;
     }
     setLoading(true);
@@ -91,14 +118,21 @@ export default function Orders() {
       const res = await fetch('/api/orders/lookup', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: digits }),
+        body: JSON.stringify({ email: cleanEmail }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.message || 'Could not send a code. Please try again.'); return; }
-      setPhone(digits);
-      setPhoneMasked(data.phoneMasked || '');
+      if (!res.ok) {
+        if (res.status === 429 && data.retryAfter) {
+          setCooldown(data.retryAfter);
+        }
+        setError(data.message || 'Could not send a code. Please try again.');
+        return;
+      }
+      setEmail(cleanEmail);
+      setEmailMasked(data.emailMasked || cleanEmail);
       setDevOtp(data.devOtp || '');
-      setNotice(data.message || 'Verification code sent.');
+      setCooldown(data.cooldownSeconds || 60);
+      setNotice(data.message || 'If the address is eligible, you will receive a verification code.');
       setStep(STEP.OTP);
     } catch {
       setError('Connection error. Please try again.');
@@ -107,10 +141,39 @@ export default function Orders() {
     }
   }
 
+  async function handleResendCode() {
+    if (cooldown > 0 || resendLoading) return;
+    resetMessages();
+    setResendLoading(true);
+    try {
+      const res = await fetch('/api/orders/lookup', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 429 && data.retryAfter) {
+          setCooldown(data.retryAfter);
+        }
+        setError(data.message || 'Could not resend the code. Please try again.');
+        return;
+      }
+      setCooldown(data.cooldownSeconds || 60);
+      setDevOtp(data.devOtp || '');
+      setNotice('A new verification code has been sent. Check your inbox and spam folder.');
+    } catch {
+      setError('Connection error. Please try again.');
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
   async function submitOtp(e) {
     e.preventDefault();
     resetMessages();
-    if (!/^[0-9]{6}$/.test(otp.trim())) {
+    const cleanOtp = otp.trim();
+    if (!/^[0-9]{6}$/.test(cleanOtp)) {
       setError('Enter the 6-digit verification code.');
       return;
     }
@@ -119,10 +182,18 @@ export default function Orders() {
       const res = await fetch('/api/orders/verify-recovery', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, otp: otp.trim() }),
+        body: JSON.stringify({ email, otp: cleanOtp }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.message || 'Verification failed. Please try again.'); return; }
+      if (!res.ok) {
+        if (data.code === 'OTP_EXPIRED') {
+          setError('Your code has expired. Request a new code.');
+        } else {
+          setError(data.message || 'Verification failed. Please try again.');
+        }
+        return;
+      }
+      setNotice('Your orders are ready to view.');
       await loadHistory();
       setStep(STEP.LIST);
     } catch {
@@ -137,15 +208,28 @@ export default function Orders() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       if (res.status === 401) {
-        setError('Your recovery session expired. Please verify your phone number again.');
-        setStep(STEP.PHONE);
+        setError('Your recovery session expired. Please verify your email address again.');
+        setStep(STEP.EMAIL);
         return;
       }
       setError(data.message || 'Could not load your orders.');
       return;
     }
-    setPhoneMasked(data.phoneMasked || phoneMasked);
+    setEmailMasked(data.emailMasked || emailMasked);
     setOrders(Array.isArray(data.orders) ? data.orders : []);
+  }
+
+  async function handleLogoutRecovery() {
+    try {
+      await fetch('/api/orders/logout-recovery', { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore network errors on logout
+    }
+    resetMessages();
+    setOrders([]);
+    setOtp('');
+    setEmail('');
+    setStep(STEP.EMAIL);
   }
 
   // The recovery session authorizes these orders; no ticket token needed.
@@ -184,7 +268,11 @@ export default function Orders() {
       setOrders((prev) => prev.map((o) => o.orderId === order.orderId
         ? { ...o, paymentStatus: data.paymentStatus, ticketStatus: data.ticketStatus, state: data.state, ticketId: data.ticketId }
         : o));
-      setNotice(`Order ${order.orderReference}: ${(STATE_PILLS[data.state]?.label || data.state).toLowerCase()}.`);
+      if (data.state === 'PAYMENT_PROCESSING') {
+        setNotice('Your payment is still being verified. Please check again shortly.');
+      } else {
+        setNotice(`Order ${order.orderReference}: ${(STATE_PILLS[data.state]?.label || data.state).toLowerCase()}.`);
+      }
     } catch {
       setError('Connection error. Please try again.');
     }
@@ -218,7 +306,7 @@ export default function Orders() {
 
         <div style={{ textAlign: 'center', maxWidth: '560px' }}>
           <h1 style={{ fontSize: '2rem', margin: '0 0 0.35rem', color: 'var(--text-primary, #111)' }}>Orders</h1>
-          <p style={{ color: '#666', margin: 0 }}>Find your previous Campus Print orders with your phone number.</p>
+          <p style={{ color: '#666', margin: 0 }}>Find your previous Campus Print orders with your email address.</p>
         </div>
 
         {notice && <div style={{ ...CARD, padding: '0.85rem 1.25rem', maxWidth: '560px', background: '#eff6ff', borderColor: '#bfdbfe', color: '#1e40af' }}>{notice}</div>}
@@ -229,18 +317,24 @@ export default function Orders() {
         )}
         {error && <div style={{ ...CARD, padding: '0.85rem 1.25rem', maxWidth: '560px', background: '#fef2f2', borderColor: '#fecaca', color: '#991b1b' }}>{error}</div>}
 
-        {/* Step 1: phone */}
-        {step === STEP.PHONE && (
-          <form style={CARD} onSubmit={submitPhone}>
+        {/* Step 1: Email */}
+        {step === STEP.EMAIL && (
+          <form style={CARD} onSubmit={submitEmail}>
             <h2 style={{ marginTop: 0, fontSize: '1.2rem' }}>Find Your Orders</h2>
-            <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.4rem' }}>Enter your registered phone number</label>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.4rem' }}>
+              Enter the email associated with your order.
+            </label>
             <input
-              type="tel" inputMode="numeric" autoComplete="tel" value={phone}
-              onChange={(e) => setPhone(e.target.value)} placeholder="10-digit mobile number"
+              type="email" inputMode="email" autoComplete="email" value={email}
+              onChange={(e) => setEmail(e.target.value)} placeholder="student@university.edu"
               style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '0.6rem', border: '1px solid #ddd', fontSize: '1rem', boxSizing: 'border-box' }}
+              required
             />
+            <p style={{ fontSize: '0.8rem', color: '#777', marginTop: '0.5rem', marginBottom: 0 }}>
+              If the address is eligible, you will receive a verification code.
+            </p>
             <button className="btn btn-primary" type="submit" disabled={loading} style={{ marginTop: '1rem', width: '100%' }}>
-              {loading ? 'Sending…' : 'Find Orders'}
+              {loading ? 'Sending OTP…' : 'Send OTP'}
             </button>
           </form>
         )}
@@ -249,37 +343,72 @@ export default function Orders() {
         {step === STEP.OTP && (
           <form style={CARD} onSubmit={submitOtp}>
             <h2 style={{ marginTop: 0, fontSize: '1.2rem' }}>Verify It's You</h2>
-            <p style={{ fontSize: '0.9rem', color: '#666', marginTop: 0 }}>
-              Enter the 6-digit code sent for {phoneMasked || 'your number'}.
+            <p style={{ fontSize: '0.9rem', color: '#666', marginTop: 0, marginBottom: '0.5rem' }}>
+              Enter the 6-digit code sent to <strong>{emailMasked || 'your email address'}</strong>.
+            </p>
+            <p style={{ fontSize: '0.8rem', color: '#888', marginTop: 0, marginBottom: '1rem' }}>
+              Check your inbox and spam folder. The code expires in 5 minutes.
             </p>
             <input
               type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} placeholder="6-digit code"
               style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '0.6rem', border: '1px solid #ddd', fontSize: '1.1rem', letterSpacing: '0.3em', textAlign: 'center', boxSizing: 'border-box' }}
+              required
             />
             <button className="btn btn-primary" type="submit" disabled={loading} style={{ marginTop: '1rem', width: '100%' }}>
-              {loading ? 'Verifying…' : 'Verify & View Orders'}
+              {loading ? 'Verifying…' : 'Verify OTP'}
             </button>
-            <button type="button" className="btn btn-secondary" style={{ marginTop: '0.6rem', width: '100%' }}
-              onClick={() => { resetMessages(); setOtp(''); setStep(STEP.PHONE); }}>
-              Use a different number
-            </button>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={cooldown > 0 || resendLoading}
+                onClick={handleResendCode}
+                style={{ flex: 1, fontSize: '0.88rem' }}
+              >
+                {resendLoading ? 'Sending…' : cooldown > 0 ? `Resend code (${cooldown}s)` : 'Resend Code'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ flex: 1, fontSize: '0.88rem' }}
+                onClick={() => { resetMessages(); setOtp(''); setStep(STEP.EMAIL); }}
+              >
+                Change email
+              </button>
+            </div>
           </form>
         )}
 
-        {/* Step 3: order list */}
+        {/* Step 3: Order list */}
         {step === STEP.LIST && (
           <div style={{ width: '100%', maxWidth: '560px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, fontSize: '1.3rem', color: 'var(--text-primary, #111)' }}>Your Orders</h2>
-              <span style={{ fontSize: '0.85rem', color: '#666' }}>{phoneMasked}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '0.85rem', color: '#666' }}>{emailMasked}</span>
+                <button
+                  type="button"
+                  onClick={handleLogoutRecovery}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, color: '#dc2626',
+                    cursor: 'pointer', fontSize: '0.82rem', textDecoration: 'underline'
+                  }}
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
 
             {orders.length === 0 && (
               <div style={CARD}>
                 <h3 style={{ marginTop: 0 }}>No orders found</h3>
-                <p style={{ color: '#666', marginBottom: 0 }}>
-                  Make sure you entered the same phone number used when placing your order.
+                <p style={{ color: '#666', lineHeight: 1.5, marginBottom: '0.75rem' }}>
+                  No orders were found associated with this email address. Make sure you entered the same email used when placing your order.
+                </p>
+                <p style={{ color: '#888', fontSize: '0.82rem', margin: 0 }}>
+                  Orders placed before email verification can be retrieved directly through your ticket link or by contacting Campus Print support with your payment receipt.
                 </p>
               </div>
             )}
@@ -293,22 +422,28 @@ export default function Orders() {
               const canResumePayment = Boolean(o.cashfreeOrderId) && o.state === 'PAYMENT_PENDING';
               const canPayAgain = Boolean(o.cashfreeOrderId) && o.state === 'PAYMENT_FAILED';
               const canShowQr = o.paymentMethod === 'UPI_QR' && ['PAYMENT_PENDING', 'EXPIRED'].includes(o.state);
-              const pill = STATE_PILLS[o.state] || { label: o.state, tone: 'neutral' };
+              const payPill = STATE_PILLS[o.state] || { label: o.state, tone: 'neutral' };
+              const fulfillPill = FULFILLMENT_PILLS[o.orderStatus] || { label: o.orderStatus, tone: 'neutral' };
+
               return (
                 <div key={o.orderId} style={CARD}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.75rem' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', letterSpacing: '0.02em' }}>{o.ticketId || `Order ${o.orderReference}`}</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', letterSpacing: '0.02em' }}>
+                      {o.ticketId || `Order ${o.orderReference}`}
+                    </h3>
                     <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>₹{o.amount}</span>
                   </div>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                    <StatusPill label={pill.label} tone={pill.tone} />
+                    <StatusPill label={payPill.label} tone={payPill.tone} />
+                    <StatusPill label={`Print: ${fulfillPill.label}`} tone={fulfillPill.tone} />
                     {o.paymentMethod && <StatusPill label={METHOD_LABELS[o.paymentMethod] || o.paymentMethod} tone="neutral" />}
                   </div>
 
                   <div style={{ fontSize: '0.92rem', color: '#555', lineHeight: 1.6 }}>
-                    {o.collectionLocation && <div>{o.collectionLocation}</div>}
-                    {o.collectionTime && <div>{o.collectionTime}{o.collectionDate ? ` · ${o.collectionDate}` : ''}</div>}
+                    {o.createdAt && <div>Ordered on {new Date(o.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>}
+                    {o.collectionLocation && <div>Location: {o.collectionLocation}</div>}
+                    {o.collectionTime && <div>Pickup: {o.collectionTime}{o.collectionDate ? ` · ${o.collectionDate}` : ''}</div>}
                     <div>{o.fileCount} document{o.fileCount === 1 ? '' : 's'}</div>
                   </div>
 
@@ -371,8 +506,8 @@ export default function Orders() {
             })}
 
             <button type="button" className="btn btn-secondary" style={{ alignSelf: 'center' }}
-              onClick={() => { resetMessages(); setOrders([]); setOtp(''); setPhone(''); setStep(STEP.PHONE); }}>
-              Look up a different number
+              onClick={handleLogoutRecovery}>
+              Look up a different email
             </button>
           </div>
         )}

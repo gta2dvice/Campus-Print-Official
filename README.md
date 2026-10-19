@@ -47,6 +47,8 @@ Student, shop-admin, and super-admin sessions are **separate** cookie fields on 
 4. On return, `POST /api/orders/payment/verify` performs the same trusted server-side reconciliation and returns `PAID`, `PAYMENT_PENDING`, or `PAYMENT_FAILED`. The client retries pending confirmation and navigates to `/ticket?token=…` only when the backend confirms payment.
 5. The opaque Cashfree order ID is retained locally before checkout. Reopening the site resumes verification; the guest ticket endpoint accepts a separate HMAC-derived bearer token, not a sequential order ID.
 
+Checkout sends per-file print settings as a top-level `fileSettings` array alongside the uploaded files. Every entry must include a positive page count, positive copy count, printing side, and color mode; restored drafts preserve these values and cannot be submitted if any are missing.
+
 **Simulate path** remains a separate development-only route (`POST /api/orders/payment/simulate`) when Cashfree is not configured.
 
 1. Create returns **503**.
@@ -109,9 +111,10 @@ Mapping to the product lifecycle names:
 - Extra charges (server/pricing.js is canonical): page-based service charge by total printed pages (1–10 → ₹1, 11–30 → ₹2, 31+ → ₹3); Hostel Gate delivery +₹3; classroom delivery +₹5; binding +₹26 (₹25 binding + ₹1 binding service charge, once per order).
 - Pickup: Main Gate, Red Canteen, Hostel Gate. Booking is **time first**, then location. Offered points depend on the slot (9:25 and 11:15 → Red Canteen only; 1:15 → Red Canteen + Hostel Gate; 2:05 and 4:00 → all three). Slots close **5 minutes before** the labeled time (IST). Capacity 6 per location+slot, with live booking counts plus seed occupancy.
 - Collection ticket after payment (`/ticket`).
+- My Orders recovery by phone: SMS OTP (`POST /api/orders/lookup`, `POST /api/orders/verify-recovery`) grants a short-lived session for order history (`GET /api/orders/history`).
 - `/select-location` exists as a **standalone demo-style page** with hardcoded sample documents. The live booking UI used for real orders is the modal on `/new-order`.
 
-**Not implemented yet:** student file download after upload, in-browser file preview, choosing a shop (always shop `1`), student-initiated cancel, email/SMS notifications, Google Maps embed (home only has an external Maps link).
+**Not implemented yet:** student file download after upload, in-browser file preview, choosing a shop (always shop `1`), student-initiated cancel, email notifications, SMS notifications beyond the My Orders verification code, Google Maps embed (home only has an external Maps link).
 
 ### Printer / shop (`/admin`)
 
@@ -327,6 +330,16 @@ Names taken from `.env.example` and server code. **Do not put real keys in git.*
 
 Use **test keys with `sandbox`** and **live keys with `production`**. Mixing them causes Cashfree “Authentication failed”. Payment-session failures are returned to the frontend and are not converted into simulated checkouts.
 
+### My Orders verification (server only)
+
+| Variable | Purpose |
+|---|---|
+| `MSG91_AUTH_KEY` | MSG91 server-side API key; configure as a secret in Render |
+| `MSG91_OTP_TEMPLATE_ID` | Approved MSG91 Flow template ID with the 6-digit code mapped to `VAR1` |
+| `MSG91_COUNTRY_CODE` | Country calling code prepended to the stored 10-digit Indian phone number (default `91`) |
+
+Production order recovery fails closed if the MSG91 key or template ID is missing. Development can use the returned `devOtp` only when `NODE_ENV` is not `production`; OTPs are never logged. The API stores only an HMAC of each OTP, expires codes after 10 minutes, limits verification attempts, rate-limits request and verification endpoints, and starts a 30-minute recovery session only after correct verification.
+
 ### Optional / not in `.env.example`
 
 | Variable | Purpose |
@@ -354,7 +367,42 @@ Use **test keys with `sandbox`** and **live keys with `production`**. Mixing the
    npm run init-db
    ```
 
-   `init-db` applies `supabase/schema.sql`, ensures `payments.gateway_order_id`, and optionally seeds shop-admin / super-admin users.
+   `init-db` applies `supabase/schema.sql`, ensures required payment/ticket indexes, and optionally seeds shop-admin / super-admin users. The canonical `orders.status` column is the print-shop workflow; `orders.payment_status` separately uses `PAYMENT_PENDING`, `PAID`, or `PAYMENT_FAILED`.
+
+   For an existing deployment, use this order:
+
+   1. Take a Supabase backup (or confirm point-in-time recovery is available).
+   2. Review and run [`supabase/migrations/20261009_01_payment_order_schema.sql`](./supabase/migrations/20261009_01_payment_order_schema.sql) in the SQL Editor for the correct project, before deploying the backend.
+   3. Run [`supabase/migrations/20261013_01_order_recovery.sql`](./supabase/migrations/20261013_01_order_recovery.sql) in the same project before deploying phone-verified order recovery.
+   4. Verify the relevant columns and tables without selecting customer data:
+
+      ```sql
+      SELECT column_name, data_type, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'orders'
+        AND column_name = 'payment_status';
+
+      SELECT payment_status, COUNT(*)
+      FROM public.orders
+      GROUP BY payment_status
+      ORDER BY payment_status;
+
+      SELECT o.id, o.payment_status, o.ticket_number, p.method, p.status, p.gateway_order_id
+      FROM public.orders AS o
+      LEFT JOIN public.payments AS p ON p.order_id = o.id
+      ORDER BY o.id DESC
+      LIMIT 10;
+      ```
+
+   4. Deploy the backend to Render.
+   5. Confirm the deployed commit and `GET /health` response (`status: "ok"`).
+   6. Deploy the frontend to Vercel if frontend changes are part of the release.
+   7. Place a fresh Cashfree sandbox order end-to-end.
+   8. Verify the database record: it begins `PAYMENT_PENDING`, has one `payments` row with the Cashfree gateway order ID, and becomes `PAID` with one ticket only after server verification.
+   9. Test QR payment separately and confirm its order remains visible to the shop for manual payment confirmation.
+   10. Switch to production only after sandbox checkout, webhook/verification, ticket creation, QR flow, and the production schema have been verified. Do not rotate or change Cashfree credentials unless separate evidence requires it.
+
+   The migration adds only missing payment-flow columns/indexes and does not delete or recreate records. It backfills Cashfree rows from payment state; legacy orders with an issued ticket remain visible as before, while rows with no evidence of a completed order are conservatively kept unpaid (`PAYMENT_PENDING`). A unique-index conflict aborts the transaction for manual data review rather than changing existing records. `orders.status` remains the fulfillment workflow; it is not the payment state.
 
 3. Storage → new **private** bucket named `uploaded-pdfs` (or your `SUPABASE_STORAGE_BUCKET`).
 4. Run `supabase/storage-policies.sql` so anon/authenticated roles cannot read that bucket. The Node service role bypasses those policies.
@@ -406,7 +454,7 @@ Root `package.json`:
 | `npm run init-db` | `node server/initDb.js` | Schema + optional admin seeds |
 | `npm run migrate-mysql` | `node scripts/migrate-mysql-to-supabase.js` | Copy legacy MySQL rows + local `server/uploads` into Supabase |
 | `npm run cleanup-pdfs` | Node one-liner | Run storage cleanup once |
-| `npm test` | stub | Prints “no test specified” and exits 1 |
+| `npm test` | `node --test` | Run backend and schema-contract regression tests |
 
 `client-react`: `npm run dev`, `npm run build`, `npm run lint` (oxlint), `npm run preview`.
 
@@ -420,7 +468,7 @@ Prefix `/api`. Student and payment routes use `credentials: 'include'`.
 
 **Auth** — `/api/auth`: `POST /signup`, `POST /login`, `GET /status`, `POST /logout`
 
-**Orders** — `/api/orders`: `GET /slots`, `GET /stats`, `GET /`, `GET /:id`, `POST /detect-pages`, `POST /payment/create`, `POST /payment/simulate`, `POST /payment/verify`, `POST /payment/webhook`
+**Orders** — `/api/orders`: `GET /slots`, `GET /stats`, `GET /`, `POST /lookup`, `POST /verify-recovery`, `GET /history` (OTP session required), `GET /:id`, `POST /detect-pages`, `POST /payment/create`, `POST /payment/simulate`, `POST /payment/verify`, `POST /payment/webhook`
 
 **Shop admin** — `/api/admin`: login/status/logout, dashboard, orders CRUD-style list/get/status/accept/reject, document GET, earnings, transactions, shop-profile GET/PUT, account password PUT
 
@@ -450,11 +498,13 @@ That cron only works if the Vercel project can reach an API that implements that
 
 The Vercel frontend uses relative `/api/...` requests; `client-react/vercel.json` rewrites them to `https://campus-print-1yeh.onrender.com/api/...`. No `VITE_API_URL` is required with this proxy setup. Keep `VITE_API_URL` unset unless all frontend API calls are migrated to use it. HTTPS is required for production cookies (`secure: true`).
 
+For phone-based My Orders, apply the recovery database migration, set `MSG91_AUTH_KEY` and `MSG91_OTP_TEMPLATE_ID` on Render, and deploy the backend commit containing `/api/orders/lookup`, `/api/orders/verify-recovery`, and `/api/orders/history`. The frontend and backend must be deployed from compatible revisions; a Vercel frontend calling a Render backend that predates these endpoints receives `404 Cannot POST /api/orders/lookup`.
+
 ---
 
 ## 14. Testing
 
-Automated tests are **Not implemented yet** (`npm test` is a stub). Frontend check: `cd client-react && npm run lint` and `npm run build`.
+Run the backend test suite with `npm test`. Frontend checks: `cd client-react && npm run lint` and `npm run build`.
 
 Manual checks that match the code:
 
