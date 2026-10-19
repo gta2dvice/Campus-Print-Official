@@ -147,6 +147,18 @@ function filePrintingCost(f) {
   return pages * copies * 2;
 }
 
+// Page-based service charge (by total printed pages): 1–10 → ₹1, 11–30 → ₹2, 31+ → ₹3.
+// Keep in sync with serviceChargeForPages() in server/pricing.js, which verifies the total.
+function serviceChargeForPages(printedPages) {
+  if (printedPages <= 10) return 1;
+  if (printedPages <= 30) return 2;
+  return 3;
+}
+
+// Binding add-on: ₹25 binding + ₹1 binding service charge, once per order.
+// Keep in sync with PRICING.binding + PRICING.bindingServiceCharge in server/pricing.js.
+const BINDING_CHARGE = 26;
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -543,17 +555,21 @@ export default function NewOrder() {
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
-    if (!config) return { pages: 0, base: 0, a3Extra: 0, serviceCharge: 0, deliveryCharge: 0, total: 0 };
+    if (!config) return { pages: 0, base: 0, a3Extra: 0, serviceCharge: 0, deliveryCharge: 0, bindingCharge: 0, total: 0 };
 
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
 
-    const serviceCharge = 3;
+    // Service charge is page-based: 1–10 printed pages ₹1, 11–30 ₹2, 31+ ₹3.
+    const serviceCharge = serviceChargeForPages(totalPagesCount || 0);
     let deliveryCharge = 0;
     if (selectedLocationId === 'hostel-gate') {
-      deliveryCharge = 4;
+      deliveryCharge = 3;
     } else if (classroomDelivery) {
-      deliveryCharge = 10;
+      deliveryCharge = 5;
     }
+    // Binding is a per-order add-on (₹25 + ₹1 binding service charge), on top of
+    // the page-based service charge — neither charge is double-counted.
+    const bindingCharge = spiralBinding ? BINDING_CHARGE : 0;
 
     return {
       pages: totalPagesCount || 0,
@@ -561,7 +577,8 @@ export default function NewOrder() {
       a3Extra: 0,
       serviceCharge,
       deliveryCharge,
-      total: (printingSubtotal || 0) + serviceCharge + deliveryCharge
+      bindingCharge,
+      total: (printingSubtotal || 0) + serviceCharge + deliveryCharge + bindingCharge
     };
   }
 
@@ -689,7 +706,7 @@ export default function NewOrder() {
 
     if (locId === 'academic-block') {
       // Trigger confirmation for classroom delivery
-      const wantsDelivery = window.confirm('Do you want Classroom Delivery for an additional ₹10?');
+      const wantsDelivery = window.confirm('Do you want Classroom Delivery for an additional ₹5?');
       setClassroomDelivery(wantsDelivery);
     } else {
       // Automatically disable for other locations
@@ -1380,8 +1397,28 @@ export default function NewOrder() {
                     <span className="setting-label">Classroom Delivery</span>
                     <div className="toggle-group" id="classroomDeliveryGroup">
                       <button className={toggleClass(!classroomDelivery)} onClick={() => setClassroomDelivery(false)}>No (Free)</button>
-                      <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹10)</button>
+                      <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹5)</button>
                     </div>
+                  </div>
+                  <div className="setting-group">
+                    <span className="setting-label">Binding</span>
+                    <div className="toggle-group" id="bindingGroup" role="radiogroup" aria-label="Binding">
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={!spiralBinding}
+                        className={toggleClass(!spiralBinding)}
+                        onClick={() => setSpiralBinding(false)}
+                      >No (Free)</button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={spiralBinding}
+                        className={toggleClass(spiralBinding)}
+                        onClick={() => setSpiralBinding(true)}
+                      >Yes (+₹26)</button>
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: '#888' }}>₹25 binding + ₹1 binding service charge</span>
                   </div>
                 </div>
               </div>
@@ -1404,6 +1441,12 @@ export default function NewOrder() {
                   <span className="summary-line-label">Delivery Charge</span>
                   <span className="summary-line-value">₹{p.deliveryCharge}</span>
                 </div>
+                {spiralBinding && (
+                  <div className="summary-line">
+                    <span className="summary-line-label">Binding (₹25 + ₹1 service)</span>
+                    <span className="summary-line-value">₹{p.bindingCharge}</span>
+                  </div>
+                )}
               </div>
 
               <div className="summary-divider"></div>
@@ -1507,7 +1550,8 @@ export default function NewOrder() {
                 You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot}.
               </p>
             )}
-            <div className="cp-step-footer">
+            <div className="cp-step-footer space-between">
+              <button type="button" className="btn btn-secondary" onClick={closeBookingModal}>← Back to Order</button>
               <button type="button" className="btn btn-primary" disabled={!selectedTimeSlot} onClick={() => goToStep('location')}>
                 Continue to Location <span className="arrow-icon">→</span>
               </button>
@@ -1561,7 +1605,7 @@ export default function NewOrder() {
                       {loc.sub}
                       {loc.id === 'hostel-gate' && (
                         <span style={{ display: 'block', fontSize: '0.75rem', color: '#3b82f6', fontWeight: '600', marginTop: '0.25rem' }}>
-                          Hostel delivery: +₹4
+                          Hostel delivery: +₹3
                         </span>
                       )}
                     </p>
@@ -1746,6 +1790,22 @@ export default function NewOrder() {
                   <div className="cp-review-line">
                     <span>Paper &amp; Side</span>
                     <strong>{`A4`} · {files.some(f => f.printingSide === 'double') ? 'Mixed (S/D)' : (files[0]?.printingSide === 'double' ? 'Double-Sided' : 'Single-Sided')}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Binding</span>
+                    <strong>{spiralBinding ? `Yes — ₹${BINDING_CHARGE} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Printing ({p.pages} pages)</span>
+                    <strong>₹{p.base + p.a3Extra}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Service Charge</span>
+                    <strong>₹{p.serviceCharge}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Delivery Charge</span>
+                    <strong>₹{p.deliveryCharge}</strong>
                   </div>
                 </div>
                 <div className="cp-review-total">

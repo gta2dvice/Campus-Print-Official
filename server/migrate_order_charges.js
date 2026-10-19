@@ -11,6 +11,9 @@ const ORDER_CHARGES_STATEMENTS = [
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_charge NUMERIC(10,2)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(10,2)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS classroom_charge NUMERIC(10,2)`,
+    // Binding add-on (₹25 + ₹1 binding service charge), charged once per order when
+    // orders.spiral_binding is set. NULL on orders placed before binding was priced.
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS binding_charge NUMERIC(10,2)`,
     `ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_charge NUMERIC(10,2)`
 ];
 

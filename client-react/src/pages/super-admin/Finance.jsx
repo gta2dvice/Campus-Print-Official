@@ -75,6 +75,7 @@ export function OrderFinance({ finance }) {
         <Row label={`Delivery charge (Hostel Gate)${est}`} value={fmtRupees(extras.deliveryCharge)} />
         <Row label={`Service charge${est}`} value={fmtRupees(extras.serviceCharge)} />
         <Row label="Classroom surcharge" value={fmtRupees(extras.classroomCharge, 'not recorded')} />
+        <Row label={`Binding charge${est}`} value={fmtRupees(extras.bindingCharge, 'not recorded')} />
         <Row label="Other platform charges" value={fmtRupees(extras.otherCharges)} />
         <Row label={`Total additional charges${est}`} value={fmtRupees(extras.totalExtras)} strong />
       </Section>
@@ -84,6 +85,7 @@ export function OrderFinance({ finance }) {
         <Row label="Total delivery charges" value={fmtRupees(summary.totalDelivery)} />
         <Row label="Total service charges" value={fmtRupees(summary.totalService)} />
         <Row label="Total classroom surcharge" value={fmtRupees(summary.totalClassroom, 'not recorded')} />
+        <Row label="Total binding charges" value={fmtRupees(summary.totalBinding, 'not recorded')} />
         <Row label="Other applicable charges" value={fmtRupees(summary.otherCharges)} />
         <Row label="Total amount payable by customer" value={fmtRupees(summary.customerTotal)} strong />
         <Row label="Amount paid" value={fmtRupees(summary.amountPaid)} />
@@ -151,6 +153,7 @@ export function FinancialSummary() {
             <Row label="Delivery charges (Hostel Gate)" value={fmtRupees(t.totalDelivery)} />
             <Row label="Service charges" value={fmtRupees(t.totalService)} />
             <Row label="Classroom surcharges" value={fmtRupees(t.totalClassroom)} />
+            <Row label="Binding charges" value={fmtRupees(t.totalBinding)} />
             <Row label="Other charges" value={fmtRupees(t.otherCharges)} />
             <Row label="Gross extra-charge revenue (not profit)" value={fmtRupees(t.grossExtraRevenue)} strong />
             <Row label="Customer total" value={fmtRupees(t.itemisedCustomerTotal)} />

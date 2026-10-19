@@ -119,16 +119,19 @@ function financialBreakdown(order, files = [], payments = []) {
     let service;
     let delivery;
     let classroom;
+    let binding;
     if (itemised) {
         printing = money(order.printing_amount);
         service = money(order.service_charge || 0);
         delivery = money(order.delivery_charge || 0);
         classroom = money(order.classroom_charge || 0);
+        binding = hasAmount(order.binding_charge) ? money(order.binding_charge) : 0;
     } else {
         // Placed before charges were itemised: estimate with the current fixed charges.
-        service = PRICING.serviceCharge;
+        service = PRICING.serviceChargeTiers[PRICING.serviceChargeTiers.length - 1].charge;
         delivery = order.collection_location_id === 'hostel-gate' ? PRICING.hostelSurcharge : 0;
         classroom = null; // not recorded on old orders — cannot be told apart
+        binding = null;   // binding was not priced on old orders
         const estimate = money(customerTotal - service - delivery);
         printing = estimate >= 0 ? estimate : null;
         notes.push('Estimated: this order was placed before charges were itemised. Printing = customer total − service charge − Hostel Gate delivery.');
@@ -138,7 +141,7 @@ function financialBreakdown(order, files = [], payments = []) {
         if (printing === null) notes.push('The customer total is lower than the fixed charges, so printing cannot be estimated.');
     }
 
-    const extrasTotal = money(service + delivery + (classroom || 0));
+    const extrasTotal = money(service + delivery + (classroom || 0) + (binding || 0));
     const successful = payments.find(p => p.status === 'success');
     const refundedAmount = money(payments.filter(p => p.status === 'refunded').reduce((sum, p) => sum + Number(p.amount || 0), 0));
     const amountPaid = successful ? money(successful.amount) : 0;
@@ -162,6 +165,7 @@ function financialBreakdown(order, files = [], payments = []) {
             deliveryCharge: delivery,
             serviceCharge: service,
             classroomCharge: classroom,
+            bindingCharge: binding,
             otherCharges: 0,
             totalExtras: extrasTotal
         },
@@ -170,6 +174,7 @@ function financialBreakdown(order, files = [], payments = []) {
             totalDelivery: delivery,
             totalService: service,
             totalClassroom: classroom,
+            totalBinding: binding,
             otherCharges: 0,
             customerTotal,
             amountPaid,

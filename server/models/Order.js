@@ -57,8 +57,8 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
              collection_location_id, collection_location, collection_time, total_pages,
              collection_date,
              guest_full_name, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
-             ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?)
+             ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge, binding_charge)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?)
          RETURNING id`,
             [
                 userId || null,
@@ -83,7 +83,8 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 charges.printingAmount ?? null,
                 charges.serviceCharge ?? null,
                 charges.deliveryCharge ?? null,
-                charges.classroomCharge ?? null
+                charges.classroomCharge ?? null,
+                charges.bindingCharge ?? null
             ]
         );
         const id = result.insertId;
@@ -441,6 +442,7 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
         COALESCE(SUM(o.service_charge), 0) AS service,
         COALESCE(SUM(o.delivery_charge), 0) AS delivery,
         COALESCE(SUM(o.classroom_charge), 0) AS classroom,
+        COALESCE(SUM(o.binding_charge), 0) AS binding,
         COUNT(*) FILTER (WHERE o.printing_amount IS NULL) AS not_itemised_orders,
         COALESCE(SUM(o.total_price) FILTER (WHERE o.printing_amount IS NULL), 0) AS not_itemised_total`;
 
@@ -461,7 +463,7 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
     const shape = (r) => {
         const num = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
         const printing = num(r.printing);
-        const extras = num(num(r.service) + num(r.delivery) + num(r.classroom));
+        const extras = num(num(r.service) + num(r.delivery) + num(r.classroom) + num(r.binding));
         const itemisedCustomerTotal = num(r.itemised_customer_total);
         return {
             paidOrders: parseInt(r.paid_orders, 10),
@@ -471,6 +473,7 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
             totalService: num(r.service),
             totalDelivery: num(r.delivery),
             totalClassroom: num(r.classroom),
+            totalBinding: num(r.binding),
             otherCharges: 0,
             // Gross, not profit: gateway fees, taxes and other costs are not deducted.
             grossExtraRevenue: extras,

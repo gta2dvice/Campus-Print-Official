@@ -282,16 +282,21 @@ export default function Home() {
       return sum + pages * copies * 2;
     }, 0);
 
-    const deliveryCharge = classroomDelivery ? 10 : 0;
+    // Page-based service charge: 1–10 printed pages ₹1, 11–30 ₹2, 31+ ₹3.
+    // Keep in sync with serviceChargeForPages() in server/pricing.js. No files → no charge.
+    const serviceCharge = totalPages === 0 ? 0 : totalPages <= 10 ? 1 : totalPages <= 30 ? 2 : 3;
+
+    const deliveryCharge = classroomDelivery ? 5 : 0;
 
     return {
       basePrice: printingSubtotal,
       a3Extra: 0,
-      total: printingSubtotal + deliveryCharge
+      serviceCharge,
+      total: printingSubtotal + serviceCharge + deliveryCharge
     };
   }
 
-  const { basePrice, a3Extra, total } = calcPrice();
+  const { basePrice, a3Extra, serviceCharge, total } = calcPrice();
 
   useEffect(() => {
     async function loadConfig() {
@@ -662,8 +667,24 @@ export default function Home() {
                     </div>
                     <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
                       <span>Yes</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹10</span>
+                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹5</span>
                     </div>
+                  </div>
+                </div>
+
+                <div className="pricing-card" id="pcBindingCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  <div className="pc-icon">📚</div>
+                  <h3 className="pc-title">Binding</h3>
+                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
+                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                      <span>No</span>
+                      <span className="pc-info-price" style={{ fontWeight: '600' }}>Free</span>
+                    </div>
+                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                      <span>Yes</span>
+                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹26</span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>₹25 binding + ₹1 service charge</div>
                   </div>
                 </div>
               </div>
@@ -695,7 +716,7 @@ export default function Home() {
                         onClick={() => setClassroomDelivery(true)}
                         style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}
                       >
-                        Yes (+₹10)
+                        Yes (+₹5)
                       </button>
                     </div>
                   </div><div className="upload-zone-home"
@@ -850,8 +871,9 @@ export default function Home() {
                   <div className="ptc-breakdown" id="pcBreakdown">
                     <span className="ptc-line"><span className="ptc-line-label">Total Pages</span><span className="ptc-line-val">{totalPages} pages</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
+                    <span className="ptc-line"><span className="ptc-line-label">Service Charge</span><span className="ptc-line-val">₹{serviceCharge}</span></span>
                     {classroomDelivery && (
-                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹10</span></span>
+                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹5</span></span>
                     )}
                   </div>
                   <div className="ptc-divider"></div>

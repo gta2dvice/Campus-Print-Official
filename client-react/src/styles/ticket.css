@@ -5,9 +5,12 @@
    ========================================================================== */
 
 /* ── Page Layout & Base ────────────────────────────────────────── */
-html, body.ticket-page-body {
+/* One main scrollbar on the ticket page: the window scrolls, nothing nested.
+   (overflow-x: hidden on <html> is deliberately avoided — it promotes overflow-y
+   to auto on the root and creates a second, duplicate scrollbar.) */
+body.ticket-page-body {
     max-width: 100%;
-    overflow-x: hidden !important;
+    overflow-x: clip;
     width: 100%;
     box-sizing: border-box;
 }
@@ -34,7 +37,9 @@ html, body.ticket-page-body {
     padding: 3rem 1.25rem 4rem;
     isolation: isolate;
     box-sizing: border-box;
-    overflow-x: hidden;
+    /* clip (not hidden): hides horizontal spill without turning this wrapper into
+       a scroll container with its own vertical scrollbar. */
+    overflow-x: clip;
 }
 
 .ticket-main-content {
@@ -376,6 +381,11 @@ html, body.ticket-page-body {
     display: contents;
 }
 
+@page {
+    size: A4 portrait;
+    margin: 10mm;
+}
+
 @media print {
     .delivery-call-btn,
     .site-footer,
@@ -383,7 +393,8 @@ html, body.ticket-page-body {
     .ticket-reminder-box,
     .ticket-checking-indicator,
     .booking-orb,
-    .logo-link {
+    .logo-link,
+    .page-background {
         display: none !important;
     }
 
@@ -402,16 +413,17 @@ html, body.ticket-page-body {
     /* Export only that content as one self-contained block on a clean page. */
     .ticket-print-area {
         display: block !important;
-        position: absolute;
-        left: 0;
-        top: 0;
+        position: static !important;
         width: 100%;
         box-sizing: border-box;
-        padding: 1.25rem 1rem;
+        padding: 0;
         background: linear-gradient(160deg, #0f172a 0%, #1e3a8a 45%, #0c4a6e 100%);
+        /* One page, no spillover: compact print sizing below keeps the header +
+           ticket well inside A4 (297mm − 20mm margins ≈ 1047px at 96dpi). */
+        page-break-inside: avoid;
+        break-inside: avoid;
     }
 
-    html,
     body.ticket-page-body,
     .ticket-page-wrapper,
     .ticket-main-content {
@@ -420,11 +432,93 @@ html, body.ticket-page-body {
         min-height: 0 !important;
         height: auto !important;
         padding: 0 !important;
+        margin: 0 !important;
         overflow: visible !important;
     }
 
     .ticket-page-wrapper {
         position: static !important;
+    }
+
+    /* Compact print layout — same design, sized to fit exactly one A4 page. */
+    .ticket-success-header {
+        margin-bottom: 1rem;
+    }
+
+    .success-badge-circle {
+        width: 44px;
+        height: 44px;
+        margin-bottom: 0.6rem;
+        animation: none;
+    }
+
+    .success-heading {
+        font-size: 1.7rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .success-subtitle {
+        font-size: 0.95rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .success-note {
+        font-size: 0.8rem;
+    }
+
+    .ticket-card-wrapper {
+        max-width: 440px;
+        margin: 0 auto 1rem;
+        animation: none;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    .ticket-main-body {
+        padding: 1.25rem 1.25rem;
+    }
+
+    .cp-ticket-code {
+        font-size: 2.2rem;
+    }
+
+    .ticket-microcopy {
+        margin-bottom: 0.45rem;
+    }
+
+    .ticket-number-display {
+        margin-bottom: 0.45rem;
+    }
+
+    .ticket-divider {
+        margin-bottom: 0.9rem;
+    }
+
+    .ticket-info-list {
+        gap: 0.5rem;
+    }
+
+    .ticket-info-row {
+        padding: 0.5rem 0.75rem;
+        gap: 0.75rem;
+    }
+
+    .info-icon-badge {
+        width: 30px;
+        height: 30px;
+    }
+
+    .info-value.value-prominent {
+        font-size: 1.05rem;
+    }
+
+    .ticket-footer-note {
+        margin-top: 0.9rem;
+        padding-top: 0.6rem;
+    }
+
+    .script-thanks {
+        font-size: 1.2rem;
     }
 }
 

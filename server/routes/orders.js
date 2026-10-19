@@ -220,7 +220,7 @@ const MAX_DECLARED_PAGES = 2000;
  * Returns { resolved, amount, charges } — charges is pricing.priceOrder()'s split;
  * each resolved file also carries its own printingCharge.
  */
-async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocationId, classroomDelivery }) {
+async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocationId, classroomDelivery, binding }) {
     if (!files || files.length === 0) {
         const e = new Error('Please upload at least one file to continue.');
         e.code = 'NO_FILES'; e.httpStatus = 400; throw e;
@@ -301,7 +301,7 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
         });
     }
 
-    const charges = priceOrder(resolved, { collectionLocationId, classroomDelivery });
+    const charges = priceOrder(resolved, { collectionLocationId, classroomDelivery, binding });
     resolved.forEach((f, i) => { f.printingCharge = charges.fileCharges[i]; });
     return { resolved, amount: charges.total, charges };
 }
@@ -377,7 +377,9 @@ async function validateAndPriceSubmission(req, res) {
     try {
         const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
             collectionLocationId: data.collectionLocationId,
-            classroomDelivery: req.body.classroomDelivery
+            classroomDelivery: req.body.classroomDelivery,
+            // Order-level binding flag (orders.spiral_binding) — priced once per order.
+            binding: data.spiralBinding
         });
         resolved = priced.resolved;
         amount = priced.amount;
