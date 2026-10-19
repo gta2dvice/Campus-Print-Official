@@ -14,10 +14,14 @@ function createFakeDb() {
     const db = {
         orders: new Map(),
         payments: new Map(),
+        ticketEmails: new Map(),
         nextPaymentId: 1,
+        nextEmailId: 1,
         failTicketWrites: 0,      // > 0: the next N ticket writes throw
         ticketWrites: 0,
-        paymentSuccessWrites: 0
+        paymentSuccessWrites: 0,
+        emailSentWrites: 0,
+        emailFailedWrites: 0
     };
 
     function one(map, id) {
@@ -116,6 +120,92 @@ function createFakeDb() {
             const id = db.nextPaymentId++;
             db.payments.set(id, { id, order_id: Number(orderId), method, amount: Number(amount), currency: 'INR', status: 'pending', transaction_ref: transactionRef, gateway_order_id: gatewayOrderId });
             return [{ insertId: id, rowCount: 1 }];
+        }
+
+        // ── Order lookups & attempt lookups ──
+        if (/^SELECT o\.\*, COALESCE\(o\.guest_email, u\.email\) AS customer_email FROM orders o LEFT JOIN users u ON u\.id = o\.user_id WHERE o\.id = \?$/.test(s)) {
+            const order = one(db.orders, params[0]);
+            return [order ? [{ customer_email: order.guest_email || order.customer_email || null, ...order }] : []];
+        }
+        if (/^SELECT gateway_order_id, status FROM payments WHERE order_id = \? ORDER BY id DESC LIMIT 1$/.test(s) ||
+            /FROM payments WHERE order_id = \? AND method = 'cashfree' ORDER BY id DESC LIMIT 1/.test(s)) {
+            const payments = [...db.payments.values()].filter(p => p.order_id === Number(params[0]) && (!s.includes('cashfree') || p.method === 'cashfree')).sort((a, b) => b.id - a.id);
+            const p = payments[0];
+            return [p ? [{ ...p }] : []];
+        }
+        if (/WHERE o\.ticket_access_token_hash = \?/.test(s)) {
+            const hash = params[0];
+            const order = [...db.orders.values()].find(o => o.ticket_access_token_hash === hash);
+            return [order ? [{ customer_email: order.guest_email || order.customer_email || null, ...order }] : []];
+        }
+        if (/FROM payments WHERE order_id = \? ORDER BY \(status = 'success'\) DESC, id DESC LIMIT 1/.test(s)) {
+            const payments = [...db.payments.values()].filter(p => p.order_id === Number(params[0])).sort((a, b) => (b.status === 'success' ? 1 : 0) - (a.status === 'success' ? 1 : 0) || b.id - a.id);
+            const p = payments[0];
+            return [[p ? { method: p.method, status: p.status, amount: p.amount, transaction_ref: p.transaction_ref, qr_expires_at: p.qr_expires_at } : null]];
+        }
+
+        // ── order_ticket_emails outbox ──
+        if (/^INSERT INTO order_ticket_emails/.test(s)) {
+            const [orderId, recipientEmail] = params;
+            const existing = [...db.ticketEmails.values()].find(e => e.order_id === Number(orderId));
+            if (!existing) {
+                const id = db.nextEmailId++;
+                db.ticketEmails.set(id, {
+                    id,
+                    order_id: Number(orderId),
+                    recipient_email: recipientEmail,
+                    status: 'PENDING',
+                    attempts: 0,
+                    provider: null,
+                    provider_message_id: null,
+                    last_error: null,
+                    sent_at: null
+                });
+            }
+            return [{ rowCount: existing ? 0 : 1 }];
+        }
+        if (/^UPDATE order_ticket_emails SET status = 'SENDING'/.test(s)) {
+            const orderId = Number(params[0]);
+            const entry = [...db.ticketEmails.values()].find(e => e.order_id === orderId);
+            if (!entry) return [[]];
+            if (entry.status === 'SENT') return [[]];
+            if (entry.status === 'SENDING') return [[]];
+            entry.status = 'SENDING';
+            entry.attempts += 1;
+            return [[{ id: entry.id, status: entry.status, attempts: entry.attempts }]];
+        }
+        if (/^SELECT status, sent_at, provider_message_id FROM order_ticket_emails WHERE order_id = \?$/.test(s)) {
+            const orderId = Number(params[0]);
+            const entry = [...db.ticketEmails.values()].find(e => e.order_id === orderId);
+            return [entry ? [{ status: entry.status, sent_at: entry.sent_at, provider_message_id: entry.provider_message_id }] : []];
+        }
+        if (/^SELECT status, recipient_email, attempts, provider, provider_message_id, last_error, sent_at FROM order_ticket_emails WHERE order_id = \?$/.test(s)) {
+            const orderId = Number(params[0]);
+            const entry = [...db.ticketEmails.values()].find(e => e.order_id === orderId);
+            return [entry ? [{ ...entry }] : []];
+        }
+        if (/^UPDATE order_ticket_emails SET status = 'SENT'/.test(s)) {
+            const [provider, messageId, orderId] = params;
+            const entry = [...db.ticketEmails.values()].find(e => e.order_id === Number(orderId));
+            if (entry) {
+                entry.status = 'SENT';
+                entry.provider = provider;
+                entry.provider_message_id = messageId;
+                entry.last_error = null;
+                entry.sent_at = new Date();
+                db.emailSentWrites += 1;
+            }
+            return [{ rowCount: 1 }];
+        }
+        if (/^UPDATE order_ticket_emails SET status = 'FAILED'/.test(s)) {
+            const [lastError, orderId] = params;
+            const entry = [...db.ticketEmails.values()].find(e => e.order_id === Number(orderId));
+            if (entry) {
+                entry.status = 'FAILED';
+                entry.last_error = lastError;
+                db.emailFailedWrites += 1;
+            }
+            return [{ rowCount: 1 }];
         }
 
         assert.fail(`fakeDb: unexpected SQL: ${s}`);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialValues = {} }) {
   const [formData, setFormData] = useState({
@@ -46,7 +46,7 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialVa
     setError('');
 
     const name = formData.fullName.trim();
-    const email = formData.email.trim();
+    const email = formData.email.trim().toLowerCase();
     const phone = formData.phone.trim();
     const classroom = formData.classroom.trim();
     const batch = formData.batch.trim();
@@ -57,12 +57,8 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialVa
       return;
     }
 
-    if (!email) {
-      setError('Please enter your email address.');
-      return;
-    }
-    if (!EMAIL_REGEX.test(email)) {
-      setError('Enter a valid email address (e.g. name@example.com).');
+    if (!email || !EMAIL_REGEX.test(email)) {
+      setError('Enter a valid email address for order notifications and recovery.');
       return;
     }
 
@@ -133,16 +129,15 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialVa
           </div>
 
           <div className="form-group">
-            <label htmlFor="guestEmail">Email Address *</label>
+            <label htmlFor="email">Email Address *</label>
             <input
               type="email"
-              id="guestEmail"
+              id="email"
               name="email"
-              placeholder="Enter your email address"
+              placeholder="e.g. name@university.edu"
               value={formData.email}
               onChange={handleChange}
               autoComplete="email"
-              aria-required="true"
               required
             />
           </div>

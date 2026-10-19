@@ -13,7 +13,9 @@ import {
   MAX_FILE_BYTES,
   MAX_ORDER_FILES,
   clearCompletedOrder,
+  buildFileSettingsPayload,
   flushSaveCurrentOrder,
+  hasCompleteFileSettings,
   loadCurrentOrder,
   removeCurrentOrder,
   saveCurrentOrder,
@@ -505,12 +507,16 @@ export default function NewOrder() {
       const target = files.find((f) => f.key === key);
       // Minus at 1 copy removes the document — reuses the existing deletion path
       // (state, totals, pricing and the stored draft all follow along).
-      if (target && (target.copies || 1) <= 1) {
+      if (target && (Number.isSafeInteger(target.copies) ? target.copies : 1) <= 1) {
         removeFile(key);
         return;
       }
     }
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, copies: Math.max(1, f.copies + delta) } : f)));
+    setFiles((prev) => prev.map((f) => (
+      f.key === key
+        ? { ...f, copies: Math.max(1, (Number.isSafeInteger(f.copies) ? f.copies : 1) + delta) }
+        : f
+    )));
   }
 
   function clearAllFiles() {
@@ -584,7 +590,7 @@ export default function NewOrder() {
 
   const p = calcPrice();
   const hasFiles = files.length > 0;
-  const filesMissingSettings = files.some(f => !f.printingSide || !f.colorMode);
+  const filesMissingSettings = files.some(f => !hasCompleteFileSettings(f));
 
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
@@ -730,19 +736,12 @@ export default function NewOrder() {
 
     // Guest Details
     formData.append('fullName', guestDetails?.fullName || '');
-    formData.append('email', guestDetails?.email || '');
+    formData.append('email', guestDetails?.email || currentUser?.email || '');
     formData.append('phone', guestDetails?.phone || '');
     formData.append('classroom', guestDetails?.classroom || '');
 
     // Per-file settings for backend verification and storage
-    const fileSettings = files.map(f => ({
-      key: f.key,
-      pages: f.pages,
-      copies: f.copies,
-      printingSide: f.printingSide,
-      colorMode: f.colorMode || 'bw',
-      pageRange: f.pageRange || ''
-    }));
+    const fileSettings = buildFileSettingsPayload(files);
     formData.append('fileSettings', JSON.stringify(fileSettings));
 
     files.forEach((f) => formData.append('files', f.file));
@@ -837,7 +836,7 @@ export default function NewOrder() {
     if (cfConfirm?.phase !== 'success' || !cfConfirm.ticketToken) return;
     const timer = setTimeout(() => finishSuccessfulOrder(cfConfirm.ticketToken), 2000);
     return () => clearTimeout(timer);
-  }, [cfConfirm?.phase, cfConfirm?.ticketToken]); 
+  }, [cfConfirm?.phase, cfConfirm?.ticketToken]);
 
   useEffect(() => {
     if (loading || !recoveryOrderId || handledReturnOrderRef.current === recoveryOrderId) return;
@@ -991,6 +990,10 @@ export default function NewOrder() {
   }
 
   async function handlePay() {
+    if (recoveryOrderId) {
+      showToast('A payment attempt is already saved. Check its status before starting another order.', 'error');
+      return;
+    }
     if (!selectedLocationId || !selectedTimeSlot) {
       showToast('Please select a collection location and time slot.', 'error');
       return;
@@ -1048,6 +1051,18 @@ export default function NewOrder() {
 
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok) {
+        if (createData.cashfreeOrderId) {
+          try {
+            localStorage.setItem('cp_pending_payment', JSON.stringify({
+              cashfreeOrderId: createData.cashfreeOrderId,
+              createdAt: Date.now()
+            }));
+          } catch {
+            // The current page still retains the order ID for reconciliation.
+          }
+          setRecoveryOrderId(createData.cashfreeOrderId);
+          setPaymentMessage('Your order intent was saved, but checkout setup did not finish. Check payment status before trying again.');
+        }
         const code = createData.code ? ` (${createData.code})` : '';
         showToast(`${createData.message || 'Could not start payment session.'}${code}`, 'error');
         setPaying(false);
@@ -1164,7 +1179,6 @@ export default function NewOrder() {
 
   if (loading) return null;
 
-  const toggleClass = (active) => `toggle-option${active ? ' active' : ''}`;
   let summaryNote = '';
   if (!hasFiles) summaryNote = 'Please upload at least one file to continue.';
   else if (pagesStillDetecting) summaryNote = 'Detecting page count…';
@@ -1211,6 +1225,8 @@ export default function NewOrder() {
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles([...e.dataTransfer.files]); }}
+                  role="region"
+                  aria-label="File upload"
                 >
                   <input
                     ref={fileInputRef}
@@ -1220,15 +1236,34 @@ export default function NewOrder() {
                     accept={ACCEPT_ATTR}
                     onChange={(e) => { addFiles([...e.target.files]); e.target.value = ''; }}
                   />
-                  <div className="upload-zone-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="16 16 12 12 8 16"></polyline>
-                      <line x1="12" y1="12" x2="12" y2="21"></line>
-                      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+                  <div className="upload-zone-icon-wrap" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
                   </div>
-                  <h3>Drag &amp; drop files or click to browse</h3>
-                  <p>Support for {SUPPORTED_LABEL} &nbsp;(Up to 10 files)</p>
+                  <h3 className="upload-zone-title">Upload your files</h3>
+                  <p className="upload-zone-sub">Choose PDFs or documents from your device.</p>
+                  <button
+                    type="button"
+                    className="upload-choose-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                      <line x1="12" y1="18" x2="12" y2="12"></line>
+                      <line x1="9" y1="15" x2="15" y2="15"></line>
+                    </svg>
+                    Choose PDFs
+                  </button>
+                  <p className="upload-zone-note">
+                    Supports {SUPPORTED_LABEL} · Max 20 MB each (up to 10 files)
+                  </p>
                 </div>
 
                 <div className="files-list" id="filesList">
@@ -1251,7 +1286,6 @@ export default function NewOrder() {
                             </span>
                           );
                         } else if (f.estimated) {
-                          // No reliable automatic count for this type — let the user confirm it.
                           pagesText = (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                               <span>Pages:</span>
@@ -1268,28 +1302,40 @@ export default function NewOrder() {
                         }
                         const pdfTotal = filePrintingCost(f);
                         return (
-                          <div className="file-item" key={f.key} style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            padding: '1rem',
-                            borderBottom: '1px solid #eee',
-                            gap: '0.75rem',
-                            background: '#f9fafb',
-                            borderRadius: '8px',
-                            marginBottom: '0.75rem'
-                          }}>
-                            <div className="file-item-head">
-                              <div className="file-item-main">
-                                <div className="file-icon" style={{ fontSize: '1.5rem' }}>{isImageName(f.file.name) ? '🖼️' : '📄'}</div>
-                                <div className="file-item-info">
-                                  <div className="file-item-name" style={{ fontWeight: '600' }}>{f.file.name}</div>
-                                  <div className="file-item-size" style={{ fontSize: '0.8rem', color: '#666' }}>
-                                    <span style={{ fontWeight: 700, color: '#374151' }}>{typeLabel}</span> · {formatSize(f.file.size)} · {pagesText}
-                                  </div>
+                          <div className="cp-file-card" key={f.key}>
+                            {/* File Card Header */}
+                            <div className="cp-file-header">
+                              <div className="cp-file-icon-wrap" aria-hidden="true">
+                                {isImageName(f.file.name) ? (
+                                  <span className="cp-file-emoji">🖼️</span>
+                                ) : (
+                                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    <polyline points="10 9 9 9 8 9"></polyline>
+                                  </svg>
+                                )}
+                              </div>
+                              <div className="cp-file-details">
+                                <div className="cp-file-name" title={f.file.name}>{f.file.name}</div>
+                                <div className="cp-file-meta">
+                                  <span className="cp-file-badge">{typeLabel}</span>
+                                  <span className="cp-file-meta-sep">·</span>
+                                  <span>{formatSize(f.file.size)}</span>
+                                  <span className="cp-file-meta-sep">·</span>
+                                  <span>{pagesText}</span>
                                 </div>
                               </div>
-                              <button type="button" className="file-remove" aria-label={`Remove ${f.file.name}`} title="Remove document" onClick={() => removeFile(f.key)}>
-                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                              <button
+                                type="button"
+                                className="cp-file-remove-btn"
+                                aria-label={`Remove ${f.file.name}`}
+                                title="Remove document"
+                                onClick={() => removeFile(f.key)}
+                              >
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                   <polyline points="3 6 5 6 21 6"></polyline>
                                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                   <line x1="10" y1="11" x2="10" y2="17"></line>
@@ -1298,78 +1344,159 @@ export default function NewOrder() {
                               </button>
                             </div>
 
-                            <div className="file-item-settings">
-                              <div className="file-item-row">
-                                <div className="counter" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  <span style={{ fontSize: '0.85rem', color: '#666' }}>Copies:</span>
-                                  <button className="counter-btn" onClick={() => updateFileCopies(f.key, -1)}>−</button>
-                                  <span className="counter-value" style={{ minWidth: '1.5rem', textAlign: 'center' }}>{f.copies || 1}</span>
-                                  <button className="counter-btn" onClick={() => updateFileCopies(f.key, 1)}>+</button>
-                                </div>
-                                <div className="file-item-options">
+                            {/* File Card Body */}
+                            <div className="cp-file-body">
+                              {/* Copies Row */}
+                              <div className="cp-copies-row">
+                                <span className="cp-field-label">Number of Copies:</span>
+                                <div className="cp-stepper" role="group" aria-label="Copies">
                                   <button
-                                    className={`btn btn-sm ${f.printingSide === 'single' ? 'btn-primary' : 'btn-outline'}`}
-                                    onClick={() => updateFilePrintingSide(f.key, 'single')}
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                    type="button"
+                                    className="cp-stepper-btn"
+                                    aria-label="Decrease copies"
+                                    onClick={() => updateFileCopies(f.key, -1)}
                                   >
-                                    Single Side (₹2)
+                                    −
                                   </button>
+                                  <span className="cp-stepper-val" aria-live="polite">
+                                    {f.copies ?? 1}
+                                  </span>
                                   <button
-                                    className={`btn btn-sm ${f.printingSide === 'double' ? 'btn-primary' : 'btn-outline'}`}
-                                    onClick={() => updateFilePrintingSide(f.key, 'double')}
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                    type="button"
+                                    className="cp-stepper-btn"
+                                    aria-label="Increase copies"
+                                    onClick={() => updateFileCopies(f.key, 1)}
                                   >
-                                    Both Sides (₹3)
+                                    +
                                   </button>
                                 </div>
                               </div>
-                              <div className="file-item-row">
-                                <span style={{ fontSize: '0.85rem', color: '#666' }}>Color Mode:</span>
-                                <div className="file-item-options">
+
+                              {/* Print Mode Group */}
+                              <div className="cp-setting-section">
+                                <span className="cp-setting-title">Print Mode</span>
+                                <div className="cp-options-grid" role="radiogroup" aria-label="Print Mode">
                                   <button
-                                    className={`btn btn-sm ${f.colorMode === 'bw' ? 'btn-primary' : 'btn-outline'}`}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={f.colorMode === 'bw'}
+                                    className={`cp-option-card ${f.colorMode === 'bw' ? 'is-selected' : ''}`}
                                     onClick={() => updateFileColorMode(f.key, 'bw')}
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                                   >
-                                    B&amp;W (₹2)
+                                    <span className="cp-radio-circle" aria-hidden="true">
+                                      <span className="cp-radio-dot" />
+                                    </span>
+                                    <div className="cp-option-text">
+                                      <span className="cp-option-name">Black &amp; White</span>
+                                      <span className="cp-option-price">₹2/page</span>
+                                    </div>
                                   </button>
+
                                   <button
-                                    className={`btn btn-sm ${f.colorMode === 'color' ? 'btn-primary' : 'btn-outline'}`}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={f.colorMode === 'color'}
+                                    className={`cp-option-card ${f.colorMode === 'color' ? 'is-selected' : ''}`}
                                     onClick={() => updateFileColorMode(f.key, 'color')}
-                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                                   >
-                                    Color (₹5)
+                                    <span className="cp-radio-circle" aria-hidden="true">
+                                      <span className="cp-radio-dot" />
+                                    </span>
+                                    <div className="cp-option-text">
+                                      <span className="cp-option-name">Color</span>
+                                      <span className="cp-option-price">₹5/page</span>
+                                    </div>
                                   </button>
                                 </div>
                               </div>
+
+                              {/* Print Sides Group */}
+                              <div className="cp-setting-section">
+                                <span className="cp-setting-title">Print Sides</span>
+                                <div className="cp-options-grid" role="radiogroup" aria-label="Print Sides">
+                                  <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={f.printingSide === 'single'}
+                                    className={`cp-option-card ${f.printingSide === 'single' ? 'is-selected' : ''}`}
+                                    onClick={() => updateFilePrintingSide(f.key, 'single')}
+                                  >
+                                    <span className="cp-radio-circle" aria-hidden="true">
+                                      <span className="cp-radio-dot" />
+                                    </span>
+                                    <div className="cp-option-text">
+                                      <span className="cp-option-name">Single Sided</span>
+                                      <span className="cp-option-price">₹2/page</span>
+                                    </div>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={f.printingSide === 'double'}
+                                    className={`cp-option-card ${f.printingSide === 'double' ? 'is-selected' : ''}`}
+                                    onClick={() => updateFilePrintingSide(f.key, 'double')}
+                                  >
+                                    <span className="cp-radio-circle" aria-hidden="true">
+                                      <span className="cp-radio-dot" />
+                                    </span>
+                                    <div className="cp-option-text">
+                                      <span className="cp-option-name">Double Sided</span>
+                                      <span className="cp-option-price">₹3/sheet</span>
+                                    </div>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Page Range Input (when applicable) */}
                               {showPageRangeInput(f) && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    <label htmlFor={`page-range-${f.key}`} style={{ fontSize: '0.85rem', color: '#666' }}>Page Range:</label>
+                                <div className="cp-page-range-section">
+                                  <label htmlFor={`page-range-${f.key}`} className="cp-setting-title">
+                                    Pages to print (optional)
+                                  </label>
+                                  <div className="cp-input-wrap">
                                     <input
                                       id={`page-range-${f.key}`}
                                       type="text"
-                                      inputMode="numeric"
+                                      className={`cp-text-input ${rangeErr ? 'has-error' : ''}`}
                                       value={f.pageRange || ''}
-                                      placeholder={`e.g. 33-55 (of ${f.pages})`}
+                                      placeholder="e.g. 1-3, 5, 8-10"
                                       onChange={(e) => updateFilePageRange(f.key, e.target.value)}
-                                      style={{ width: '7.5rem', padding: '0.25rem 0.5rem', border: `1px solid ${rangeErr ? '#ef4444' : '#ddd'}`, borderRadius: '6px', fontSize: '0.85rem' }}
+                                      aria-invalid={!!rangeErr}
+                                      aria-describedby={rangeErr ? `range-err-${f.key}` : `range-help-${f.key}`}
                                     />
-                                    <span style={{ fontSize: '0.75rem', color: '#888' }}>Leave empty to print all {f.pages} pages</span>
                                   </div>
+                                  <span id={`range-help-${f.key}`} className="cp-help-text">
+                                    Leave empty to print all {f.pages} pages.
+                                  </span>
                                   {rangeErr && (
-                                    <span role="alert" style={{ fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600 }}>{rangeErr}</span>
+                                    <span id={`range-err-${f.key}`} role="alert" className="cp-inline-error">
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                      </svg>
+                                      {rangeErr}
+                                    </span>
                                   )}
                                 </div>
                               )}
-                              <div style={{ textAlign: 'right', fontSize: '0.85rem', fontWeight: '600', color: 'var(--primary)' }}>
-                                PDF Total: ₹{pdfTotal}
+
+                              {/* File Subtotal Footer */}
+                              <div className="cp-file-footer">
+                                <span className="cp-file-footer-pages">
+                                  {printablePages(f) * (f.copies || 1)} printed page{printablePages(f) * (f.copies || 1) !== 1 ? 's' : ''}
+                                  {f.copies > 1 ? ` (${printablePages(f)} × ${f.copies} copies)` : ''}
+                                </span>
+                                <span className="cp-file-subtotal">
+                                  File Total: <strong>₹{pdfTotal}</strong>
+                                </span>
                               </div>
                             </div>
                           </div>
                         );
                       })}
-                      <div style={{ marginTop: '1rem', textAlign: 'right' }}>
+                      <div style={{ marginTop: '0.75rem', textAlign: 'right' }}>
                         <button className="btn btn-link" onClick={clearAllFiles} style={{ fontSize: '0.85rem', color: '#ef4444', textDecoration: 'none', background: 'none', border: 'none', cursor: 'pointer' }}>
                           Clear All Files
                         </button>
@@ -1386,11 +1513,12 @@ export default function NewOrder() {
                   <span className="step-title">Print Settings</span>
                 </div>
 
-                <div className="settings-grid">
-                  <div className="setting-group">
-                    <span className="setting-label">Paper Size</span>
-                    <div className="toggle-group" id="sizeGroup">
-                      <button className={toggleClass(paperSize === 'A4')} onClick={() => setPaperSize('A4')}>A4</button>
+                <div className="cp-step2-grid">
+                  <div className="cp-step2-group">
+                    <span className="cp-setting-title">Paper Size</span>
+                    <div className="cp-paper-size-pill">
+                      <span className="cp-paper-badge">A4 Standard</span>
+                      <span className="cp-paper-sub">210 × 297 mm</span>
                     </div>
                   </div>
                   <div className="setting-group">
@@ -1425,21 +1553,25 @@ export default function NewOrder() {
             </div>
 
             {/* Right: Order Summary */}
-            <div className="order-summary">
+            <div className="order-summary" aria-label="Order Summary">
               <h2 className="summary-title">Order Summary</h2>
 
               <div className="summary-lines">
                 <div className="summary-line">
-                  <span className="summary-line-label">Printing Charges ({p.pages} pages)</span>
+                  <span className="summary-line-label">Files Uploaded</span>
+                  <span className="summary-line-value">{files.length} file{files.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="summary-line">
+                  <span className="summary-line-label">Total Printed Pages</span>
+                  <span className="summary-line-value">{p.pages} page{p.pages !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="summary-line">
+                  <span className="summary-line-label">Printing Charges</span>
                   <span className="summary-line-value">₹{p.base + p.a3Extra}</span>
                 </div>
                 <div className="summary-line">
-                  <span className="summary-line-label">Service Charge</span>
+                  <span className="summary-line-label">Platform Service Charge</span>
                   <span className="summary-line-value">₹{p.serviceCharge}</span>
-                </div>
-                <div className="summary-line">
-                  <span className="summary-line-label">Delivery Charge</span>
-                  <span className="summary-line-value">₹{p.deliveryCharge}</span>
                 </div>
                 {spiralBinding && (
                   <div className="summary-line">
@@ -1452,18 +1584,52 @@ export default function NewOrder() {
               <div className="summary-divider"></div>
 
               <div className="summary-total">
-                <span className="summary-total-label">Total</span>
+                <span className="summary-total-label">Total Payable</span>
                 <span className="summary-total-amount">₹{p.total}</span>
               </div>
 
-              <button className="confirm-btn" disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))} onClick={openBookingModal}>
-                Start Order
+              <button
+                type="button"
+                className="confirm-btn"
+                disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))}
+                onClick={openBookingModal}
+              >
+                Continue to Order
               </button>
-              <p className="summary-note">{summaryNote}</p>
+              {summaryNote && <p className="summary-note">{summaryNote}</p>}
             </div>
           </div>
-          </main>
-        </div>
+
+          {/* Mobile Sticky Bottom Summary Bar */}
+          <aside className="cp-mobile-sticky-bar" aria-label="Order total and checkout">
+            <div className="cp-mobile-sticky-content">
+              <div className="cp-mobile-sticky-info">
+                <div className="cp-mobile-sticky-total">
+                  <span className="cp-mobile-sticky-label">Total:</span>
+                  <span className="cp-mobile-sticky-amount">₹{p.total}</span>
+                </div>
+                <div className="cp-mobile-sticky-meta">
+                  {files.length} file{files.length !== 1 ? 's' : ''} · {p.pages} page{p.pages !== 1 ? 's' : ''}
+                  {p.deliveryCharge > 0 ? ` · +₹${p.deliveryCharge} del.` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="cp-mobile-sticky-btn"
+                disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))}
+                onClick={openBookingModal}
+              >
+                Continue →
+              </button>
+            </div>
+            {summaryNote && (
+              <div className="cp-mobile-sticky-note" role="status">
+                {summaryNote}
+              </div>
+            )}
+          </aside>
+        </main>
+      </div>
 
       {/* Booking flow: Time → Location → Payment → Review */}
       <div className="booking-overlay" hidden={!modalOpen} onClick={(e) => { if (e.target === e.currentTarget) closeBookingModal(); }}>
@@ -1723,6 +1889,10 @@ export default function NewOrder() {
                   <div className="cp-review-line">
                     <span>Delivery Option</span>
                     <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
+                  </div>
+                  <div className="cp-review-line">
+                    <span>Email</span>
+                    <strong>{guestDetails?.email || currentUser?.email || '—'}</strong>
                   </div>
                   <div className="cp-review-line">
                     <span>Phone</span>

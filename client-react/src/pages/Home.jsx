@@ -72,6 +72,7 @@ export default function Home() {
   const [printingSide, setPrintingSide] = useState('single');
   const [classroomDelivery, setClassroomDelivery] = useState(false); // Verified state
   const [config, setConfig] = useState(null);
+  const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
 
   const [bump, setBump] = useState(false);
   // Unresolved (pending/unknown) payment left over from a previous visit. Kept in
@@ -298,6 +299,33 @@ export default function Home() {
 
   const { basePrice, a3Extra, serviceCharge, total } = calcPrice();
 
+  function getFileCost(f) {
+    const pages = printablePages(f);
+    const copies = f?.copies || 1;
+    if (pages === 0) return 0;
+    if (f?.colorMode === 'color') return pages * copies * 5;
+    if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+    return pages * copies * 2;
+  }
+
+  function getFileCostFormula(f) {
+    const pages = printablePages(f);
+    const copies = f?.copies || 1;
+    if (pages === 0) return '0 pages';
+    if (f?.colorMode === 'color') {
+      return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹5/pg`;
+    }
+    if (f?.printingSide === 'double') {
+      const sheets = Math.ceil(pages / 2);
+      return `${pages} pgs (${sheets} sheet${sheets > 1 ? 's' : ''}) × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹3/sheet`;
+    }
+    return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹2/pg`;
+  }
+
+  const isDetectingPages = files.some((f) => f.pages === null);
+  const hasRangeErrors = files.some((f) => hasInvalidPageRange(f));
+  const canOrder = files.length > 0 && !isDetectingPages && !hasRangeErrors;
+
   useEffect(() => {
     async function loadConfig() {
       try {
@@ -479,7 +507,7 @@ export default function Home() {
   return (
     <>
       <PageBackground />
-      <div className="page-content">
+      <div className={`page-content${files.length > 0 ? ' has-mobile-bar' : ''}`}>
 
         {/* ── STICKY HERO ── */}
         <div className="hero-container" id="hero">
@@ -543,7 +571,7 @@ export default function Home() {
                     <span className="detail-icon">📞</span>
                     <div>
                       <strong>Contact</strong>
-                      <p>+91 8076756723<br />ayjn15@gmail.com</p>
+                      <p>+91 8076756723<br />orders@campusprint.shop</p>
                     </div>
                   </div>
                 </div>
@@ -610,7 +638,7 @@ export default function Home() {
 
               <div className="pricing-cards-row" style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
                 gap: '1.5rem',
                 width: '100%',
                 maxWidth: '800px',
@@ -719,21 +747,56 @@ export default function Home() {
                         Yes (+₹5)
                       </button>
                     </div>
-                  </div><div className="upload-zone-home"
-                     style={{
-                       width: '100%',
-                       maxWidth: '600px',
-                       border: '2px dashed var(--primary-blue, #3b82f6)',
-                       borderRadius: '1rem',
-                       padding: '2rem',
-                       textAlign: 'center',
-                       cursor: 'pointer',
-                       background: 'rgba(59, 130, 246, 0.05)',
-                       transition: 'all 0.2s ease'
-                     }}
-                     onClick={() => fileInputRef.current?.click()}
-                     onDragOver={(e) => { e.preventDefault(); }}
-                     onDrop={(e) => { e.preventDefault(); addFiles([...e.dataTransfer.files]); }}
+                  </div>
+                  <div className="home-options-grid" role="radiogroup" aria-label="Classroom Delivery">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={!classroomDelivery}
+                      className={`home-option-card ${!classroomDelivery ? 'is-selected' : ''}`}
+                      onClick={() => setClassroomDelivery(false)}
+                    >
+                      <span className="home-radio-circle" aria-hidden="true">
+                        <span className="home-radio-dot" />
+                      </span>
+                      <div className="home-option-text">
+                        <span className="home-option-name">Pickup at Desk</span>
+                        <span className="home-option-price">Free</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={classroomDelivery}
+                      className={`home-option-card ${classroomDelivery ? 'is-selected' : ''}`}
+                      onClick={() => setClassroomDelivery(true)}
+                    >
+                      <span className="home-radio-circle" aria-hidden="true">
+                        <span className="home-radio-dot" />
+                      </span>
+                      <div className="home-option-text">
+                        <span className="home-option-name">Classroom Delivery</span>
+                        <span className="home-option-price">+₹10</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Upload Zone */}
+                <div
+                  className="home-upload-zone"
+                  tabIndex={0}
+                  role="button"
+                  aria-label="Upload your files"
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); }}
+                  onDrop={(e) => { e.preventDefault(); addFiles([...e.dataTransfer.files]); }}
                 >
                   <input
                     ref={fileInputRef}
@@ -743,52 +806,73 @@ export default function Home() {
                     style={{ display: 'none' }}
                     onChange={(e) => { addFiles([...e.target.files]); e.target.value = ''; }}
                   />
-                  <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📄</div>
-                  <h3 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0' }}>Upload Your Files</h3>
-                  <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1rem' }}>Drag &amp; drop your files here or click to browse</p>
-                  <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>+ Choose Files</button>
-                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>{SUPPORTED_LABEL}</p>
+                  <div className="home-upload-icon-wrap" aria-hidden="true">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                  </div>
+                  <h3 className="home-upload-title">Upload your PDFs</h3>
+                  <p className="home-upload-subtitle">Select files to get an instant print estimate.</p>
+                  <button type="button" className="home-upload-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    Choose PDFs
+                  </button>
+                  <p className="home-upload-limit-note">
+                    {SUPPORTED_LABEL} · Up to {formatSize(MAX_FILE_BYTES)} per file
+                  </p>
                 </div>
 
+                {/* Uploaded Files List */}
                 {files.length > 0 && (
-                  <div className="home-files-list" style={{ width: '100%', maxWidth: '600px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: '600' }}>Uploaded Files ({files.length})</h4>
-                      <button onClick={clearAllFiles} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '500' }}>Clear All</button>
+                  <div className="home-files-list">
+                    <div className="home-files-header">
+                      <h4 className="home-files-title">Uploaded Files ({files.length})</h4>
+                      <button type="button" className="home-clear-btn" onClick={clearAllFiles}>
+                        Clear All
+                      </button>
                     </div>
+
                     {files.map((f) => {
                       const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
                       const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
+                      const cost = getFileCost(f);
+
                       return (
-                      <div key={f.key} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '1rem',
-                        background: 'white',
-                        borderRadius: '0.75rem',
-                        boxShadow: '0 2px 5px rgba(0,0,0,0.05)',
-                        border: '1px solid #eee',
-                        gap: '1rem',
-                        flexDirection: 'column',
-                        alignItems: 'stretch'
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
-                            <span style={{ fontSize: '1.2rem' }}>{isImageFile(f.file) ? '🖼️' : '📄'}</span>
-                            <div>
-                              <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>{f.file.name}</div>
-                              <div style={{ fontSize: '0.8rem', color: '#666' }}>{formatSize(f.file.size)} · {f.pages === null ? 'Detecting…' : `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (estimated)' : ''}`}</div>
+                        <div key={f.key} className="home-file-card">
+                          {/* File Header */}
+                          <div className="home-file-header">
+                            <div className="home-file-info">
+                              <div className="home-file-icon-wrap" aria-hidden="true">
+                                {isImageFile(f.file) ? '🖼️' : '📄'}
+                              </div>
+                              <div className="home-file-details">
+                                <div className="home-file-name">{f.file.name}</div>
+                                <div className="home-file-meta">
+                                  <span>{formatSize(f.file.size)}</span>
+                                  <span className="home-file-meta-sep">·</span>
+                                  <span className="home-file-badge">
+                                    {f.pages === null
+                                      ? 'Detecting…'
+                                      : `${f.pages} page${f.pages > 1 ? 's' : ''}${f.estimated ? ' (est)' : ''}`}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <div className="counter" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f3f4f6', padding: '0.25rem', borderRadius: '0.5rem' }}>
-                              <button className="counter-btn" style={{ width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }} onClick={() => updateFileCopies(f.key, -1)}>−</button>
-                              <span style={{ minWidth: '1.5rem', textAlign: 'center', fontSize: '0.9rem', fontWeight: '600' }}>{f.copies}</span>
-                              <button className="counter-btn" style={{ width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer' }} onClick={() => updateFileCopies(f.key, 1)}>+</button>
-                            </div>
-                            <button type="button" onClick={() => removeFile(f.key)} aria-label={`Remove ${f.file.name}`} title="Remove document" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
-                              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+
+                            {/* 44x44px Accessible Delete Button */}
+                            <button
+                              type="button"
+                              className="home-file-remove-btn"
+                              onClick={() => removeFile(f.key)}
+                              aria-label={`Remove ${f.file.name}`}
+                              title="Remove document"
+                            >
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                 <line x1="10" y1="11" x2="10" y2="17"></line>
@@ -796,76 +880,174 @@ export default function Home() {
                               </svg>
                             </button>
                           </div>
-                        </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#666' }}>Color Mode</span>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <button
-                                className={`btn btn-sm ${f.colorMode === 'bw' ? 'btn-primary' : 'btn-outline'}`}
-                                onClick={() => updateFileColorMode(f.key, 'bw')}
-                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                              >
-                                B&amp;W (₹2/pg)
-                              </button>
-                              <button
-                                className={`btn btn-sm ${f.colorMode === 'color' ? 'btn-primary' : 'btn-outline'}`}
-                                onClick={() => updateFileColorMode(f.key, 'color')}
-                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                              >
-                                Color (₹5/pg)
-                              </button>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#666' }}>Printing Side</span>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <button
-                                className={`btn btn-sm ${f.printingSide === 'single' ? 'btn-primary' : 'btn-outline'}`}
-                                onClick={() => updateFilePrintingSide(f.key, 'single')}
-                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                              >
-                                Single Side (₹2/pg)
-                              </button>
-                              <button
-                                className={`btn btn-sm ${f.printingSide === 'double' ? 'btn-primary' : 'btn-outline'}`}
-                                onClick={() => updateFilePrintingSide(f.key, 'double')}
-                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                              >
-                                Both Sides (₹3/pg)
-                              </button>
-                            </div>
-                          </div>
-                          {showPageRangeInput(f) && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.35rem' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <label htmlFor={`page-range-${f.key}`} style={{ fontSize: '0.8rem', fontWeight: 600, color: '#666' }}>Page Range</label>
-                                <input
-                                  id={`page-range-${f.key}`}
-                                  type="text"
-                                  inputMode="numeric"
-                                  value={f.pageRange || ''}
-                                  placeholder={`e.g. 33-55 (of ${f.pages})`}
-                                  onChange={(e) => updateFilePageRange(f.key, e.target.value)}
-                                  style={{ width: '7.5rem', padding: '0.3rem 0.5rem', border: `1px solid ${rangeErr ? '#ef4444' : '#ddd'}`, borderRadius: '6px', fontSize: '0.85rem' }}
-                                />
-                                <span style={{ fontSize: '0.75rem', color: '#888' }}>Leave empty to print all {f.pages} pages</span>
+                          {/* Card Body */}
+                          <div className="home-file-body">
+                            {/* Copies Stepper */}
+                            <div className="home-copies-row">
+                              <span className="home-field-label">Number of Copies:</span>
+                              <div className="home-stepper" role="group" aria-label="Copies">
+                                <button
+                                  type="button"
+                                  className="home-stepper-btn"
+                                  aria-label="Decrease copies"
+                                  onClick={() => updateFileCopies(f.key, -1)}
+                                >
+                                  −
+                                </button>
+                                <span className="home-stepper-val" aria-live="polite">
+                                  {f.copies ?? 1}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="home-stepper-btn"
+                                  aria-label="Increase copies"
+                                  onClick={() => updateFileCopies(f.key, 1)}
+                                >
+                                  +
+                                </button>
                               </div>
-                              {rangeErr && (
-                                <span role="alert" style={{ fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600 }}>{rangeErr}</span>
-                              )}
                             </div>
-                          )}
+
+                            {/* Print Mode Group */}
+                            <div className="home-setting-section">
+                              <span className="home-setting-title">Print Mode</span>
+                              <div className="home-options-grid" role="radiogroup" aria-label="Print Mode">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={f.colorMode === 'bw'}
+                                  className={`home-option-card ${f.colorMode === 'bw' ? 'is-selected' : ''}`}
+                                  onClick={() => updateFileColorMode(f.key, 'bw')}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true">
+                                    <span className="home-radio-dot" />
+                                  </span>
+                                  <div className="home-option-text">
+                                    <span className="home-option-name">Black &amp; White</span>
+                                    <span className="home-option-price">₹2/page</span>
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={f.colorMode === 'color'}
+                                  className={`home-option-card ${f.colorMode === 'color' ? 'is-selected' : ''}`}
+                                  onClick={() => updateFileColorMode(f.key, 'color')}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true">
+                                    <span className="home-radio-dot" />
+                                  </span>
+                                  <div className="home-option-text">
+                                    <span className="home-option-name">Color</span>
+                                    <span className="home-option-price">₹5/page</span>
+                                  </div>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Print Sides Group */}
+                            <div className="home-setting-section">
+                              <span className="home-setting-title">Print Sides</span>
+                              <div className="home-options-grid" role="radiogroup" aria-label="Print Sides">
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={f.printingSide === 'single'}
+                                  className={`home-option-card ${f.printingSide === 'single' ? 'is-selected' : ''}`}
+                                  onClick={() => updateFilePrintingSide(f.key, 'single')}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true">
+                                    <span className="home-radio-dot" />
+                                  </span>
+                                  <div className="home-option-text">
+                                    <span className="home-option-name">Single Sided</span>
+                                    <span className="home-option-price">₹2/page</span>
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={f.printingSide === 'double'}
+                                  className={`home-option-card ${f.printingSide === 'double' ? 'is-selected' : ''}`}
+                                  onClick={() => updateFilePrintingSide(f.key, 'double')}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true">
+                                    <span className="home-radio-dot" />
+                                  </span>
+                                  <div className="home-option-text">
+                                    <span className="home-option-name">Double Sided</span>
+                                    <span className="home-option-price">₹3/sheet</span>
+                                  </div>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Page Range Input */}
+                            {showPageRangeInput(f) && (
+                              <div className="home-page-range-section">
+                                <label htmlFor={`page-range-${f.key}`} className="home-setting-title">
+                                  Pages to print (optional)
+                                </label>
+                                <div className="home-input-wrap">
+                                  <input
+                                    id={`page-range-${f.key}`}
+                                    type="text"
+                                    inputMode="numeric"
+                                    className={`home-text-input ${rangeErr ? 'has-error' : ''}`}
+                                    value={f.pageRange || ''}
+                                    placeholder="e.g. 1-3, 5, 8-10"
+                                    onChange={(e) => updateFilePageRange(f.key, e.target.value)}
+                                    aria-invalid={!!rangeErr}
+                                    aria-describedby={rangeErr ? `range-err-${f.key}` : `range-help-${f.key}`}
+                                  />
+                                </div>
+                                <span id={`range-help-${f.key}`} className="home-help-text">
+                                  Leave empty to print all {f.pages} pages.
+                                </span>
+                                {rangeErr && (
+                                  <span id={`range-err-${f.key}`} role="alert" className="home-inline-error">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <circle cx="12" cy="12" r="10"></circle>
+                                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                    </svg>
+                                    {rangeErr}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Subtotal Footer */}
+                            <div className="home-file-footer">
+                              <span className="home-file-footer-pages">
+                                {printablePages(f)} printable page{printablePages(f) !== 1 ? 's' : ''} × {f.copies} {f.copies > 1 ? 'copies' : 'copy'}
+                              </span>
+                              <span className="home-file-subtotal">
+                                Doc Subtotal: <strong>₹{cost}</strong>
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                      </div>
                       );
                     })}
-                    <button className="btn btn-secondary" style={{ width: 'fit-content', alignHelf: 'center', fontSize: '0.85rem' }} onClick={() => fileInputRef.current?.click()}>+ Add More PDFs</button>
+
+                    <button
+                      type="button"
+                      className="home-add-more-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                      Add More PDFs
+                    </button>
                   </div>
                 )}
               </div>
 
+              {/* Pricing Summary Card */}
               <div className="pricing-total-wrap">
                 <div className="pricing-total-card">
                   <div className="ptc-breakdown" id="pcBreakdown">
@@ -876,17 +1058,114 @@ export default function Home() {
                       <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹5</span></span>
                     )}
                   </div>
+
+                  {files.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        className="home-breakdown-toggle"
+                        onClick={() => setIsBreakdownOpen((prev) => !prev)}
+                        aria-expanded={isBreakdownOpen}
+                      >
+                        <span>Detailed calculation</span>
+                        <span>{isBreakdownOpen ? 'Hide ▲' : 'Show itemized breakdown ▼'}</span>
+                      </button>
+
+                      {isBreakdownOpen && (
+                        <div className="home-breakdown-details">
+                          {files.map((f) => (
+                            <div key={f.key} className="home-breakdown-item">
+                              <div className="home-breakdown-desc">
+                                <div className="home-breakdown-file-title">{f.file.name}</div>
+                                <div className="home-breakdown-formula">{getFileCostFormula(f)}</div>
+                              </div>
+                              <div className="home-breakdown-amount">₹{getFileCost(f)}</div>
+                            </div>
+                          ))}
+                          {classroomDelivery && (
+                            <div className="home-breakdown-item">
+                              <div className="home-breakdown-desc">
+                                <div className="home-breakdown-file-title">Classroom Delivery</div>
+                                <div className="home-breakdown-formula">Direct to classroom</div>
+                              </div>
+                              <div className="home-breakdown-amount">+₹10</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <div className="ptc-divider"></div>
+
                   <div className="ptc-total-row">
                     <span className="ptc-total-label">Estimated Total</span>
-                    <span className={`ptc-total-amount${bump ? ' bump' : ''}`} id="pcTotalAmount">₹{total}</span>
+                    <span className={`ptc-total-amount${bump ? ' bump' : ''}`} id="pcTotalAmount">
+                      ₹{total}
+                    </span>
                   </div>
-                  <p className="ptc-note">Final price calculated per page after upload. Copies can be set in the order form.</p>
-                  <button className="btn btn-primary ptc-order-btn" id="ptcOrderBtn" disabled={files.length === 0} onClick={handleOrderClick}>
-                    Start Your Order <span className="arrow-icon">→</span>
+
+                  {isDetectingPages && (
+                    <div className="home-status-alert is-info">
+                      <span>⏳ Detecting page count for uploaded files…</span>
+                    </div>
+                  )}
+
+                  {hasRangeErrors && (
+                    <div className="home-status-alert is-warning">
+                      <span>⚠️ Please fix invalid page ranges above to continue</span>
+                    </div>
+                  )}
+
+                  <p className="ptc-note">
+                    Final price calculated accurately per page. Copies and settings can be adjusted anytime before payment.
+                  </p>
+
+                  <button
+                    className="btn btn-primary ptc-order-btn"
+                    id="ptcOrderBtn"
+                    disabled={!canOrder}
+                    onClick={handleOrderClick}
+                  >
+                    {isDetectingPages ? 'Detecting Pages…' : (
+                      <>
+                        Start Your Order <span className="arrow-icon">→</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
+
+              {/* Mobile Sticky Bottom Summary Bar */}
+              {files.length > 0 && (
+                <div className="home-mobile-sticky-bar" aria-label="Order summary">
+                  <div className="home-mobile-sticky-content">
+                    <div className="home-mobile-sticky-info">
+                      <div className="home-mobile-sticky-total">
+                        <span className="home-mobile-sticky-label">Estimated:</span>
+                        <span className="home-mobile-sticky-amount">₹{total}</span>
+                      </div>
+                      <span className="home-mobile-sticky-meta">
+                        {totalPages} page{totalPages !== 1 ? 's' : ''} · {files.length} file{files.length > 1 ? 's' : ''}
+                        {classroomDelivery ? ' · Delivery' : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="home-mobile-sticky-btn"
+                      disabled={!canOrder}
+                      onClick={handleOrderClick}
+                    >
+                      {isDetectingPages ? 'Detecting…' : hasRangeErrors ? 'Fix Range' : (
+                        <>
+                          Start Order <span aria-hidden="true">→</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           </section>
           <Footer />
