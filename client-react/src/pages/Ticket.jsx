@@ -116,7 +116,8 @@ export default function Ticket() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [orderId, ticketToken, recheckKey]);
 
-  const displayName = order?.guest_full_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
+  const displayName = order?.guest_full_name || order?.customer_name || (order?.customer_email ? order.customer_email.split('@')[0] : 'Guest');
+  const displayPhone = order?.guest_phone || order?.customer_phone || '—';
   // Everything below comes from the server's state for this order, never from the URL.
   const isPaid = order?.state === 'TICKET_READY';
   // Assigned by the order's saved collection location (lib/deliveryPersons.js).
@@ -224,7 +225,7 @@ export default function Ticket() {
                   </div>
                   <div className="info-details">
                     <span className="info-label">PHONE</span>
-                    <span className="info-value">{order?.guest_phone || '—'}</span>
+                    <span className="info-value">{displayPhone}</span>
                   </div>
                 </div>
 

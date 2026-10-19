@@ -1,6 +1,10 @@
 const pool = require('../db');
 const Profile = require('./Profile');
 
+// Customer contact as admin screens should see it: student profile first, then the
+// guest details saved on the order. Keeps full_name / phone_number populated for
+// guest orders, which have no profile row.
+
 // Canonical payment method stored on the order, keyed by the legacy lowercase
 // payments.method value. Cashfree and UPI QR are the student-facing methods;
 // WHATSAPP / PAY_AT_SHOP are legacy manual orders; SIMULATED is dev-only.
@@ -226,35 +230,52 @@ async function getAdminConfirmablePayment(orderId) {
 /** Unfiltered order lookup for student-facing routes; callers MUST authorize access. */
 async function getOrderRecord(orderId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, u.email AS customer_email
+        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
+         LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.id = ?`,
         [orderId]
     );
-    return rows[0] || null;
+    const row = rows[0] || null;
+    if (!row) return null;
+    const fullName = row.full_name || row.guest_full_name || null;
+    const name = fullName || row.customer_name || null;
+    const phone = row.phone_number || row.guest_phone || null;
+    return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
 }
 
 async function getOrderForUser(orderId, userId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, u.email AS customer_email, p.full_name, p.phone_number, p.class_room_number
+        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
          FROM orders o
          JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.id = ? AND o.user_id = ? AND o.payment_status = 'PAID'`,
         [orderId, userId]
     );
-    return rows[0] || null;
+    const row = rows[0] || null;
+    if (!row) return null;
+    const fullName = row.full_name || row.guest_full_name || null;
+    const name = fullName || row.customer_name || null;
+    const phone = row.phone_number || row.guest_phone || null;
+    return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
 }
 
 async function getOrdersByUser(userId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, p.full_name, p.phone_number, p.class_room_number
+        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
          FROM orders o
+         JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.user_id = ? AND o.payment_status = 'PAID' ORDER BY o.created_at DESC LIMIT 50`,
         [userId]
     );
-    return rows;
+    return rows.map(row => {
+        const fullName = row.full_name || row.guest_full_name || null;
+        const name = fullName || row.customer_name || null;
+        const phone = row.phone_number || row.guest_phone || null;
+        return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
+    });
 }
 
 // Guest order recovery: all orders for a normalized phone (any payment method or
@@ -363,7 +384,18 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
          ${whereClause}`,
         params
     );
-    return { orders: rows, total: count, page, limit };
+    return { orders: rows.map(withCustomerContact), total: count, page, limit };
+}
+
+// Customer contact for admin rows: profile values first, then the order's guest
+// values. Returns the row unchanged fields plus effective full_name / phone_number.
+function withCustomerContact(row) {
+    if (!row) return row;
+    return {
+        ...row,
+        full_name: row.full_name || row.guest_full_name || null,
+        phone_number: row.phone_number || row.guest_phone || null
+    };
 }
 
 async function getOrderById(orderId, shopId = null) {
@@ -378,7 +410,7 @@ async function getOrderById(orderId, shopId = null) {
          WHERE o.id = ? AND ${SHOP_VISIBLE_ORDER} ${shopFilter}`,
         params
     );
-    return rows[0] || null;
+    return withCustomerContact(rows[0] || null);
 }
 
 async function getOrderByTicketTokenHash(tokenHash) {

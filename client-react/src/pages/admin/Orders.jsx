@@ -292,8 +292,8 @@ export default function Orders() {
                     <td data-label="Order ID" className="font-extrabold text-slate-900 whitespace-nowrap">#{String(o.id).padStart(4, '0')}</td>
                     <td data-label="Customer & Contact">
                       <div>
-                        <div className="font-bold text-slate-900">{o.full_name || o.customer_email}</div>
-                        <div className="text-[0.68rem] text-slate-400">{o.phone_number || o.customer_email}</div>
+                        <div className="font-bold text-slate-900">{o.full_name || 'Not provided'}</div>
+                        <div className="text-[0.68rem] text-slate-400">{o.phone_number || 'Not provided'}</div>
                       </div>
                     </td>
                     <td data-label="Pickup Slot" className="text-slate-600 font-medium whitespace-nowrap">{fmtPickup(o)}</td>
@@ -390,11 +390,11 @@ export default function Orders() {
                     <div className="admin-modal-grid">
                       <div className="admin-modal-field">
                         <span className="admin-modal-label">Customer Name</span>
-                        <span className="admin-modal-value">{modalOrder.full_name || 'N/A'}</span>
+                        <span className="admin-modal-value">{modalOrder.full_name || 'Not provided'}</span>
                       </div>
                       <div className="admin-modal-field">
                         <span className="admin-modal-label">Phone Number</span>
-                        <span className="admin-modal-value">{modalOrder.phone_number || 'N/A'}</span>
+                        <span className="admin-modal-value">{modalOrder.phone_number || 'Not provided'}</span>
                       </div>
                       <div className="admin-modal-field">
                         <span className="admin-modal-label">Email Address</span>

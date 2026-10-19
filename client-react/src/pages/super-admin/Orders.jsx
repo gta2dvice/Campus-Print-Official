@@ -110,7 +110,10 @@ export default function Orders() {
                 {data.orders.map((o) => (
                   <tr key={o.id} className="hover:bg-blue-500/[0.03]">
                     <td data-label="Order ID" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
-                    <td data-label="Student" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
+                    <td data-label="Student" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">
+                      <div className="font-semibold">{o.full_name || 'Not provided'}</div>
+                      <div className="text-[0.72rem] text-gray-400">{o.phone_number || 'Not provided'}</div>
+                    </td>
                     <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
                     <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
                     <td data-label="Details" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x</td>
@@ -235,6 +238,8 @@ function OrderModal({ orderId, onClose, onChanged }) {
       ) : (
         <>
           <DetailGrid>
+            <DetailItem label="Customer Name">{order.full_name || 'Not provided'}</DetailItem>
+            <DetailItem label="Phone Number">{order.phone_number || 'Not provided'}</DetailItem>
             <DetailItem label="Student">{order.customer_email}</DetailItem>
             <DetailItem label="Shop">{order.shop_name || '—'}</DetailItem>
             <DetailItem label="Status">

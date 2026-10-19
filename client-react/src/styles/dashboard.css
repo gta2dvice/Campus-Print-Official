@@ -27,15 +27,13 @@
 .app-body {
     background: var(--content-bg);
     min-height: 100vh;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 .app-layout {
     display: flex;
-    /* Single-scroll app shell: the layout is exactly one viewport tall and is the
-       ONE scrolling container on desktop (window and .main-content never scroll). */
-    height: 100vh;
-    overflow-y: auto;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 /* ===== SIDEBAR ===== */
@@ -214,8 +212,8 @@
 .main-content {
     margin-left: var(--sidebar-width);
     flex: 1;
-    padding: 2rem 2.5rem;
-    min-height: 100vh;
+    padding: 1.5rem 2rem;
+    overflow-y: auto;
 }
 
 .content-header {
@@ -454,16 +452,18 @@
 
 .new-order-layout {
     display: grid;
-    /* minmax(0, 1fr): long file names can't stretch the main column past the summary */
-    grid-template-columns: minmax(0, 1fr) 300px;
-    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 1rem;
     align-items: start;
+    overflow-y: auto;
+    max-height: calc(100vh - 10rem);
+    padding-right: 0.25rem;
 }
 
 .order-steps {
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: 0.875rem;
 }
 
 /* Step Card */
@@ -472,8 +472,8 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--card-border);
-    border-radius: 16px;
-    padding: 1.5rem;
+    border-radius: 14px;
+    padding: 1rem;
     box-shadow: var(--shadow-md);
 }
 
@@ -481,7 +481,7 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 0.875rem;
 }
 
 .step-number {
@@ -508,8 +508,8 @@
 /* Upload Zone */
 .upload-zone {
     border: 2px dashed var(--border-color);
-    border-radius: 12px;
-    padding: 2.5rem 1.5rem;
+    border-radius: 10px;
+    padding: 1.25rem 1rem;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -552,7 +552,7 @@
 }
 
 .files-list {
-    margin-top: 1rem;
+    margin-top: 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -610,7 +610,7 @@
 .settings-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    gap: 1rem;
 }
 
 .setting-group {
@@ -767,11 +767,11 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--card-border);
-    border-radius: 16px;
-    padding: 1.5rem;
+    border-radius: 14px;
+    padding: 1.25rem;
     box-shadow: var(--shadow-md);
     position: sticky;
-    top: 1.5rem;
+    top: 1rem;
 }
 
 .summary-title {
@@ -953,26 +953,31 @@
     border: 1px solid var(--card-border);
     border-radius: 20px;
     box-shadow: var(--shadow-lg);
-    padding: 1.75rem 1.5rem 1.5rem;
+    padding: 1.5rem 1.25rem;
     margin: auto;
-    /* The four-step form fits the viewport; only the panel scrolls when taller. */
-    max-height: calc(100vh - 2.5rem);
+    /* Single scroll container for the four-step form so every step, including the
+       Review step and its Back/Continue/Checkout buttons, stays reachable by scroll. */
+    max-height: calc(100vh - 2rem);
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .booking-close {
-    position: absolute;
-    top: 0.85rem;
-    right: 0.85rem;
+    position: sticky;
+    top: 0;
+    right: 0.75rem;
     width: 32px;
     height: 32px;
     border: none;
-    background: transparent;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     color: var(--text-muted);
-    font-size: 1.5rem;
+    font-size: 1.35rem;
     line-height: 1;
     cursor: pointer;
     border-radius: 8px;
+    z-index: 1;
 }
 
 .booking-close:hover {
@@ -985,7 +990,7 @@
     gap: 0.5rem;
     list-style: none;
     padding: 0;
-    margin: 0 0 1.5rem;
+    margin: 0 0 1.125rem;
 }
 
 .booking-progress-step {
@@ -1009,16 +1014,16 @@
 }
 
 .booking-title {
-    font-size: 1.35rem;
+    font-size: 1.3rem;
     font-weight: 700;
     color: var(--text-primary);
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.25rem;
 }
 
 .booking-subtitle {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     color: var(--text-secondary);
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
 }
 
 .location-grid {
@@ -1033,7 +1038,7 @@
     align-items: flex-start;
     gap: 0.2rem;
     text-align: left;
-    padding: 1rem 1.1rem;
+    padding: 0.9rem 1rem;
     border: 1.5px solid var(--border-color);
     border-radius: 14px;
     background: #fff;
@@ -1453,15 +1458,15 @@
 
 .cp-view-header {
     text-align: center;
-    margin-bottom: 2.75rem;
+    margin-bottom: 1.25rem;
 }
 
 /* ── 1. Location Cards ── */
 .cp-cards-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 1.5rem;
-    margin-bottom: 3rem;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
 }
 
 .cp-loc-card {
@@ -1619,8 +1624,8 @@
 .cp-slots-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 1.35rem;
-    margin-bottom: 3rem;
+    gap: 0.875rem;
+    margin-bottom: 1.25rem;
 }
 
 .cp-slot-pill {
@@ -1718,8 +1723,8 @@
 .cp-review-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    margin-bottom: 3rem;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
 }
 
 .cp-review-box {
@@ -1828,11 +1833,13 @@
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
 }
 
 .cp-step-footer.space-between {
     justify-content: space-between;
+    margin-top: 0;
 }
 
 /* ── Mobile Responsiveness ── */
