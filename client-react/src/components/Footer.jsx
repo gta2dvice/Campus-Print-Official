@@ -26,7 +26,7 @@ export default function Footer() {
         <footer className="site-footer">
             <div className="footer-inner">
                 <div className="footer-brand">
-                    <span className="footer-logo">PRINT CAMPUS</span>
+                    <span className="footer-logo">Print Campus</span>
                     <p className="footer-tagline">Skip the queue. Print smarter.</p>
                 </div>
 

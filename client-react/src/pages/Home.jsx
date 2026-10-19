@@ -557,14 +557,14 @@ export default function Home() {
                     <span className="detail-icon">🏛️</span>
                     <div>
                       <strong>Delivery Points</strong>
-                      <p>1. Main Gate<br />2. Academic Block<br />3. Hostel Gate</p>
+                      <p>1. Main Gate<br />2. Academic Block<br />3. Hostel Gate<br />4. Red Canteen</p>
                     </div>
                   </div>
                   <div className="location-detail-item">
                     <span className="detail-icon">🕐</span>
                     <div>
                       <strong>Hours</strong>
-                      <p>Mon –Fri: 9:00 AM – 4:00 PM<br />Sunday &amp; Saturday: Closed(Online Services)</p>
+                      <p>Mon –Fri: 9:00 AM – 4:00 PM<br /></p>
                     </div>
                   </div>
                   <div className="location-detail-item">
