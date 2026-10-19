@@ -433,7 +433,7 @@ export default function Orders() {
                         <span className="admin-modal-value">{modalOrder.printing_side === 'double' ? 'Double-Sided' : 'Single-Sided'}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Spiral Binding</span>
+                        <span className="admin-modal-label">Binding</span>
                         <span className="admin-modal-value">{modalOrder.spiral_binding ? 'Yes' : 'No'}</span>
                       </div>
                       <div className="admin-modal-field">

@@ -32,7 +32,10 @@
 
 .app-layout {
     display: flex;
-    min-height: 100vh;
+    /* Single-scroll app shell: the layout is exactly one viewport tall and is the
+       ONE scrolling container on desktop (window and .main-content never scroll). */
+    height: 100vh;
+    overflow-y: auto;
 }
 
 /* ===== SIDEBAR ===== */
@@ -216,7 +219,6 @@
     box-sizing: border-box;
     padding: 2rem 2.5rem;
     min-height: 100vh;
-    overflow-y: auto;
 }
 
 .content-header {
@@ -1010,6 +1012,9 @@
     box-shadow: var(--shadow-lg);
     padding: 1.75rem 1.5rem 1.5rem;
     margin: auto;
+    /* The four-step form fits the viewport; only the panel scrolls when taller. */
+    max-height: calc(100vh - 2.5rem);
+    overflow-y: auto;
 }
 
 .booking-close {
@@ -1968,7 +1973,7 @@
 
 .booking-panel.booking-container {
     max-width: 920px;
-    padding: 2.5rem 2rem;
+    padding: 1.75rem 2rem 1.5rem;
 }
 
 /* Mobile top bar for the student sidebar (hidden on desktop) */
@@ -1981,9 +1986,14 @@
    MOBILE — student flow (phones only)
    ============================================= */
 @media (max-width: 768px) {
-    /* .app-body locks body scrolling; phones need the page to scroll */
+    /* Phones: the page itself scrolls (single window scrollbar). */
     body.app-body {
         overflow-x: hidden;
+        overflow-y: visible;
+    }
+
+    .app-layout {
+        height: auto;
         overflow-y: visible;
     }
 
@@ -2058,6 +2068,11 @@
     .main-content {
         padding: 1.25rem 1rem 2rem;
         min-height: auto;
+    }
+
+    .booking-panel,
+    .booking-panel.booking-container {
+        max-height: 100dvh;
     }
 
     .page-title {

@@ -10,14 +10,14 @@ const Order = require('../models/Order');
 const OrderFile = require('../models/OrderFile');
 const Payment = require('../models/Payment');
 
-const FORBIDDEN_KEYS = ['total_price', 'service_charge', 'delivery_charge', 'classroom_charge', 'printing_amount', 'ticket_access_token_hash', 'grossExtraRevenue', 'customerTotal'];
+const FORBIDDEN_KEYS = ['total_price', 'service_charge', 'delivery_charge', 'classroom_charge', 'binding_charge', 'printing_amount', 'ticket_access_token_hash', 'grossExtraRevenue', 'customerTotal'];
 
 const fullRow = {
     id: 7, ticket_number: 'CP-007', status: 'accepted', shop_id: 1, created_at: '2026-10-12T10:00:00Z',
     collection_location_id: 'hostel-gate', collection_location: 'Hostel Gate', collection_time: '1:15 PM',
     guest_full_name: 'Student', guest_phone: '9876543210', payment_status: 'PAID', payment_method: 'CASHFREE',
     ticket_status: 'READY', total_price: '37.00', printing_amount: '30.00', service_charge: '3.00',
-    delivery_charge: '4.00', classroom_charge: '0.00', ticket_access_token_hash: 'f'.repeat(64)
+    delivery_charge: '3.00', classroom_charge: '0.00', binding_charge: '26.00', ticket_access_token_hash: 'f'.repeat(64)
 };
 const fileRow = { id: 1, order_id: 7, original_name: 'notes.pdf', page_count: 15, copies: 1, printing_side: 'single', color_mode: 'bw', printing_charge: '30.00' };
 
