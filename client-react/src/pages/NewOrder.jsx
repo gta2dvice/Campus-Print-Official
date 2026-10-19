@@ -1891,6 +1891,10 @@ export default function NewOrder() {
                 <h3 className="cp-review-heading">Customer Details</h3>
                 <div className="cp-review-details-list">
                   <div className="cp-review-line">
+                    <span>Name</span>
+                    <strong>{guestDetails?.fullName || displayName || 'Not provided'}</strong>
+                  </div>
+                  <div className="cp-review-line">
                     <span>Delivery Option</span>
                     <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
                   </div>

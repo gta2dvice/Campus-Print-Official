@@ -10,7 +10,7 @@
    to auto on the root and creates a second, duplicate scrollbar.) */
 body.ticket-page-body {
     max-width: 100%;
-    overflow-x: clip;
+    overflow-x: hidden;
     width: 100%;
     box-sizing: border-box;
 }
@@ -24,6 +24,8 @@ body.ticket-page-body {
     flex-direction: column;
 }
 
+/* No nested scroll container here: the window keeps the single main scrollbar,
+   so the page never shows two competing vertical scrollbars. */
 .ticket-page-wrapper {
     position: relative;
     z-index: 10;
@@ -33,13 +35,10 @@ body.ticket-page-body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    padding: 3rem 1.25rem 4rem;
+    justify-content: flex-start;
+    padding: 1.5rem 1rem 3rem;
     isolation: isolate;
     box-sizing: border-box;
-    /* clip (not hidden): hides horizontal spill without turning this wrapper into
-       a scroll container with its own vertical scrollbar. */
-    overflow-x: clip;
 }
 
 .ticket-main-content {
