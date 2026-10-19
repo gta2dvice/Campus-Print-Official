@@ -44,6 +44,10 @@ const ACCEPT_ATTR = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png';
 const SUPPORTED_LABEL = 'PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, JPG, PNG';
 const EXT_LABELS = { pdf: 'PDF', doc: 'DOC', docx: 'DOCX', ppt: 'PPT', pptx: 'PPTX', xls: 'XLS', xlsx: 'XLSX', jpg: 'JPG', jpeg: 'JPG', png: 'PNG' };
 
+function toggleClass(isActive) {
+  return `toggle-option${isActive ? ' active' : ''}`;
+}
+
 function fileExtLabel(name) {
   const m = /\.([a-z0-9]+)$/i.exec(name || '');
   return m ? (EXT_LABELS[m[1].toLowerCase()] || m[1].toUpperCase()) : 'FILE';
