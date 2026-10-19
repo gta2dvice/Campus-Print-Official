@@ -1045,7 +1045,6 @@ export default function Home() {
                     </button>
                   </div>
                 )}
-              </div>
 
               {/* Pricing Summary Card */}
               <div className="pricing-total-wrap">
