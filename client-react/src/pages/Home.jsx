@@ -1035,7 +1035,7 @@ export default function Home() {
           </main>
         </div>
 
-      {/* Guest Details Modal for guest flow */}
+       {/* Guest Details Modal for guest flow */}
       <GuestDetailsModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -1046,20 +1046,26 @@ export default function Home() {
             phone: details.phone,
             classroom: details.classroom,
           };
+
           try {
-            localStorage.setItem('cp_guest_details', JSON.stringify(guest));
+            localStorage.setItem(
+              'cp_guest_details',
+              JSON.stringify(guest)
+            );
           } catch {
             // localStorage unavailable
           }
+
           try {
             await persistHomeOrder(guest);
           } catch (err) {
             alert(storageErrorMessage(err));
           }
+
           setModalOpen(false);
           navigate('/new-order');
         }}
       />
-		</>
+    </>
   );
 }
