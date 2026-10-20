@@ -30,11 +30,39 @@ router.post('/login', async (req, res) => {
 
         const user = await User.findByEmail(email);
         if (user && user.role === 'shop_admin' && user.is_active && (await User.matchPassword(password, user.password))) {
-            req.session.adminId = user.id;
-            req.session.adminEmail = user.email;
-            req.session.adminRole = 'shop_admin';
-            req.session.adminShopId = user.shop_id;
-            res.status(200).json({ id: user.id, email: user.email, message: 'Login successful' });
+            // 1. Session Fixation Protection: Regenerate session ID
+            req.session.regenerate(async (err) => {
+                if (err) {
+                    console.error('Session regeneration error:', err);
+                    return res.status(500).json({ message: 'Internal server error' });
+                }
+
+                // 2. Concurrency Limit: Max 2 active sessions
+                try {
+                    const [activeSessions] = await require('../db').query(
+                        'SELECT 1 FROM admin_sessions WHERE user_id = ? AND revocation_status = false',
+                        [user.id]
+                    );
+                    if (activeSessions.length >= 2) {
+                        return res.status(403).json({ message: 'Too many active sessions. Please logout from other devices.' });
+                    }
+
+                    // 3. Register session
+                    await require('../db').query(
+                        'INSERT INTO admin_sessions (sid, user_id, role) VALUES (?, ?, ?)',
+                        [req.sessionID, user.id, 'shop_admin']
+                    );
+
+                    req.session.adminId = user.id;
+                    req.session.adminEmail = user.email;
+                    req.session.adminRole = 'shop_admin';
+                    req.session.adminShopId = user.shop_id;
+                    res.status(200).json({ id: user.id, email: user.email, message: 'Login successful' });
+                } catch (dbErr) {
+                    console.error('Admin session registration error:', dbErr);
+                    res.status(500).json({ message: 'Internal server error' });
+                }
+            });
         } else {
             res.status(401).json({ message: 'Invalid email or password' });
         }
@@ -54,12 +82,24 @@ router.get('/status', (req, res) => {
 });
 
 // @route  POST /api/admin/logout
-router.post('/logout', (req, res) => {
-    req.session.adminId = null;
-    req.session.adminEmail = null;
-    req.session.adminRole = null;
-    req.session.adminShopId = null;
-    res.status(200).json({ message: 'Logged out successfully' });
+router.post('/logout', async (req, res) => {
+    const sid = req.sessionID;
+    try {
+        // Mark session as revoked in registry
+        await require('../db').query(
+            'UPDATE admin_sessions SET revocation_status = true WHERE sid = ?',
+            [sid]
+        );
+        req.session.destroy(err => {
+            if (err) return res.status(500).json({ message: 'Error logging out' });
+            res.clearCookie('connect.sid');
+            res.status(200).json({ message: 'Logged out successfully' });
+        });
+    } catch (err) {
+        console.error('Admin logout registry error:', err);
+        // Proceed with session destroy anyway
+        req.session.destroy(() => res.status(200).json({ message: 'Logged out successfully' }));
+    }
 });
 
 // The Printer Admin (shop_admin) sees printing charges only. Every response below

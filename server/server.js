@@ -101,15 +101,37 @@ app.use((req, res, next) => {
 // Session
 app.use(session({
     store: createSessionStore(session),
-    secret: process.env.SESSION_SECRET || 'campus-print-secret',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-        maxAge: 1000 * 60 * 60 * 24, // 1 day
+        maxAge: 1000 * 60 * 30, // 30 minutes
         secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
     }
 }));
+
+// Admin Session Inactivity Timeout Middleware
+app.use((req, res, next) => {
+    if (req.session && (req.session.adminId || req.session.superAdminId)) {
+        const now = Date.now();
+        const lastActivity = req.session.lastActivity || now;
+
+        if (now - lastActivity > 1000 * 60 * 30) {
+            return req.session.destroy((err) => {
+                if (err) console.error('Session destroy error:', err);
+                res.status(401).json({ message: 'Session expired due to inactivity. Please login again.' });
+            });
+        }
+
+        // Update lastActivity throttled to every 1 minute to reduce DB writes
+        if (now - lastActivity > 1000 * 60) {
+            req.session.lastActivity = now;
+        }
+    }
+    next();
+});
 
 // ── API Routes ───────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -144,18 +166,31 @@ if (fs.existsSync(CLIENT_INDEX)) {
 }
 
 // ── Start Server ─────────────────────────────────
-// Create/secure the session table before taking traffic; still start if the DB is briefly unreachable.
-ensureSessionTable().catch(err => console.error('Session table setup error:', err.message)).finally(() => app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    // Automatic deletion of uploaded files is intentionally OFF (future scope):
-    // admins must be able to preview / download order files. The cleanup job
-    // (jobs/cleanupExpiredPdfs.js) is kept but is not scheduled anywhere.
+async function startServer() {
+    try {
+        if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+            throw new Error('SESSION_SECRET is required in production environment');
+        }
+        await ensureSessionTable();
 
-    // Recovery sweep: paid orders whose ticket wasn't issued yet (ticket_status
-    // GENERATION_PENDING). Status checks and ticket views also retry on demand.
-    const runTicketSweep = () => retryPendingTickets()
-        .then(result => { if (result.pending) console.log('Ticket recovery sweep:', result); })
-        .catch(err => console.error('Ticket recovery sweep error:', err.message));
-    setInterval(runTicketSweep, 5 * 60 * 1000);
-    runTicketSweep();
-}));
+        app.listen(PORT, () => {
+            console.log(`Server running on http://localhost:${PORT}`);
+            // Automatic deletion of uploaded files is intentionally OFF (future scope):
+            // admins must be able to preview / download order files. The cleanup job
+            // (jobs/cleanupExpiredPdfs.js) is kept but is not scheduled anywhere.
+
+            // Recovery sweep: paid orders whose ticket wasn't issued yet (ticket_status
+            // GENERATION_PENDING). Status checks and ticket views also retry on demand.
+            const runTicketSweep = () => retryPendingTickets()
+                .then(result => { if (result.pending) console.log('Ticket recovery sweep:', result); })
+                .catch(err => console.error('Ticket recovery sweep error:', err.message));
+            setInterval(runTicketSweep, 5 * 60 * 1000);
+            runTicketSweep();
+        });
+    } catch (err) {
+        console.error('Startup Error:', err.message);
+        process.exit(1);
+    }
+}
+
+startServer();
