@@ -614,7 +614,7 @@ img[src=""] {
     font-size: 1.05rem;
     color: var(--text-secondary);
     max-width: 460px;
-    margin: 0 0 2.4rem;
+    margin: 0 auto 2.4rem;
 }
 
 .location-details {
