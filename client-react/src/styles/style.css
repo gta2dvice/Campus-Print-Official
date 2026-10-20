@@ -68,6 +68,7 @@ body {
     background-size: cover;
     background-position: center center;
     background-repeat: no-repeat;
+    will-change: transform;
 }
 
 .page-content {
@@ -102,9 +103,10 @@ body {
     align-items: center;
     justify-content: center;
     z-index: 1;
-    filter: blur(var(--hero-blur, 0px));
     transition: filter 0.08s linear;
     overflow: hidden;
+    transform: translateZ(0);
+    will-change: transform;
 }
 
 /* ── Sliding reveal-wrapper (slides OVER the sticky hero) ── */
@@ -131,6 +133,8 @@ body {
     justify-content: center;
     padding: 2rem 0;
     z-index: 10;
+    transform: translateZ(0);
+    will-change: transform;
 }
 
 .top-nav nav {
@@ -437,8 +441,8 @@ img[src=""] {
     box-shadow:
         0 18px 40px rgba(15, 23, 42, 0.18),
         0 0 0 1px rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.8);
+    will-change: transform;
 }
 
 .trusted-card-bg {
@@ -676,8 +680,6 @@ img[src=""] {
 
 .map-placeholder {
     background: rgba(255, 255, 255, 0.8);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(59, 130, 246, 0.15);
     border-radius: 28px;
     padding: 3rem 2.5rem;
@@ -931,9 +933,7 @@ img[src=""] {
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
+    background: rgba(0, 0, 0, 0.6);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -996,9 +996,7 @@ img[src=""] {
     position: fixed;
     inset: 0;
     z-index: 300;
-    background: rgba(15, 23, 42, 0.55);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(15, 23, 42, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1071,9 +1069,7 @@ img[src=""] {
     position: fixed;
     inset: 0;
     z-index: 300;
-    background: rgba(15, 23, 42, 0.55);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(15, 23, 42, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1785,7 +1781,7 @@ img[src=""] {
 }
 
 .pricing-card {
-    background: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.82);
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
     border: 1px solid rgba(255, 255, 255, 0.6);
@@ -2028,9 +2024,7 @@ img[src=""] {
 /* ─── Pages Slider ─── */
 .pricing-slider-wrap {
     width: 100%;
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
+    background: rgba(255, 255, 255, 0.82);
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 24px;
     padding: 2rem 2.5rem;
@@ -2143,9 +2137,7 @@ img[src=""] {
 }
 
 .pricing-total-card {
-    background: rgba(255, 255, 255, 0.78);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
+    background: rgba(255, 255, 255, 0.82);
     border: 1px solid rgba(255, 255, 255, 0.65);
     border-radius: 24px;
     padding: 2rem 2.5rem;
@@ -3310,4 +3302,23 @@ body.auth-page {
 .page-content .site-footer .footer-tagline,
 .page-content .site-footer .footer-bottom p {
     font-family: 'DM Sans', sans-serif;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   REDUCED MOTION
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .trusted-orbit,
+    .blob,
+    .pricing-orb,
+    .card-avatar-ring,
+    .animate-orb-drift {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .reveal {
+        transition: opacity 0.6s ease !important;
+        transform: none !important;
+    }
 }
