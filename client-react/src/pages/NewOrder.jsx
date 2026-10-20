@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -1634,372 +1634,392 @@ export default function NewOrder() {
       {/* Booking flow: Time → Location → Payment → Review */}
       <div className="booking-overlay" hidden={!modalOpen} onClick={(e) => { if (e.target === e.currentTarget) closeBookingModal(); }}>
         <div className="booking-panel booking-container" role="dialog" aria-modal="true">
-          <button className="booking-close" type="button" aria-label="Close booking" onClick={closeBookingModal}>×</button>
 
-          <div className="cp-nav-steps cp-nav-steps--four" role="navigation" aria-label="Booking steps">
-            <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step !== 'slot' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
-              <span className="step-num">01</span><span className="step-title">Time Slot</span>
-            </button>
-            <span className="step-arrow">→</span>
-            <button
-              type="button"
-              className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'payment' || step === 'review' ? ' is-done' : ''}`}
-              onClick={() => selectedTimeSlot && goToStep('location')}
-            >
-              <span className="step-num">02</span><span className="step-title">Location</span>
-            </button>
-            <span className="step-arrow">→</span>
-            <button
-              type="button"
-              className={`cp-nav-step${step === 'payment' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
-              onClick={() => selectedLocationId && selectedTimeSlot && goToStep('payment')}
-            >
-              <span className="step-num">03</span><span className="step-title">Payment</span>
-            </button>
-            <span className="step-arrow">→</span>
-            <button
-              type="button"
-              className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
-              onClick={() => selectedLocationId && selectedTimeSlot && paymentMethod && goToStep('review')}
-            >
-              <span className="step-num">04</span><span className="step-title">Review</span>
-            </button>
+          {/* ── Fixed header: close button + step navigation ── */}
+          <div className="booking-panel-header">
+            <button className="booking-close" type="button" aria-label="Close booking" onClick={closeBookingModal}>×</button>
+
+            <div className="cp-nav-steps cp-nav-steps--four" role="navigation" aria-label="Booking steps">
+              <button type="button" className={`cp-nav-step${step === 'slot' ? ' is-active' : ''}${step !== 'slot' ? ' is-done' : ''}`} onClick={() => goToStep('slot')}>
+                <span className="step-num">01</span><span className="step-title">Time Slot</span>
+              </button>
+              <span className="step-arrow">→</span>
+              <button
+                type="button"
+                className={`cp-nav-step${step === 'location' ? ' is-active' : ''}${step === 'payment' || step === 'review' ? ' is-done' : ''}`}
+                onClick={() => selectedTimeSlot && goToStep('location')}
+              >
+                <span className="step-num">02</span><span className="step-title">Location</span>
+              </button>
+              <span className="step-arrow">→</span>
+              <button
+                type="button"
+                className={`cp-nav-step${step === 'payment' ? ' is-active' : ''}${step === 'review' ? ' is-done' : ''}`}
+                onClick={() => selectedLocationId && selectedTimeSlot && goToStep('payment')}
+              >
+                <span className="step-num">03</span><span className="step-title">Payment</span>
+              </button>
+              <span className="step-arrow">→</span>
+              <button
+                type="button"
+                className={`cp-nav-step${step === 'review' ? ' is-active' : ''}`}
+                onClick={() => selectedLocationId && selectedTimeSlot && paymentMethod && goToStep('review')}
+              >
+                <span className="step-num">04</span><span className="step-title">Review</span>
+              </button>
+            </div>
           </div>
 
-          {/* Step 1: Time slots */}
-          <section className="cp-step-view" hidden={step !== 'slot'}>
-            <div className="cp-view-header">
-              <span className="location-tag">🕒 Pickup Schedule</span>
-              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose your collection time</h2>
-              <p className="location-subtitle">Select a time first. Pickup points for that slot are shown next.</p>
-            </div>
-            {preOrderMode && (
-              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
-                🕔 Same-day booking is closed for today. You're pre-ordering for <strong>tomorrow</strong> — the times below are tomorrow's slots.
-              </div>
-            )}
-            <div className="cp-slots-grid">
-              {slotsLoading ? (
-                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
-                  <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading available time slots...</p>
-                </div>
-              ) : slots.map((s) => {
-                const isPast = s.status === 'past';
-                const isFull = s.status === 'full';
-                const isLimited = s.status === 'limited';
-                const isDisabled = isPast || isFull;
-                const isSelected = selectedTimeSlot === s.time;
-                // Still selectable: picking it clears the chosen location (see selectTimeSlot).
-                const notAtSelectedLocation = !!selectedLocationId && !isLocationOffered(selectedLocationId, s.time);
-                let statusLabel = 'Available';
-                if (isPast) statusLabel = 'Unavailable';
-                else if (isFull) statusLabel = 'Fully Booked';
-                else if (notAtSelectedLocation) statusLabel = `Not at ${selectedLocationName}`;
-                else if (isLimited) statusLabel = 'Limited';
-                let classes = 'cp-slot-pill';
-                if (isPast) classes += ' is-past';
-                else if (isFull) classes += ' is-full';
-                else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
-                else classes += ' is-available';
-                if (isSelected) classes += ' is-selected';
-                return (
-                  <button key={s.time} type="button" className={classes} disabled={isDisabled} onClick={() => selectTimeSlot(s.time)}>
-                    <span className="cp-slot-time-text">{s.time}</span>
-                    <span className="cp-slot-tag">{statusLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {preOrderMode && selectedTimeSlot && (
-              <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#9a3412', fontWeight: 600 }}>
-                You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot}.
-              </p>
-            )}
-            <div className="cp-step-footer space-between">
-              <button type="button" className="btn btn-secondary" onClick={closeBookingModal}>← Back to Order</button>
-              <button type="button" className="btn btn-primary" disabled={!selectedTimeSlot} onClick={() => goToStep('location')}>
-                Continue to Location <span className="arrow-icon">→</span>
-              </button>
-            </div>
-          </section>
+          {/* ── Scrollable body: active step content (no action buttons) ── */}
+          <div className="booking-panel-body">
 
-          {/* Step 2: Location */}
-          <section className="cp-step-view" hidden={step !== 'location'}>
-            <div className="cp-view-header">
-              <span className="location-tag">📍 Collection Point</span>
-              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Where should we deliver your prints?</h2>
-              <p className="location-subtitle">Pickup {preOrderMode ? 'tomorrow' : ''} at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+            {/* Step 1: Time slots */}
+            <section className="cp-step-view" hidden={step !== 'slot'}>
+              <div className="cp-view-header">
+                <span className="location-tag">🕒 Pickup Schedule</span>
+                <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose your collection time</h2>
+                <p className="location-subtitle">Select a time first. Pickup points for that slot are shown next.</p>
+              </div>
               {preOrderMode && (
-                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>📦 This is a pre-order — same-day booking for today is closed.</p>
+                <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#9a3412' }}>
+                  🕔 Same-day booking is closed for today. You're pre-ordering for <strong>tomorrow</strong> — the times below are tomorrow's slots.
+                </div>
               )}
-            </div>
-            <div className="cp-cards-grid">
-              {slotsLoading ? (
-                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
-                  <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading collection points...</p>
-                </div>
-              ) : LOCATIONS.map((loc) => {
-                const locStatus = locationStatuses.find((l) => l.id === loc.id);
-                const status = locStatus?.status || 'unavailable';
-                const isPastSlot = status === 'past';
-                const isUnavailable = status === 'unavailable' || isPastSlot;
-                const isFull = status === 'full';
-                const isLimited = status === 'limited';
-                const isDisabled = isUnavailable || isFull;
-                let statusLabel = 'Available';
-                if (isUnavailable) statusLabel = 'Booked';
-                else if (isFull) statusLabel = 'Fully Booked';
-                else if (isLimited) statusLabel = 'Limited';
-                let classes = 'cp-loc-card';
-                if (loc.id === selectedLocationId && !isDisabled) classes += ' is-selected';
-                if (isDisabled) classes += ' is-unavailable';
-                return (
-                  <button
-                    key={loc.id}
-                    type="button"
-                    className={classes}
-                    disabled={isDisabled}
-                    onClick={() => handleLocationSelect(loc.id, loc.name)}
-                  >
-                    <div className="cp-card-icon">
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{loc.icon}</svg>
-                    </div>
-                    <h3 className="cp-card-title">{loc.name}</h3>
-                    <p className="cp-card-sub">
-                      {loc.sub}
-                      {loc.id === 'hostel-gate' && (
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#3b82f6', fontWeight: '600', marginTop: '0.25rem' }}>
-                          Hostel delivery: +₹3
-                        </span>
-                      )}
-                    </p>
-                    <span className="cp-loc-status-tag">{statusLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="cp-step-footer space-between">
-              <button type="button" className="btn btn-secondary" onClick={() => goToStep('slot')}>← Back to Time Slot</button>
-              <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('payment')}>
-                Continue to Payment <span className="arrow-icon">→</span>
-              </button>
-            </div>
-          </section>
-
-          {/* Step 3: Payment gateway */}
-          <section className="cp-step-view" hidden={step !== 'payment'}>
-            <div className="cp-view-header">
-              <span className="location-tag">💳 Payment</span>
-              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose how you'll pay</h2>
-              <p className="location-subtitle">Total payable: <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>₹{p.total}</strong></p>
-            </div>
-            {paymentOptionsLoading && !paymentOptions ? (
-              <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
-                <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
-                <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading payment options...</p>
+              <div className="cp-slots-grid">
+                {slotsLoading ? (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
+                    <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading available time slots...</p>
+                  </div>
+                ) : slots.map((s) => {
+                  const isPast = s.status === 'past';
+                  const isFull = s.status === 'full';
+                  const isLimited = s.status === 'limited';
+                  const isDisabled = isPast || isFull;
+                  const isSelected = selectedTimeSlot === s.time;
+                  const notAtSelectedLocation = !!selectedLocationId && !isLocationOffered(selectedLocationId, s.time);
+                  let statusLabel = 'Available';
+                  if (isPast) statusLabel = 'Unavailable';
+                  else if (isFull) statusLabel = 'Fully Booked';
+                  else if (notAtSelectedLocation) statusLabel = `Not at ${selectedLocationName}`;
+                  else if (isLimited) statusLabel = 'Limited';
+                  let classes = 'cp-slot-pill';
+                  if (isPast) classes += ' is-past';
+                  else if (isFull) classes += ' is-full';
+                  else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
+                  else classes += ' is-available';
+                  if (isSelected) classes += ' is-selected';
+                  return (
+                    <button key={s.time} type="button" className={classes} disabled={isDisabled} onClick={() => selectTimeSlot(s.time)}>
+                      <span className="cp-slot-time-text">{s.time}</span>
+                      <span className="cp-slot-tag">{statusLabel}</span>
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <>
-                <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
-                  {PAYMENT_OPTIONS.map((opt) => {
-                    const isDisabled = opt.id === 'upi_qr' && !paymentOptions?.upi;
-                    const isSelected = paymentMethod === opt.id && !isDisabled;
-                    let classes = 'cp-loc-card cp-pay-card';
-                    if (opt.recommended) classes += ' cp-pay-recommended';
-                    if (isSelected) classes += ' is-selected';
-                    if (isDisabled) classes += ' is-unavailable';
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={isSelected}
-                        className={classes}
-                        disabled={isDisabled}
-                        onClick={() => setPaymentMethod(opt.id)}
-                      >
-                        <div className="cp-card-icon">
-                          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>
-                        </div>
-                        <h3 className="cp-card-title">{opt.name}</h3>
-                        {opt.badge && <span className="cp-pay-badge">{opt.badge}</span>}
-                        <p className={`cp-pay-reliability cp-pay-reliability--${opt.tone}`}>{opt.reliability}</p>
-                        <p className="cp-card-sub cp-pay-desc">{opt.description}</p>
-                        <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {paymentMethod === 'upi_qr' && (
-                  <div className="cp-review-box cp-payment-detail">
-                    <h3 className="cp-review-heading">Pay via UPI QR</h3>
-                    <p className="cp-card-sub">
-                      When you continue, we'll create your order and show a UPI QR for <strong>₹{p.total}</strong>.
-                      Scan it with any UPI app to pay. Your payment is <strong>confirmed by our team</strong> — the
-                      order stays <strong>pending</strong> until then.
-                    </p>
-                    {!paymentOptions?.upi && (
-                      <p className="cp-card-sub"><strong>UPI isn't set up yet — please choose another method.</strong></p>
-                    )}
-                  </div>
-                )}
-
-                {paymentMethod === 'none' && (
-                  <div className="cp-review-box cp-payment-detail">
-                    <h3 className="cp-review-heading">Order via Personal WhatsApp</h3>
-                    <p className="cp-card-sub">
-                      This is a <strong>manual order</strong>. When you continue, you'll get step-by-step WhatsApp
-                      instructions. <strong>No ticket is auto-generated</strong> — our team verifies and confirms your order.
-                    </p>
-                    {!paymentOptions?.phone && (
-                      <p className="cp-card-sub"><strong>WhatsApp number isn't set up yet — please contact the shop at the pickup counter.</strong></p>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-            <div className="cp-step-footer space-between">
-              <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
-              <button type="button" className="btn btn-primary" disabled={!paymentMethod} onClick={() => goToStep('review')}>
-                Continue to Review <span className="arrow-icon">→</span>
-              </button>
-            </div>
-          </section>
-
-          {/* Step 4: Review */}
-          <section className="cp-step-view" hidden={step !== 'review'}>
-            <div className="cp-view-header">
-              <span className="location-tag">✨ Confirm Details</span>
-              <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Review your booking</h2>
-              <p className="location-subtitle">Confirm pickup details before proceeding to payment.</p>
-              {preOrderMode && (
-                <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>
-                  You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot || '—'}.
+              {preOrderMode && selectedTimeSlot && (
+                <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#9a3412', fontWeight: 600 }}>
+                  You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot}.
                 </p>
               )}
-            </div>
+            </section>
 
-            <div className="cp-review-container">
-              <div className="cp-review-box">
-                <h3 className="cp-review-heading">Customer Details</h3>
-                <div className="cp-review-details-list">
-                  <div className="cp-review-line">
-                    <span>Name</span>
-                    <strong>{guestDetails?.fullName || displayName || 'Not provided'}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Delivery Option</span>
-                    <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Email</span>
-                    <strong>{guestDetails?.email || currentUser?.email || '—'}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Phone</span>
-                    <strong>{guestDetails?.phone || '—'}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Class / Section</span>
-                    <strong>{guestDetails?.classroom || '—'}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="cp-review-box">
-                <h3 className="cp-review-heading">Collection Details</h3>
-                <div className="cp-review-row">
-                  <div>
-                    <span className="cp-review-label">Collection Location</span>
-                    <strong className="cp-review-val">{selectedLocationName || '—'}</strong>
-                  </div>
-                  <button type="button" className="cp-inline-edit" onClick={() => goToStep('location')}>Edit Location</button>
-                </div>
-                <div className="cp-review-row">
-                  <div>
-                    <span className="cp-review-label">Collection Time</span>
-                    <strong className="cp-review-val">{selectedTimeSlot || '—'}</strong>
-                  </div>
-                  <button type="button" className="cp-inline-edit" onClick={() => goToStep('slot')}>Edit Time</button>
-                </div>
-                <div className="cp-review-row">
-                  <div>
-                    <span className="cp-review-label">Collection Day</span>
-                    <strong className="cp-review-val">{preOrderMode ? 'Tomorrow (Pre-order)' : 'Today'}</strong>
-                  </div>
-                </div>
-                <div className="cp-review-row">
-                  <div>
-                    <span className="cp-review-label">Payment Method</span>
-                    <strong className="cp-review-val">{PAYMENT_OPTIONS.find((o) => o.id === paymentMethod)?.name || '—'}</strong>
-                  </div>
-                  <button type="button" className="cp-inline-edit" onClick={() => goToStep('payment')}>Edit Payment</button>
-                </div>
-              </div>
-
-              <div className="cp-review-box">
-                <h3 className="cp-review-heading">Order Summary</h3>
-                <div className="cp-review-details-list">
-                  <div className="cp-review-line">
-                    <span>Documents ({files.length} file{files.length > 1 ? 's' : ''} · {p.pages} total pages)</span>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                      {files.map(f => (
-                        <span key={f.key} style={{ fontSize: '0.8rem' }}>{f.file.name}: {f.copies}x</span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Print Mode</span>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                      {files.map(f => (
-                        <span key={f.key} style={{ fontSize: '0.8rem' }}>
-                          {f.file.name}: {f.colorMode === 'color' ? 'Color' : 'B&W'}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Paper &amp; Side</span>
-                    <strong>{`A4`} · {files.some(f => f.printingSide === 'double') ? 'Mixed (S/D)' : (files[0]?.printingSide === 'double' ? 'Double-Sided' : 'Single-Sided')}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Binding</span>
-                    <strong>{spiralBinding ? `Yes — ₹${BINDING_CHARGE} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Printing ({p.pages} pages)</span>
-                    <strong>₹{p.base + p.a3Extra}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Service Charge</span>
-                    <strong>₹{p.serviceCharge}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Delivery Charge</span>
-                    <strong>₹{p.deliveryCharge}</strong>
-                  </div>
-                </div>
-                <div className="cp-review-total">
-                  <span>Total Amount</span>
-                  <strong>₹{p.total}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div className="cp-step-footer space-between" style={{ marginTop: '1.5rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => goToStep('payment')}>← Back to Payment</button>
-              <button type="button" className="btn btn-primary" disabled={paying} onClick={requestPayment}>
-                {paying ? (
-                  <><span className="loading-spinner"></span>&nbsp; Processing…</>
-                ) : (
-                  <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : paymentMethod === 'none' ? 'Order via WhatsApp' : paymentMethod === 'upi_qr' ? 'Pay via UPI QR' : 'Place Order'} <span className="arrow-icon">→</span></>
+            {/* Step 2: Location */}
+            <section className="cp-step-view" hidden={step !== 'location'}>
+              <div className="cp-view-header">
+                <span className="location-tag">📍 Collection Point</span>
+                <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Where should we deliver your prints?</h2>
+                <p className="location-subtitle">Pickup {preOrderMode ? 'tomorrow' : ''} at <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>{selectedTimeSlot || '—'}</strong>. Points not served at this time are unavailable.</p>
+                {preOrderMode && (
+                  <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>📦 This is a pre-order — same-day booking for today is closed.</p>
                 )}
-              </button>
-            </div>
-          </section>
+              </div>
+              <div className="cp-cards-grid">
+                {slotsLoading ? (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
+                    <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading collection points...</p>
+                  </div>
+                ) : LOCATIONS.map((loc) => {
+                  const locStatus = locationStatuses.find((l) => l.id === loc.id);
+                  const status = locStatus?.status || 'unavailable';
+                  const isPastSlot = status === 'past';
+                  const isUnavailable = status === 'unavailable' || isPastSlot;
+                  const isFull = status === 'full';
+                  const isLimited = status === 'limited';
+                  const isDisabled = isUnavailable || isFull;
+                  let statusLabel = 'Available';
+                  if (isUnavailable) statusLabel = 'Booked';
+                  else if (isFull) statusLabel = 'Fully Booked';
+                  else if (isLimited) statusLabel = 'Limited';
+                  let classes = 'cp-loc-card';
+                  if (loc.id === selectedLocationId && !isDisabled) classes += ' is-selected';
+                  if (isDisabled) classes += ' is-unavailable';
+                  return (
+                    <button
+                      key={loc.id}
+                      type="button"
+                      className={classes}
+                      disabled={isDisabled}
+                      onClick={() => handleLocationSelect(loc.id, loc.name)}
+                    >
+                      <div className="cp-card-icon">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{loc.icon}</svg>
+                      </div>
+                      <h3 className="cp-card-title">{loc.name}</h3>
+                      <p className="cp-card-sub">
+                        {loc.sub}
+                        {loc.id === 'hostel-gate' && (
+                          <span style={{ display: 'block', fontSize: '0.75rem', color: '#3b82f6', fontWeight: '600', marginTop: '0.25rem' }}>
+                            Hostel delivery: +₹3
+                          </span>
+                        )}
+                      </p>
+                      <span className="cp-loc-status-tag">{statusLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Step 3: Payment gateway */}
+            <section className="cp-step-view" hidden={step !== 'payment'}>
+              <div className="cp-view-header">
+                <span className="location-tag">💳 Payment</span>
+                <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Choose how you'll pay</h2>
+                <p className="location-subtitle">Total payable: <strong style={{ color: 'var(--primary-blue-hover, #2563eb)' }}>₹{p.total}</strong></p>
+              </div>
+              {paymentOptionsLoading && !paymentOptions ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)' }}>
+                  <span className="loading-spinner" style={{ borderColor: 'rgba(59,130,246,0.3)', borderTopColor: 'var(--primary)' }}></span>
+                  <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Loading payment options...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
+                    {PAYMENT_OPTIONS.map((opt) => {
+                      const isDisabled = opt.id === 'upi_qr' && !paymentOptions?.upi;
+                      const isSelected = paymentMethod === opt.id && !isDisabled;
+                      let classes = 'cp-loc-card cp-pay-card';
+                      if (opt.recommended) classes += ' cp-pay-recommended';
+                      if (isSelected) classes += ' is-selected';
+                      if (isDisabled) classes += ' is-unavailable';
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={isSelected}
+                          className={classes}
+                          disabled={isDisabled}
+                          onClick={() => setPaymentMethod(opt.id)}
+                        >
+                          <div className="cp-card-icon">
+                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>
+                          </div>
+                          <h3 className="cp-card-title">{opt.name}</h3>
+                          {opt.badge && <span className="cp-pay-badge">{opt.badge}</span>}
+                          <p className={`cp-pay-reliability cp-pay-reliability--${opt.tone}`}>{opt.reliability}</p>
+                          <p className="cp-card-sub cp-pay-desc">{opt.description}</p>
+                          <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {paymentMethod === 'upi_qr' && (
+                    <div className="cp-review-box cp-payment-detail">
+                      <h3 className="cp-review-heading">Pay via UPI QR</h3>
+                      <p className="cp-card-sub">
+                        When you continue, we'll create your order and show a UPI QR for <strong>₹{p.total}</strong>.
+                        Scan it with any UPI app to pay. Your payment is <strong>confirmed by our team</strong> — the
+                        order stays <strong>pending</strong> until then.
+                      </p>
+                      {!paymentOptions?.upi && (
+                        <p className="cp-card-sub"><strong>UPI isn't set up yet — please choose another method.</strong></p>
+                      )}
+                    </div>
+                  )}
+
+                  {paymentMethod === 'none' && (
+                    <div className="cp-review-box cp-payment-detail">
+                      <h3 className="cp-review-heading">Order via Personal WhatsApp</h3>
+                      <p className="cp-card-sub">
+                        This is a <strong>manual order</strong>. When you continue, you'll get step-by-step WhatsApp
+                        instructions. <strong>No ticket is auto-generated</strong> — our team verifies and confirms your order.
+                      </p>
+                      {!paymentOptions?.phone && (
+                        <p className="cp-card-sub"><strong>WhatsApp number isn't set up yet — please contact the shop at the pickup counter.</strong></p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            {/* Step 4: Review */}
+            <section className="cp-step-view" hidden={step !== 'review'}>
+              <div className="cp-view-header">
+                <span className="location-tag">✨ Confirm Details</span>
+                <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Review your booking</h2>
+                <p className="location-subtitle">Confirm pickup details before proceeding to payment.</p>
+                {preOrderMode && (
+                  <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>
+                    You're placing a pre-order. Your order will be ready tomorrow at {selectedTimeSlot || '—'}.
+                  </p>
+                )}
+              </div>
+
+              <div className="cp-review-container">
+                <div className="cp-review-box">
+                  <h3 className="cp-review-heading">Customer Details</h3>
+                  <div className="cp-review-details-list">
+                    <div className="cp-review-line">
+                      <span>Name</span>
+                      <strong>{guestDetails?.fullName || displayName || 'Not provided'}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Delivery Option</span>
+                      <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Email</span>
+                      <strong>{guestDetails?.email || currentUser?.email || '—'}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Phone</span>
+                      <strong>{guestDetails?.phone || '—'}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Class / Section</span>
+                      <strong>{guestDetails?.classroom || '—'}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="cp-review-box">
+                  <h3 className="cp-review-heading">Collection Details</h3>
+                  <div className="cp-review-row">
+                    <div>
+                      <span className="cp-review-label">Collection Location</span>
+                      <strong className="cp-review-val">{selectedLocationName || '—'}</strong>
+                    </div>
+                    <button type="button" className="cp-inline-edit" onClick={() => goToStep('location')}>Edit Location</button>
+                  </div>
+                  <div className="cp-review-row">
+                    <div>
+                      <span className="cp-review-label">Collection Time</span>
+                      <strong className="cp-review-val">{selectedTimeSlot || '—'}</strong>
+                    </div>
+                    <button type="button" className="cp-inline-edit" onClick={() => goToStep('slot')}>Edit Time</button>
+                  </div>
+                  <div className="cp-review-row">
+                    <div>
+                      <span className="cp-review-label">Collection Day</span>
+                      <strong className="cp-review-val">{preOrderMode ? 'Tomorrow (Pre-order)' : 'Today'}</strong>
+                    </div>
+                  </div>
+                  <div className="cp-review-row">
+                    <div>
+                      <span className="cp-review-label">Payment Method</span>
+                      <strong className="cp-review-val">{PAYMENT_OPTIONS.find((o) => o.id === paymentMethod)?.name || '—'}</strong>
+                    </div>
+                    <button type="button" className="cp-inline-edit" onClick={() => goToStep('payment')}>Edit Payment</button>
+                  </div>
+                </div>
+
+                <div className="cp-review-box">
+                  <h3 className="cp-review-heading">Order Summary</h3>
+                  <div className="cp-review-details-list">
+                    <div className="cp-review-line">
+                      <span>Documents ({files.length} file{files.length > 1 ? 's' : ''} · {p.pages} total pages)</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        {files.map(f => (
+                          <span key={f.key} style={{ fontSize: '0.8rem' }}>{f.file.name}: {f.copies}x</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Print Mode</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        {files.map(f => (
+                          <span key={f.key} style={{ fontSize: '0.8rem' }}>
+                            {f.file.name}: {f.colorMode === 'color' ? 'Color' : 'B&W'}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Paper &amp; Side</span>
+                      <strong>{`A4`} · {files.some(f => f.printingSide === 'double') ? 'Mixed (S/D)' : (files[0]?.printingSide === 'double' ? 'Double-Sided' : 'Single-Sided')}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Binding</span>
+                      <strong>{spiralBinding ? `Yes — ₹${BINDING_CHARGE} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Printing ({p.pages} pages)</span>
+                      <strong>₹{p.base + p.a3Extra}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Service Charge</span>
+                      <strong>₹{p.serviceCharge}</strong>
+                    </div>
+                    <div className="cp-review-line">
+                      <span>Delivery Charge</span>
+                      <strong>₹{p.deliveryCharge}</strong>
+                    </div>
+                  </div>
+                  <div className="cp-review-total">
+                    <span>Total Amount</span>
+                    <strong>₹{p.total}</strong>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+          </div>{/* end booking-panel-body */}
+
+          {/* ── Fixed footer: Back + Continue/Pay buttons for the active step ── */}
+          <div className="booking-panel-footer">
+            {step === 'slot' && (
+              <div className="cp-step-footer space-between">
+                <button type="button" className="btn btn-secondary" onClick={closeBookingModal}>← Back to Order</button>
+                <button type="button" className="btn btn-primary" disabled={!selectedTimeSlot} onClick={() => goToStep('location')}>
+                  Continue to Location <span className="arrow-icon">→</span>
+                </button>
+              </div>
+            )}
+            {step === 'location' && (
+              <div className="cp-step-footer space-between">
+                <button type="button" className="btn btn-secondary" onClick={() => goToStep('slot')}>← Back to Time Slot</button>
+                <button type="button" className="btn btn-primary" disabled={!selectedLocationId} onClick={() => goToStep('payment')}>
+                  Continue to Payment <span className="arrow-icon">→</span>
+                </button>
+              </div>
+            )}
+            {step === 'payment' && (
+              <div className="cp-step-footer space-between">
+                <button type="button" className="btn btn-secondary" onClick={() => goToStep('location')}>← Back to Location</button>
+                <button type="button" className="btn btn-primary" disabled={!paymentMethod} onClick={() => goToStep('review')}>
+                  Continue to Review <span className="arrow-icon">→</span>
+                </button>
+              </div>
+            )}
+            {step === 'review' && (
+              <div className="cp-step-footer space-between">
+                <button type="button" className="btn btn-secondary" onClick={() => goToStep('payment')}>← Back to Payment</button>
+                <button type="button" className="btn btn-primary" disabled={paying} onClick={requestPayment}>
+                  {paying ? (
+                    <><span className="loading-spinner"></span>&nbsp; Processing…</>
+                  ) : (
+                    <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : paymentMethod === 'none' ? 'Order via WhatsApp' : paymentMethod === 'upi_qr' ? 'Pay via UPI QR' : 'Place Order'} <span className="arrow-icon">→</span></>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>{/* end booking-panel-footer */}
+
         </div>
       </div>
 

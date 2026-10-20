@@ -1,4 +1,4 @@
-/* =============================================
+﻿/* =============================================
    Dashboard & New Order Shared Styles
    Matches existing website light theme
    ============================================= */
@@ -213,7 +213,7 @@
     margin-left: var(--sidebar-width);
     flex: 1;
     padding: 1.5rem 2rem;
-    overflow-y: auto;
+    /* overflow-y is not set here — the page (body/app-body) provides the single scrollbar. */
 }
 
 .content-header {
@@ -455,8 +455,6 @@
     grid-template-columns: minmax(0, 1fr) 280px;
     gap: 1rem;
     align-items: start;
-    overflow-y: auto;
-    max-height: calc(100vh - 10rem);
     padding-right: 0.25rem;
 }
 
@@ -974,8 +972,9 @@
     to { transform: rotate(360deg); }
 }
 
-/* ===== BOOKING FLOW (Location → Time → Review) ===== */
+/* ===== BOOKING FLOW (Time → Location → Payment → Review) ===== */
 .booking-overlay {
+    /* Fixed backdrop; the page body is already hidden by NewOrder, so the overlay itself does NOT scroll. */
     position: fixed;
     inset: 0;
     z-index: 200;
@@ -986,7 +985,7 @@
     align-items: center;
     justify-content: center;
     padding: 1.25rem;
-    overflow-y: auto;
+    overflow: hidden;
 }
 
 .booking-overlay[hidden] {
@@ -1000,36 +999,65 @@
     border: 1px solid var(--card-border);
     border-radius: 20px;
     box-shadow: var(--shadow-lg);
-    padding: 1.5rem 1.25rem;
     margin: auto;
-    /* Single scroll container for the four-step form so every step, including the
-       Review step and its Back/Continue/Checkout buttons, stays reachable by scroll. */
-    max-height: calc(100vh - 2rem);
-    overflow-y: auto;
-    overflow-x: hidden;
+    /* Flex column: header fixed top, body scrolls, footer fixed bottom. */
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    max-height: min(90dvh, 760px);
+    overflow: hidden;
 }
 
 .booking-close {
     position: sticky;
     top: 0;
     right: 0.75rem;
-    width: 32px;
-    height: 32px;
+    width: 38px;
+    height: 38px;
     border: none;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
     color: var(--text-muted);
-    font-size: 1.35rem;
+    font-size: 1.4rem;
     line-height: 1;
     cursor: pointer;
-    border-radius: 8px;
-    z-index: 1;
+    border-radius: 10px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .booking-close:hover {
     background: var(--primary-light);
     color: var(--text-primary);
+}
+
+/* ── Booking panel inner sections (flex column) ── */
+.booking-panel-header {
+    /* Close button + step nav: stays fixed at the top of the panel. */
+    flex-shrink: 0;
+    padding: 0.5rem 1.25rem 0;
+}
+
+.booking-panel-body {
+    /* Active step content: the only scrollable area inside the panel. */
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.5rem 1.25rem;
+    -webkit-overflow-scrolling: touch;
+}
+
+.booking-panel-footer {
+    /* Back / Continue buttons: stay fixed at the bottom of the panel. */
+    flex-shrink: 0;
+    padding: 0.75rem 1.25rem 1rem;
+    background: #ffffff;
+    border-top: 1px solid var(--border-color);
+    background: #ffffff;
 }
 
 .booking-progress {
@@ -1317,6 +1345,9 @@
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
     }
+    .booking-panel {
+        max-height: min(88dvh, 820px);
+    }
 }
 
 @media (max-width: 768px) {
@@ -1342,9 +1373,8 @@
     }
     .booking-panel {
         width: 100%;
-        min-height: 100%;
+        max-height: 100dvh;
         border-radius: 0;
-        padding: 1.25rem 1rem 1.5rem;
     }
     .slot-grid {
         grid-template-columns: 1fr 1fr;
@@ -1355,6 +1385,16 @@
     .booking-btn {
         width: 100%;
         text-align: center;
+    }
+    .booking-close {
+        width: 44px;
+        height: 44px;
+        top: 0.5rem;
+        right: 0.5rem;
+    }
+
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
     }
 }
 
@@ -1378,6 +1418,22 @@
     color: var(--text-primary);
     font-family: 'Inter', sans-serif;
     overflow-x: hidden;
+    overflow-y: auto;
+    user-select: none;
+    height: 100dvh;
+    position: relative;
+    /* Input focus UX: allow text selection/editing inside inputs, textareas and the like. */
+    user-select: auto;
+}
+
+.booking-flow-body input,
+.booking-flow-body textarea,
+.booking-flow-body [contenteditable="true"],
+.booking-flow-body [contenteditable=""] {
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
 }
 
 .booking-container {
@@ -1391,7 +1447,293 @@
     box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
     overflow: hidden;
     padding: 3.5rem 3rem;
-}
+}    /* Dev-only: the standalone booking pages use this body class. The flex panel lives
+       inside .booking-container, so this body is a full-bleed page backdrop, not a panel.
+       Allow pointer events from interactive controls inside .booking-container (and its
+       children), but keep the background atmosphere and orbs non-interactive. */
+    .booking-flow-body *:not(.booking-container):not(.booking-container *) {
+        pointer-events: none;
+    }
+
+    /* Keep Booking-step nav and footer buttons usable when the page body carries
+       this class (standalone booking pages). Those pages render directly inside
+       .booking-container, not inside .booking-panel. */
+    .booking-container .cp-nav-steps,
+    .booking-container .cp-step-footer,
+    .booking-container .cp-nav-step,
+    .booking-container .cp-inline-edit,
+    .booking-container .booking-btn,
+    .booking-container .cp-slots-grid,
+    .booking-container .cp-cards-grid,
+    .booking-container .cp-review-container {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card,
+    .booking-container .cp-slot-pill,
+    .booking-container .cp-pay-card,
+    .booking-container .cp-review-box,
+    .booking-container .cp-review-line,
+    .booking-container .cp-file-card,
+    .booking-container .toggle-group,
+    .booking-container .toggle-option,
+    .booking-container .cp-stepper-btn,
+    .booking-container .cp-option-card,
+    .booking-container .cp-text-input,
+    .booking-container .upload-zone,
+    .booking-container .confirm-btn,
+    .booking-container .btn {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card:hover,
+    .booking-container .cp-slot-pill:hover:not(:disabled),
+    .booking-container .cp-option-card:hover,
+    .booking-container .cp-loc-card.is-selected,
+    .booking-container .cp-slot-pill.is-selected:not(:disabled),
+    .booking-container .cp-option-card.is-selected,
+    .booking-container .toggle-option.active,
+    .booking-container .cp-loc-card.is-selected:hover,
+    .booking-container .cp-option-card.is-selected:hover {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-card-icon,
+    .booking-container .cp-slot-time-text,
+    .booking-container .cp-slot-tag,
+    .booking-container .cp-loc-status-tag,
+    .booking-container .cp-review-val,
+    .booking-container .cp-review-label,
+    .booking-container .cp-paper-badge,
+    .booking-container .cp-paper-sub,
+    .booking-container .cp-field-label,
+    .booking-container .cp-setting-title,
+    .booking-container .cp-file-name,
+    .booking-container .cp-file-meta,
+    .booking-container .cp-file-badge,
+    .booking-container .cp-file-footer-pages,
+    .booking-container .cp-file-subtotal,
+    .booking-container .cp-option-name,
+    .booking-container .cp-option-price,
+    .booking-container .cp-stepper-val,
+    .booking-container .cp-loc-card .cp-card-icon {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon {
+        pointer-events: none;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon:hover,
+    .booking-container .cp-loc-card .cp-card-icon:active {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg {
+        pointer-events: none;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg:active {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg path,
+    .booking-container .cp-loc-card .cp-card-icon svg circle,
+    .booking-container .cp-loc-card .cp-card-icon svg line,
+    .booking-container .cp-loc-card .cp-card-icon svg polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg rect,
+    .booking-container .cp-loc-card .cp-card-icon svg polygon {
+        pointer-events: none;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg path:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg path:active,
+    .booking-container .cp-loc-card .cp-card-icon svg circle:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg circle:active {
+        pointer-events: auto;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line,
+    .booking-container .cp-loc-card .cp-card-icon svg polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg rect,
+    .booking-container .cp-loc-card .cp-card-icon svg polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path,
+    .booking-container .cp-loc-card .cp-card-icon svg line circle,
+    .booking-container .cp-loc-card .cp-card-icon svg line line,
+    .booking-container .cp-loc-card .cp-card-icon svg line polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line circle:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line circle:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle,
+    .booking-container .cp-loc-card .cp-card-icon svg line path line,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line path rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle line,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path line,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle line,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle polygon:active {
+        pointer-events: auto !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path path,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path circle,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path line,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polyline,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path rect,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polygon {
+        pointer-events: none !important;
+    }
+
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path path:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path path:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path circle:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path circle:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path line:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path line:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polyline:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polyline:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path rect:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path rect:active,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polygon:hover,
+    .booking-container .cp-loc-card .cp-card-icon svg line path circle path circle path polygon:active {
+        pointer-events: auto !important;
+    }
+
+    /* Also keep the booking-container chrome itself focusable/clickable after the
+       above reset, in case a stronger selector elsewhere suppresses pointer events. */
+    .booking-container {
+        pointer-events: auto;
+    }
+
+    .booking-container button,
+    .booking-container .booking-close,
+    .booking-container .cp-nav-step,
+    .booking-container .booking-btn,
+    .booking-container .cp-step-footer .btn,
+    .booking-container .booking-panel-footer .btn,
+    /* Keep every interactive control inside the standalone booking container usable,
+       even when the rest of the page (atmosphere, orbs, decorative text) is non-interactive. */
+    .booking-container * {
+        pointer-events: auto;
+    }
+
+    .booking-container input:focus,
+    .booking-container textarea:focus,
+    .booking-container [type="text"]:focus,
+    .booking-container [type="number"]:focus,
+    .booking-container [type="email"]:focus,
+    .booking-container button:focus,
+    .booking-container a:focus,
+    .booking-container [role="button"]:focus,
+    .booking-container [tabindex]:focus {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+    }
 
 /* ── Ambient Orbs ── */
 .booking-orb {
@@ -1434,8 +1776,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 1.25rem;
-    margin-bottom: 3.25rem;
+    gap: 1.125rem;
+    margin: 0;
     flex-wrap: wrap;
 }
 
@@ -1924,6 +2266,17 @@
         font-size: 0.9rem;
         padding: 0.35rem 0.65rem;
     }
+    .cp-nav-steps {
+        margin-bottom: 1rem;
+    }
+    .cp-view-header {
+        margin-bottom: 1rem;
+    }
+    .cp-slots-grid,
+    .cp-cards-grid,
+    .cp-review-container {
+        margin-bottom: 1rem;
+    }
 }
 
 @media (max-width: 480px) {
@@ -1970,7 +2323,7 @@
 
 .booking-panel.booking-container {
     max-width: 920px;
-    padding: 1.75rem 2rem 1.5rem;
+    /* Flex layout is inherited from .booking-panel; padding moved to inner sections. */
 }
 
 /* Mobile top bar for the student sidebar (hidden on desktop) */
@@ -2139,20 +2492,23 @@
         bottom: 1rem;
     }
 
-    /* Booking flow becomes a full-screen sheet. align-items: stretch fixed the sheet to the
-       viewport height, and .booking-container's overflow: hidden then clipped the footer
-       (Proceed to Payment) — let the sheet grow and the overlay scroll instead. */
+    /* Booking flow is a full-screen sheet on phones. The overlay stays a fixed backdrop (no inner
+       scroll) and the panel fills the viewport; the panel’s own body is what scrolls. */
     .booking-overlay {
-        align-items: flex-start;
+        align-items: stretch;
+        padding: 0;
     }
 
     .booking-panel.booking-container {
         width: 100%;
         max-width: none;
-        min-height: 100%;
         margin: 0;
         border-radius: 0;
-        padding: 3.5rem 1rem 1.5rem;
+        max-height: 100dvh;
+    }
+
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
     }
 
     .booking-close {
@@ -2162,12 +2518,16 @@
         right: 0.5rem;
     }
 
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
+    }
+
     .cp-nav-steps {
-        margin-bottom: 1.75rem;
+        margin: 0 0 1rem;
     }
 
     .cp-view-header {
-        margin-bottom: 1.5rem;
+        margin-bottom: 1rem;
     }
 
     .cp-view-header .location-tag {
@@ -2188,7 +2548,7 @@
     .cp-slots-grid,
     .cp-cards-grid,
     .cp-review-container {
-        margin-bottom: 1.5rem;
+        margin-bottom: 1rem;
     }
 
     .cp-slot-tag,
@@ -2197,9 +2557,14 @@
     }
 
     .cp-review-box {
-        padding: 1.1rem;
+        padding: 0.95rem;
         border-radius: 18px;
-        gap: 1rem;
+        gap: 0.85rem;
+    }
+
+    .cp-step-footer .btn,
+    .booking-panel-footer .btn {
+        width: 100%;
     }
 
     .cp-review-row {
@@ -2248,6 +2613,10 @@
 }
 
 @media (max-width: 480px) {
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
+    }
+
     /* Step indicator: three equal tabs, no arrows */
     .cp-nav-steps {
         display: grid;
@@ -2334,7 +2703,7 @@
     align-items: center;
     text-align: center;
     max-width: 440px;
-    margin: -1.5rem auto 2.5rem;
+    margin: 0 auto 1.25rem;
 }
 
 .cp-payment-qr {
@@ -2367,8 +2736,8 @@
 
 @media (max-width: 840px) {
     .cp-payment-detail {
-        margin: 0 auto 1.5rem;
-        padding: 1.25rem;
+        margin: 0 auto 1rem;
+        padding: 1rem;
     }
 }
 
@@ -2379,6 +2748,9 @@
         gap: 0.3rem;
     }
 
+    .cp-nav-steps--four {
+        padding: 0 0.75rem;
+    }
     .cp-nav-steps--four .cp-nav-step {
         font-size: 0.7rem;
         padding: 0.5rem 0.1rem;

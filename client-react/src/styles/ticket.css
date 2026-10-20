@@ -10,7 +10,6 @@
    to auto on the root and creates a second, duplicate scrollbar.) */
 body.ticket-page-body {
     max-width: 100%;
-    overflow-x: hidden;
     width: 100%;
     box-sizing: border-box;
 }
@@ -24,8 +23,8 @@ body.ticket-page-body {
     flex-direction: column;
 }
 
-/* No nested scroll container here: the window keeps the single main scrollbar,
-   so the page never shows two competing vertical scrollbars. */
+/* The window keeps the single main scrollbar — nothing inside this page scrolls itself,
+   so the Ticket page never shows two competing vertical scrollbars. */
 .ticket-page-wrapper {
     position: relative;
     z-index: 10;
@@ -39,6 +38,7 @@ body.ticket-page-body {
     padding: 1.5rem 1rem 3rem;
     isolation: isolate;
     box-sizing: border-box;
+    overflow: visible;
 }
 
 .ticket-main-content {

@@ -717,71 +717,6 @@ export default function Home() {
                 </div>
               </div>
 
-                                                                              <div className="upload-interactive-section" style={{ marginTop: '2.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
-                  <div className="delivery-toggle-wrap" style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '1rem',
-                    padding: '0.75rem 1.5rem',
-                    background: 'white',
-                    borderRadius: '2rem',
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
-                    border: '1px solid #eee',
-                    marginBottom: '0.5rem'
-                  }}>
-                    <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#666' }}>Classroom Delivery:</span>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        className={`btn btn-sm ${!classroomDelivery ? 'btn-primary' : 'btn-outline'}`}
-                        onClick={() => setClassroomDelivery(false)}
-                        style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}
-                      >
-                        No (Free)
-                      </button>
-                      <button
-                        className={`btn btn-sm ${classroomDelivery ? 'btn-primary' : 'btn-outline'}`}
-                        onClick={() => setClassroomDelivery(true)}
-                        style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}
-                      >
-                        Yes (+₹5)
-                      </button>
-                    </div>
-                  </div>
-                  <div className="home-options-grid" role="radiogroup" aria-label="Classroom Delivery">
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={!classroomDelivery}
-                      className={`home-option-card ${!classroomDelivery ? 'is-selected' : ''}`}
-                      onClick={() => setClassroomDelivery(false)}
-                    >
-                      <span className="home-radio-circle" aria-hidden="true">
-                        <span className="home-radio-dot" />
-                      </span>
-                      <div className="home-option-text">
-                        <span className="home-option-name">Pickup at Desk</span>
-                        <span className="home-option-price">Free</span>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={classroomDelivery}
-                      className={`home-option-card ${classroomDelivery ? 'is-selected' : ''}`}
-                      onClick={() => setClassroomDelivery(true)}
-                    >
-                      <span className="home-radio-circle" aria-hidden="true">
-                        <span className="home-radio-dot" />
-                      </span>
-                      <div className="home-option-text">
-                        <span className="home-option-name">Classroom Delivery</span>
-                        <span className="home-option-price">+₹10</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
                 {/* Upload Zone */}
                 <div
                   className="home-upload-zone"
@@ -1055,7 +990,10 @@ export default function Home() {
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Service Charge</span><span className="ptc-line-val">₹{serviceCharge}</span></span>
                     {classroomDelivery && (
-                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹5</span></span>
+                      <span className="ptc-line">
+                        <span className="ptc-line-label">Classroom Delivery</span>
+                        <span className="ptc-line-val">₹5</span>
+                      </span>
                     )}
                   </div>
 
@@ -1088,7 +1026,7 @@ export default function Home() {
                                 <div className="home-breakdown-file-title">Classroom Delivery</div>
                                 <div className="home-breakdown-formula">Direct to classroom</div>
                               </div>
-                              <div className="home-breakdown-amount">+₹10</div>
+                              <div className="home-breakdown-amount">+₹5</div>
                             </div>
                           )}
                         </div>
@@ -1170,9 +1108,8 @@ export default function Home() {
           </section>
           <Footer />
         </main>
-      </div>
 
-      {/* Guest Details Modal for guest flow */}
+       {/* Guest Details Modal for guest flow */}
       <GuestDetailsModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -1183,20 +1120,26 @@ export default function Home() {
             phone: details.phone,
             classroom: details.classroom,
           };
+
           try {
-            localStorage.setItem('cp_guest_details', JSON.stringify(guest));
+            localStorage.setItem(
+              'cp_guest_details',
+              JSON.stringify(guest)
+            );
           } catch {
             // localStorage unavailable
           }
+
           try {
             await persistHomeOrder(guest);
           } catch (err) {
             alert(storageErrorMessage(err));
           }
+
           setModalOpen(false);
           navigate('/new-order');
         }}
       />
-		</>
+    </>
   );
 }
