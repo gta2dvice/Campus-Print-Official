@@ -153,16 +153,6 @@ function filePrintingCost(f) {
   return pages * copies * 2;
 }
 
-// Page-based service charge (by total printed pages): 1–10 → ₹1, 11–30 → ₹2, 31+ → ₹3.
-// Keep in sync with serviceChargeForPages() in server/pricing.js, which verifies the total.
-function serviceChargeForPages(printedPages) {
-  if (printedPages <= 10) return 1;
-  if (printedPages <= 30) return 2;
-  return 3;
-}
-
-// Binding add-on: ₹25 binding + ₹1 binding service charge, once per order.
-// Keep in sync with PRICING.binding + PRICING.bindingServiceCharge in server/pricing.js.
 const BINDING_CHARGE = 26;
 
 function formatSize(bytes) {
@@ -187,12 +177,11 @@ export default function NewOrder() {
   const [displayName, setDisplayName] = useState('');
   const [guestDetails, setGuestDetails] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState(null);
 
   // ── Order configuration state ──
-  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode, pageRange }]
+  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode, spiralBinding, pageRange }]
   const [paperSize, setPaperSize] = useState('A4');
-  const [spiralBinding, setSpiralBinding] = useState(false);
+  const spiralBinding = files.some((file) => file.spiralBinding);
   const [expressDelivery, setExpressDelivery] = useState(false);
   const [classroomDelivery, setClassroomDelivery] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -267,12 +256,15 @@ export default function NewOrder() {
             printingSide: unfinished.printingSide === 'double' ? 'double' : 'single',
           };
           if (unfinished.files?.length) {
-            const restoredKeys = unfinished.files.map((entry) => Number(entry.key)).filter((n) => Number.isFinite(n));
+            const restoredFiles = unfinished.files.map((entry) => ({ ...entry }));
+            if (unfinished.spiralBinding && !restoredFiles.some((entry) => entry.spiralBinding)) {
+              restoredFiles[0] = { ...restoredFiles[0], spiralBinding: true };
+            }
+            const restoredKeys = restoredFiles.map((entry) => Number(entry.key)).filter((n) => Number.isFinite(n));
             if (restoredKeys.length) fileKeySeq = Math.max(fileKeySeq, ...restoredKeys);
-            setFiles(unfinished.files);
+            setFiles(restoredFiles);
           }
-          setPaperSize(unfinished.paperSize);
-          setSpiralBinding(unfinished.spiralBinding);
+          setPaperSize('A4');
           setExpressDelivery(unfinished.expressDelivery);
           setClassroomDelivery(unfinished.classroomDelivery || false);
           // A saved pairing may no longer exist in the slot matrix — keep the time, drop the location.
@@ -303,8 +295,7 @@ export default function NewOrder() {
           if (pending) {
             // 'color' has no state here (color is per-file now as colorMode). Calling the
             // previously-undefined setColorOption threw, silently skipping the restores below.
-            if (pending.size === 'A4' || pending.size === 'A3') setPaperSize(pending.size);
-            setSpiralBinding(!!pending.spiral);
+            setPaperSize('A4');
             setExpressDelivery(!!pending.express);
             localStorage.removeItem('cp_pending_order');
           }
@@ -328,8 +319,6 @@ export default function NewOrder() {
           setDisplayName(name.charAt(0).toUpperCase() + name.slice(1));
         }
 
-        const configRes = await fetch('/api/orders/config', { credentials: 'include' });
-        if (configRes.ok) setConfig(await configRes.json());
       } catch {
         if (!localStorage.getItem('cp_guest_details') && !returnedCashfreeOrderId &&
             !localStorage.getItem('cp_pending_payment')) {
@@ -440,6 +429,7 @@ export default function NewOrder() {
         copies: 1,
         printingSide: 'single',
         colorMode: 'bw',
+        spiralBinding: false,
         pageRange: ''
       });
     }
@@ -498,6 +488,10 @@ export default function NewOrder() {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, printingSide: side } : f)));
   }
 
+  function updateFileBinding(key, spiralBinding) {
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, spiralBinding } : f)));
+  }
+
   function updateFileColorMode(key, mode) {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, colorMode: mode } : f)));
   }
@@ -531,7 +525,6 @@ export default function NewOrder() {
     skipPersistRef.current = true;
     setFiles([]);
     setPaperSize('A4');
-    setSpiralBinding(false);
     setExpressDelivery(false);
     setSelectedLocationId(null);
     setSelectedLocationName(null);
@@ -565,30 +558,17 @@ export default function NewOrder() {
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
-    if (!config) return { pages: 0, base: 0, a3Extra: 0, serviceCharge: 0, deliveryCharge: 0, bindingCharge: 0, total: 0 };
-
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
-
-    // Service charge is page-based: 1–10 printed pages ₹1, 11–30 ₹2, 31+ ₹3.
-    const serviceCharge = serviceChargeForPages(totalPagesCount || 0);
-    let deliveryCharge = 0;
-    if (selectedLocationId === 'hostel-gate') {
-      deliveryCharge = 3;
-    } else if (classroomDelivery) {
-      deliveryCharge = 5;
-    }
-    // Binding is a per-order add-on (₹25 + ₹1 binding service charge), on top of
-    // the page-based service charge — neither charge is double-counted.
-    const bindingCharge = spiralBinding ? BINDING_CHARGE : 0;
+    const deliveryCharge = classroomDelivery ? 5 : 0;
+    const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
 
     return {
       pages: totalPagesCount || 0,
       base: printingSubtotal || 0,
       a3Extra: 0,
-      serviceCharge,
       deliveryCharge,
       bindingCharge,
-      total: (printingSubtotal || 0) + serviceCharge + deliveryCharge + bindingCharge
+      total: (printingSubtotal || 0) + deliveryCharge + bindingCharge
     };
   }
 
@@ -726,7 +706,7 @@ export default function NewOrder() {
 
   function buildOrderFormData() {
     const formData = new FormData();
-    formData.append('paperSize', paperSize);
+    formData.append('paperSize', 'A4');
     formData.append('totalPages', p.pages);
     const totalCopies = files.reduce((sum, f) => sum + f.copies, 0);
     formData.append('copies', totalCopies);
@@ -1452,6 +1432,38 @@ export default function NewOrder() {
                                 </div>
                               </div>
 
+                              <div className="cp-setting-section">
+                                <span className="cp-setting-title">Binding for this PDF</span>
+                                <div className="cp-options-grid" role="radiogroup" aria-label={`Binding for ${f.file.name}`}>
+                                  <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={!f.spiralBinding}
+                                    className={`cp-option-card ${!f.spiralBinding ? 'is-selected' : ''}`}
+                                    onClick={() => updateFileBinding(f.key, false)}
+                                  >
+                                    <span className="cp-radio-circle" aria-hidden="true"><span className="cp-radio-dot" /></span>
+                                    <span className="cp-option-text">
+                                      <span className="cp-option-name">No</span>
+                                      <span className="cp-option-price">Free</span>
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={!!f.spiralBinding}
+                                    className={`cp-option-card ${f.spiralBinding ? 'is-selected' : ''}`}
+                                    onClick={() => updateFileBinding(f.key, true)}
+                                  >
+                                    <span className="cp-radio-circle" aria-hidden="true"><span className="cp-radio-dot" /></span>
+                                    <span className="cp-option-text">
+                                      <span className="cp-option-name">Yes</span>
+                                      <span className="cp-option-price">₹26</span>
+                                    </span>
+                                  </button>
+                                </div>
+                              </div>
+
                               {/* Page Range Input (when applicable) */}
                               {showPageRangeInput(f) && (
                                 <div className="cp-page-range-section">
@@ -1532,26 +1544,6 @@ export default function NewOrder() {
                       <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹5)</button>
                     </div>
                   </div>
-                  <div className="setting-group">
-                    <span className="setting-label">Binding</span>
-                    <div className="toggle-group" id="bindingGroup" role="radiogroup" aria-label="Binding">
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={!spiralBinding}
-                        className={toggleClass(!spiralBinding)}
-                        onClick={() => setSpiralBinding(false)}
-                      >No (Free)</button>
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={spiralBinding}
-                        className={toggleClass(spiralBinding)}
-                        onClick={() => setSpiralBinding(true)}
-                      >Yes (+₹26)</button>
-                    </div>
-                    <span style={{ fontSize: '0.72rem', color: '#888' }}>₹25 binding + ₹1 binding service charge</span>
-                  </div>
                 </div>
               </div>
             </div>
@@ -1573,14 +1565,16 @@ export default function NewOrder() {
                   <span className="summary-line-label">Printing Charges</span>
                   <span className="summary-line-value">₹{p.base + p.a3Extra}</span>
                 </div>
-                <div className="summary-line">
-                  <span className="summary-line-label">Platform Service Charge</span>
-                  <span className="summary-line-value">₹{p.serviceCharge}</span>
-                </div>
-                {spiralBinding && (
+                {p.bindingCharge > 0 && (
                   <div className="summary-line">
-                    <span className="summary-line-label">Binding (₹25 + ₹1 service)</span>
+                    <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
                     <span className="summary-line-value">₹{p.bindingCharge}</span>
+                  </div>
+                )}
+                {p.deliveryCharge > 0 && (
+                  <div className="summary-line">
+                    <span className="summary-line-label">Classroom Delivery</span>
+                    <span className="summary-line-value">₹{p.deliveryCharge}</span>
                   </div>
                 )}
               </div>
@@ -1773,11 +1767,6 @@ export default function NewOrder() {
                     <h3 className="cp-card-title">{loc.name}</h3>
                     <p className="cp-card-sub">
                       {loc.sub}
-                      {loc.id === 'hostel-gate' && (
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#3b82f6', fontWeight: '600', marginTop: '0.25rem' }}>
-                          Hostel delivery: +₹3
-                        </span>
-                      )}
                     </p>
                     <span className="cp-loc-status-tag">{statusLabel}</span>
                   </button>
@@ -1970,21 +1959,25 @@ export default function NewOrder() {
                     <strong>{`A4`} · {files.some(f => f.printingSide === 'double') ? 'Mixed (S/D)' : (files[0]?.printingSide === 'double' ? 'Double-Sided' : 'Single-Sided')}</strong>
                   </div>
                   <div className="cp-review-line">
-                    <span>Binding</span>
-                    <strong>{spiralBinding ? `Yes — ₹${BINDING_CHARGE} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
+                    <span>Binding per PDF</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      {files.map((file) => (
+                        <span key={file.key} style={{ fontSize: '0.8rem' }}>
+                          {file.file.name}: {file.spiralBinding ? 'Yes — ₹26' : 'No — Free'}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                   <div className="cp-review-line">
                     <span>Printing ({p.pages} pages)</span>
                     <strong>₹{p.base + p.a3Extra}</strong>
                   </div>
-                  <div className="cp-review-line">
-                    <span>Service Charge</span>
-                    <strong>₹{p.serviceCharge}</strong>
-                  </div>
-                  <div className="cp-review-line">
-                    <span>Delivery Charge</span>
-                    <strong>₹{p.deliveryCharge}</strong>
-                  </div>
+                  {p.deliveryCharge > 0 && (
+                    <div className="cp-review-line">
+                      <span>Classroom Delivery</span>
+                      <strong>₹{p.deliveryCharge}</strong>
+                    </div>
+                  )}
                 </div>
                 <div className="cp-review-total">
                   <span>Total Amount</span>

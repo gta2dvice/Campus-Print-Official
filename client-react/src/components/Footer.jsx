@@ -44,7 +44,7 @@ export default function Footer() {
                             <>
                                 <Link to="/">Home</Link>
                                 <Link to="/orders">My Orders</Link>
-                                <Link to="/register">Register</Link>
+                                <Link to="/signup">Register</Link>
                             </>
                         )}
                     </div>

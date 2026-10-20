@@ -9,7 +9,7 @@
 // Amounts come from the charges saved on the order at creation (server/pricing.js).
 // Orders created before itemising have no saved split: the printer sees them as
 // "not itemised" and the Super Admin sees an estimate that is clearly labelled.
-const { PRICING } = require('../pricing');
+const { LEGACY_CHARGES } = require('../pricing');
 
 function money(value) {
     return Math.round(Number(value) * 100) / 100;
@@ -37,7 +37,8 @@ const PRINTER_ORDER_FIELDS = [
 
 const PRINTER_FILE_FIELDS = [
     'id', 'order_id', 'original_name', 'mime_type', 'size_bytes', 'file_type',
-    'page_count', 'page_range', 'printing_side', 'copies', 'color_mode', 'created_at', 'file_deleted_at'
+    'page_count', 'page_range', 'printing_side', 'copies', 'color_mode', 'spiral_binding',
+    'created_at', 'file_deleted_at'
 ];
 
 function pick(source, fields) {
@@ -128,8 +129,8 @@ function financialBreakdown(order, files = [], payments = []) {
         binding = hasAmount(order.binding_charge) ? money(order.binding_charge) : 0;
     } else {
         // Placed before charges were itemised: estimate with the current fixed charges.
-        service = PRICING.serviceChargeTiers[PRICING.serviceChargeTiers.length - 1].charge;
-        delivery = order.collection_location_id === 'hostel-gate' ? PRICING.hostelSurcharge : 0;
+        service = LEGACY_CHARGES.serviceChargeTiers[LEGACY_CHARGES.serviceChargeTiers.length - 1].charge;
+        delivery = order.collection_location_id === 'hostel-gate' ? LEGACY_CHARGES.hostelSurcharge : 0;
         classroom = null; // not recorded on old orders — cannot be told apart
         binding = null;   // binding was not priced on old orders
         const estimate = money(customerTotal - service - delivery);

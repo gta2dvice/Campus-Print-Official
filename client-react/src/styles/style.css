@@ -322,47 +322,6 @@ img[src=""] {
     display: none;
 }
 
-/* Scroll-down arrow button */
-.scroll-arrow {
-    position: absolute;
-    bottom: 36px;
-    left: 50%;
-    transform: translateX(-50%);
-    cursor: pointer;
-    z-index: 20;
-    background: rgba(255, 255, 255, 0.75);
-    padding: 14px;
-    border-radius: 50%;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: 1.5px solid rgba(147, 197, 253, 0.6);
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--primary-blue);
-    animation: arrow-bounce 2s ease-in-out infinite;
-    transition: background 0.2s, transform 0.2s, border-color 0.2s;
-}
-
-.scroll-arrow:hover {
-    background: #ffffff;
-    border-color: var(--primary-blue);
-    color: var(--primary-blue-hover);
-}
-
-@keyframes arrow-bounce {
-
-    0%,
-    100% {
-        transform: translateX(-50%) translateY(0);
-    }
-
-    50% {
-        transform: translateX(-50%) translateY(-8px);
-    }
-}
-
 
 /* ══════════════════════════════════════════
    TRUSTED SECTION – 3D rotating cards
@@ -1881,6 +1840,33 @@ img[src=""] {
     color: var(--text-secondary);
 }
 
+.pc-info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: auto;
+}
+
+.pc-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.pc-info-price {
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pc-info-row > span:first-child {
+    min-width: 0;
+}
+
 /* Chip toggles */
 .pc-toggle-group {
     display: flex;
@@ -3147,77 +3133,6 @@ body.auth-page {
     background: #f8fafc;
 }
 
-/* Cost Breakdown Details */
-.home-breakdown-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    background: none;
-    border: none;
-    padding: 0.4rem 0;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--primary-blue, #3b82f6);
-    cursor: pointer;
-    border-top: 1px dashed #e2e8f0;
-    margin-top: 0.25rem;
-}
-
-.home-breakdown-toggle:hover {
-    text-decoration: underline;
-}
-
-.home-breakdown-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 0.75rem 0.9rem;
-    font-size: 0.82rem;
-}
-
-.home-breakdown-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.5rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px dashed #e2e8f0;
-}
-
-.home-breakdown-item:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-}
-
-.home-breakdown-desc {
-    color: #475569;
-    min-width: 0;
-    flex: 1;
-}
-
-.home-breakdown-file-title {
-    font-weight: 600;
-    color: #1e293b;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-}
-
-.home-breakdown-formula {
-    font-size: 0.75rem;
-    color: #64748b;
-    margin-top: 2px;
-}
-
-.home-breakdown-amount {
-    font-weight: 700;
-    color: #1e293b;
-    white-space: nowrap;
-}
-
 .home-status-alert {
     display: flex;
     align-items: center;
@@ -3385,7 +3300,6 @@ body.auth-page {
 .page-content .ptc-line,
 .page-content .ptc-total-label,
 .page-content .ptc-note,
-.page-content .home-breakdown-details,
 .page-content .home-mobile-sticky-label,
 .page-content .home-mobile-sticky-meta,
 .page-content .site-footer .footer-tagline,

@@ -9,6 +9,7 @@ import SelectLocation from './pages/SelectLocation';
 import Ticket from './pages/Ticket';
 import OrderDetails from './pages/OrderDetails';
 import Orders from './pages/Orders';
+import Signup from './pages/Signup';
 
 import AdminLogin from './pages/admin/Login';
 import AdminLayout from './pages/admin/AdminLayout';
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/new-order" element={<NewOrder />} />
         <Route path="/select-location" element={<SelectLocation />} />
         <Route path="/orders" element={<Orders />} />
+        <Route path="/signup" element={<Signup />} />
         <Route path="/ticket" element={<Ticket />} />
         <Route path="/order/:id" element={<OrderDetails />} />
 

@@ -44,6 +44,8 @@ export function normalizeFileSettings(entry = {}) {
     copies: validInteger(entry.copies) ? entry.copies : null,
     printingSide: ['single', 'double'].includes(entry.printingSide) ? entry.printingSide : null,
     colorMode: ['bw', 'color'].includes(entry.colorMode) ? entry.colorMode : null,
+    spiralBinding: entry.spiralBinding === true || entry.spiralBinding === 'true',
+    pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
   };
 }
 
@@ -52,7 +54,8 @@ export function hasCompleteFileSettings(entry) {
   return settings.pages !== null &&
     settings.copies !== null &&
     settings.printingSide !== null &&
-    settings.colorMode !== null;
+    settings.colorMode !== null &&
+    typeof settings.spiralBinding === 'boolean';
 }
 
 export function buildFileSettingsPayload(files) {
@@ -143,7 +146,7 @@ function serializeMeta(meta = {}) {
     id: CURRENT_UNFINISHED_ORDER,
     guestDetails: guest,
     colorOption: meta.colorOption === 'color' ? 'color' : 'bw',
-    paperSize: meta.paperSize === 'A3' ? 'A3' : 'A4',
+    paperSize: 'A4',
     printingSide: meta.printingSide === 'double' ? 'double' : 'single',
     spiralBinding: !!meta.spiralBinding,
     expressDelivery: !!meta.expressDelivery,
@@ -174,7 +177,6 @@ function fileEntriesFromInput(files) {
         type,
         size,
         ...normalizeFileSettings(entry),
-        pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
         blob: file,
       };
     });
@@ -286,6 +288,7 @@ export async function loadCurrentOrder() {
           copies: null,
           printingSide: null,
           colorMode: null,
+          spiralBinding: false,
           pageRange: '',
         });
       }
