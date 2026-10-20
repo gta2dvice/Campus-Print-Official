@@ -63,7 +63,10 @@ body {
     z-index: -1;
     pointer-events: none;
     isolation: isolate;
-    background: linear-gradient(160deg, #0f172a 0%, #1e3a8a 45%, #0c4a6e 100%);
+    background-image: url('/bg-horizontal.jpg');
+    background-size: cover;
+    background-position: center center;
+    background-repeat: no-repeat;
     will-change: transform;
 }
 
