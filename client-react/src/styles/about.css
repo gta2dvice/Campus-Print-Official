@@ -51,7 +51,6 @@ body.about-page .page-content {
     border-radius: 9999px;
     border: 1px solid rgba(59, 130, 246, 0.25);
     margin-bottom: 1.25rem;
-    backdrop-filter: blur(8px);
 }
 
 .about-hero__content {
@@ -90,7 +89,6 @@ body.about-page .page-content {
 .blob {
     position: absolute;
     border-radius: 50%;
-    filter: blur(60px);
     opacity: 0.35;
     pointer-events: none;
     animation: blobFloat 8s ease-in-out infinite alternate;
@@ -100,7 +98,7 @@ body.about-page .page-content {
 .blob--1 {
     width: 380px;
     height: 380px;
-    background: radial-gradient(circle, #93c5fd, #3b82f6);
+    background: radial-gradient(circle, rgba(147, 197, 253, 0.4) 0%, rgba(59, 130, 246, 0) 70%);
     top: -80px;
     left: -100px;
     animation-duration: 9s;
@@ -109,7 +107,7 @@ body.about-page .page-content {
 .blob--2 {
     width: 300px;
     height: 300px;
-    background: radial-gradient(circle, #fde68a, #f59e0b);
+    background: radial-gradient(circle, rgba(253, 230, 138, 0.4) 0%, rgba(245, 158, 11, 0) 70%);
     bottom: -40px;
     right: -80px;
     animation-duration: 11s;
@@ -119,7 +117,7 @@ body.about-page .page-content {
 .blob--3 {
     width: 220px;
     height: 220px;
-    background: radial-gradient(circle, #a5f3fc, #06b6d4);
+    background: radial-gradient(circle, rgba(165, 243, 252, 0.4) 0%, rgba(6, 182, 212, 0) 70%);
     top: 40%;
     right: 15%;
     animation-duration: 13s;
@@ -196,9 +194,9 @@ body.about-page .page-content {
 .card-inner {
     position: relative;
     z-index: 1;
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 27px;
     padding: 2.5rem 2rem 2rem;
@@ -419,8 +417,8 @@ body.about-page .page-content {
     font-size: 0.85rem;
     color: #6b7280;
     border-top: 1px solid rgba(0, 0, 0, 0.07);
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.85);
+    border-top: 1px solid rgba(0, 0, 0, 0.07);
 }
 
 /* ── Responsive ── */

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
+import LazyFloatingLines from '../components/LazyFloatingLines';
 import Footer from '../components/Footer';
 import GuestDetailsModal from '../components/GuestDetailsModal';
 import useDocumentTitle from '../lib/useDocumentTitle';
+import { countPdfPages } from '../lib/pdfWorker';
 import {
   MAX_FILE_BYTES,
   MAX_ORDER_FILES,
@@ -187,7 +189,7 @@ export default function Home() {
         continue;
       }
       // Images are one page; PDFs get a client-side guess; other docs are counted by the server.
-      const clientPages = isImageFile(file) ? 1 : await countPdfPagesClient(file);
+      const clientPages = isImageFile(file) ? 1 : await countPdfPages(file);
       accepted.push({
         key: Math.random(),
         file,
@@ -488,6 +490,13 @@ export default function Home() {
   return (
     <>
       <PageBackground />
+      <LazyFloatingLines
+        props={{
+          linesGradient: ['#3b82f6', '#a855f7', '#ec4899'],
+          animationSpeed: 0.8,
+          interactive: true
+        }}
+      />
       <div className="page-content">
 
         {/* ── STICKY HERO ── */}
