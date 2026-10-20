@@ -554,7 +554,7 @@ export default function NewOrder() {
     navigate(`/ticket?token=${encodeURIComponent(ticketToken)}`);
   }
 
-  const totalPagesCount = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
+  // totalPagesCount is now handled inside calcPrice()
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
@@ -562,13 +562,23 @@ export default function NewOrder() {
     const deliveryCharge = classroomDelivery ? 5 : 0;
     const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
 
+    // Tiered Service Charge (Slabs)
+    const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
+    let serviceCharge = 0;
+    if (totalPages > 0) {
+        if (totalPages <= 10) serviceCharge = 1;
+        else if (totalPages <= 30) serviceCharge = 2;
+        else serviceCharge = 3;
+    }
+
     return {
-      pages: totalPagesCount || 0,
+      pages: totalPages || 0,
       base: printingSubtotal || 0,
       a3Extra: 0,
       deliveryCharge,
       bindingCharge,
-      total: (printingSubtotal || 0) + deliveryCharge + bindingCharge
+      serviceCharge,
+      total: (printingSubtotal || 0) + deliveryCharge + bindingCharge + serviceCharge
     };
   }
 

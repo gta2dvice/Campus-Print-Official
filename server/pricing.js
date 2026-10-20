@@ -8,12 +8,14 @@ const PRICING = {
     binding: 26             // ₹ per document
 };
 
+const SERVICE_CHARGE_TIERS = [
+    { upTo: 10, charge: 1 },
+    { upTo: 30, charge: 2 },
+    { upTo: Infinity, charge: 3 }
+];
+
 const LEGACY_CHARGES = {
-    serviceChargeTiers: [
-        { upTo: 10, charge: 1 },
-        { upTo: 30, charge: 2 },
-        { upTo: Infinity, charge: 3 }
-    ],
+    serviceChargeTiers: SERVICE_CHARGE_TIERS,
     hostelSurcharge: 3
 };
 
@@ -30,10 +32,10 @@ function filePrintingCost(f) {
 }
 
 /**
- * Prices server-resolved files. The order-level binding flag is accepted only
- * for compatibility with older clients that do not send per-file selections.
+ * Prices server-resolved files.
+ * @param {boolean} includeServiceCharge - Whether to include the tiered service charge.
  */
-function priceOrder(resolvedFiles, { classroomDelivery, binding } = {}) {
+function priceOrder(resolvedFiles, { classroomDelivery, binding, includeServiceCharge = true } = {}) {
     if (!Array.isArray(resolvedFiles) || resolvedFiles.length === 0) {
         return { printingAmount: 0, fileCharges: [], printedPages: 0, serviceCharge: 0, deliveryCharge: 0, classroomCharge: 0, bindingCharge: 0, total: 0 };
     }
@@ -53,16 +55,22 @@ function priceOrder(resolvedFiles, { classroomDelivery, binding } = {}) {
         : (binding === true || binding === 'true' ? 1 : 0);
     const bindingCharge = bindingCount * PRICING.binding;
 
+    let serviceCharge = 0;
+    if (includeServiceCharge) {
+        const tier = SERVICE_CHARGE_TIERS.find(t => printedPages <= t.upTo);
+        serviceCharge = tier ? tier.charge : 0;
+    }
+
     return {
         printingAmount,
         fileCharges,
         printedPages,
-        serviceCharge: 0,
+        serviceCharge,
         deliveryCharge: 0,
         classroomCharge,
         bindingCharge,
-        total: printingAmount + classroomCharge + bindingCharge
+        total: printingAmount + classroomCharge + bindingCharge + serviceCharge
     };
 }
 
-module.exports = { PRICING, LEGACY_CHARGES, filePrintingCost, priceOrder };
+module.exports = { PRICING, SERVICE_CHARGE_TIERS, LEGACY_CHARGES, filePrintingCost, priceOrder };
