@@ -328,7 +328,10 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             pageRange,
             copies: Math.max(1, parseInt(setting.copies, 10) || 1),
             printingSide: setting.printingSide === 'double' ? 'double' : 'single',
-            colorMode: setting.colorMode === 'color' ? 'color' : 'bw'
+            colorMode: setting.colorMode === 'color' ? 'color' : 'bw',
+            ...(Object.prototype.hasOwnProperty.call(setting, 'spiralBinding')
+                ? { spiralBinding: setting.spiralBinding === true || setting.spiralBinding === 'true' }
+                : {})
         });
     }
 
@@ -404,6 +407,11 @@ async function validateAndPriceSubmission(req, res) {
     }
 
     const data = readOrderPayload(req.body);
+    if (data.paperSize && data.paperSize !== 'A4') {
+        res.status(400).json({ message: 'Only A4 paper size is currently supported.' });
+        return null;
+    }
+    data.paperSize = 'A4';
     const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
     if (pickupErr) { res.status(400).json({ message: pickupErr }); return null; }
 
@@ -413,12 +421,13 @@ async function validateAndPriceSubmission(req, res) {
         const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
             collectionLocationId: data.collectionLocationId,
             classroomDelivery: req.body.classroomDelivery,
-            // Order-level binding flag (orders.spiral_binding) — priced once per order.
+            // Preserve compatibility with old clients; per-file settings are canonical.
             binding: data.spiralBinding
         });
         resolved = priced.resolved;
         amount = priced.amount;
         data.charges = priced.charges;
+        data.spiralBinding = priced.charges.bindingCharge > 0;
     } catch (e) {
         res.status(e.httpStatus || 400).json({ message: e.message, code: e.code || 'FILE_VALIDATION_FAILED' });
         return null;
@@ -454,7 +463,8 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
                 printingSide: rf.printingSide,
                 copies: rf.copies,
                 colorMode: rf.colorMode,
-                printingCharge: rf.printingCharge
+                printingCharge: rf.printingCharge,
+                spiralBinding: rf.spiralBinding
             });
             console.info('[ORDER_CREATE] File storage upload completed:', {
                 orderId,

@@ -72,6 +72,14 @@ function StatusPill({ label, tone }) {
 export default function Orders() {
   useDocumentTitle('Your Orders – Campus Prints');
   const navigate = useNavigate();
+  function handleBack() {
+    const historyIndex = window.history.state?.idx;
+    if (Number.isInteger(historyIndex) && historyIndex > 0) {
+      navigate(-1);
+      return;
+    }
+    navigate('/', { replace: true });
+  }
 
   const [step, setStep] = useState(STEP.EMAIL);
   const [email, setEmail] = useState('');
@@ -303,6 +311,12 @@ export default function Orders() {
       <PageBackground />
       <LogoLink />
       <div className="page-content" style={{ minHeight: '70vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6rem 1rem 3rem', gap: '1.25rem' }}>
+
+        <div style={{ width: '100%', maxWidth: '560px', display: 'flex', justifyContent: 'flex-start' }}>
+          <button type="button" className="btn btn-secondary" onClick={handleBack} aria-label="Go back">
+            <span aria-hidden="true">←</span> Back
+          </button>
+        </div>
 
         <div style={{ textAlign: 'center', maxWidth: '560px' }}>
           <h1 style={{ fontSize: '2rem', margin: '0 0 0.35rem', color: 'var(--text-primary, #111)' }}>Orders</h1>

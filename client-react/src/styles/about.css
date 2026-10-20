@@ -60,16 +60,18 @@ body.about-page .page-content {
 }
 
 .about-hero__title {
-    font-size: clamp(2.4rem, 6vw, 4rem);
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    color: #fafafa;
+    font-family: "Bilbo Swash Caps", cursive;
+    font-size: clamp(3.2rem, 7vw, 4.8rem);
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #0f172a;
     line-height: 1.15;
     margin-bottom: 1.2rem;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
 }
 
 .about-hero__highlight {
-    background: linear-gradient(120deg, #3b82f6 0%, #60a5fa 50%, #2563eb 100%);
+    background: linear-gradient(120deg, #2563eb 0%, #3b82f6 50%, #1d4ed8 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -77,10 +79,11 @@ body.about-page .page-content {
 
 .about-hero__subtitle {
     font-size: 1.1rem;
-    color: #eef2f9;
+    color: #1e293b;
     line-height: 1.7;
     max-width: 520px;
     margin: 0 auto;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
 }
 
 /* ── Decorative blobs ── */
