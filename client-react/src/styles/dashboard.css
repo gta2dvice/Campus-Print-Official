@@ -34,6 +34,7 @@
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    overflow: hidden;
 }
 
 /* ===== SIDEBAR ===== */
@@ -213,7 +214,7 @@
     margin-left: var(--sidebar-width);
     flex: 1;
     padding: 1.5rem 2rem;
-    /* overflow-y is not set here — the page (body/app-body) provides the single scrollbar. */
+    overflow-y: auto;
 }
 
 .content-header {
@@ -1000,7 +1001,6 @@
     border-radius: 20px;
     box-shadow: var(--shadow-lg);
     margin: auto;
-    /* Flex column: header fixed top, body scrolls, footer fixed bottom. */
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
@@ -1446,7 +1446,7 @@
     border-radius: 40px;
     box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
     overflow: hidden;
-    padding: 3.5rem 3rem;
+    /* padding: 3.5rem 3rem; */
 }    /* Dev-only: the standalone booking pages use this body class. The flex panel lives
        inside .booking-container, so this body is a full-bleed page backdrop, not a panel.
        Allow pointer events from interactive controls inside .booking-container (and its
