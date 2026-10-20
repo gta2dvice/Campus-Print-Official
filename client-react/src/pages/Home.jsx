@@ -71,8 +71,6 @@ export default function Home() {
   const [size, setSize] = useState('A4');
   const [printingSide, setPrintingSide] = useState('single');
   const [classroomDelivery, setClassroomDelivery] = useState(false); // Verified state
-  const [config, setConfig] = useState(null);
-  const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
 
   const [bump, setBump] = useState(false);
   // Unresolved (pending/unknown) payment left over from a previous visit. Kept in
@@ -198,6 +196,7 @@ export default function Home() {
         copies: 1,
         printingSide: 'single',
         colorMode: 'bw',
+        spiralBinding: false,
         pageRange: ''
       });
     }
@@ -258,6 +257,10 @@ export default function Home() {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, printingSide: side } : f)));
   }
 
+  function updateFileBinding(key, spiralBinding) {
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, spiralBinding } : f)));
+  }
+
   function updateFileCopies(key, delta) {
     if (delta < 0) {
       const target = files.find((f) => f.key === key);
@@ -283,21 +286,19 @@ export default function Home() {
       return sum + pages * copies * 2;
     }, 0);
 
-    // Page-based service charge: 1–10 printed pages ₹1, 11–30 ₹2, 31+ ₹3.
-    // Keep in sync with serviceChargeForPages() in server/pricing.js. No files → no charge.
-    const serviceCharge = totalPages === 0 ? 0 : totalPages <= 10 ? 1 : totalPages <= 30 ? 2 : 3;
-
     const deliveryCharge = classroomDelivery ? 5 : 0;
+    const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? 26 : 0), 0);
 
     return {
       basePrice: printingSubtotal,
       a3Extra: 0,
-      serviceCharge,
-      total: printingSubtotal + serviceCharge + deliveryCharge
+      deliveryCharge,
+      bindingCharge,
+      total: printingSubtotal + deliveryCharge + bindingCharge
     };
   }
 
-  const { basePrice, a3Extra, serviceCharge, total } = calcPrice();
+  const { basePrice, a3Extra, deliveryCharge, bindingCharge, total } = calcPrice();
 
   function getFileCost(f) {
     const pages = printablePages(f);
@@ -308,35 +309,9 @@ export default function Home() {
     return pages * copies * 2;
   }
 
-  function getFileCostFormula(f) {
-    const pages = printablePages(f);
-    const copies = f?.copies || 1;
-    if (pages === 0) return '0 pages';
-    if (f?.colorMode === 'color') {
-      return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹5/pg`;
-    }
-    if (f?.printingSide === 'double') {
-      const sheets = Math.ceil(pages / 2);
-      return `${pages} pgs (${sheets} sheet${sheets > 1 ? 's' : ''}) × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹3/sheet`;
-    }
-    return `${pages} pg${pages > 1 ? 's' : ''} × ${copies} ${copies > 1 ? 'copies' : 'copy'} @ ₹2/pg`;
-  }
-
   const isDetectingPages = files.some((f) => f.pages === null);
   const hasRangeErrors = files.some((f) => hasInvalidPageRange(f));
   const canOrder = files.length > 0 && !isDetectingPages && !hasRangeErrors;
-
-  useEffect(() => {
-    async function loadConfig() {
-      try {
-        const res = await fetch('/api/orders/config', { credentials: 'include' });
-        if (res.ok) setConfig(await res.json());
-      } catch (err) {
-        console.error('Failed to load config', err);
-      }
-    }
-    loadConfig();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,17 +319,21 @@ export default function Home() {
       const unfinished = await loadCurrentOrder();
       if (cancelled) return;
       if (unfinished) {
+        const restoredFiles = Array.isArray(unfinished.files) ? unfinished.files : [];
+        if (unfinished.spiralBinding && restoredFiles.length && !restoredFiles.some((file) => file.spiralBinding)) {
+          restoredFiles[0] = { ...restoredFiles[0], spiralBinding: true };
+        }
         extraMetaRef.current = {
           guestDetails: unfinished.guestDetails,
-          spiralBinding: unfinished.spiralBinding,
+          spiralBinding: restoredFiles.some((file) => file.spiralBinding),
           expressDelivery: unfinished.expressDelivery,
           selectedLocationId: unfinished.selectedLocationId,
           selectedLocationName: unfinished.selectedLocationName,
           selectedTimeSlot: unfinished.selectedTimeSlot,
           classroomDelivery: unfinished.classroomDelivery,
         };
-        if (unfinished.files?.length) setFiles(unfinished.files);
-        setSize(unfinished.paperSize);
+        if (restoredFiles.length) setFiles(restoredFiles);
+        setSize('A4');
         setPrintingSide(unfinished.printingSide);
         setClassroomDelivery(unfinished.classroomDelivery || false);
       }
@@ -382,6 +361,7 @@ export default function Home() {
         ...extraMetaRef.current,
         paperSize: size,
         printingSide,
+        spiralBinding: files.some((file) => file.spiralBinding),
         classroomDelivery,
       },
       files,
@@ -474,6 +454,7 @@ export default function Home() {
       guestDetails: guestDetails || extraMetaRef.current.guestDetails,
       paperSize: size,
       printingSide,
+      spiralBinding: files.some((file) => file.spiralBinding),
       classroomDelivery,
     };
     extraMetaRef.current = meta;
@@ -507,7 +488,7 @@ export default function Home() {
   return (
     <>
       <PageBackground />
-      <div className={`page-content${files.length > 0 ? ' has-mobile-bar' : ''}`}>
+      <div className="page-content">
 
         {/* ── STICKY HERO ── */}
         <div className="hero-container" id="hero">
@@ -519,7 +500,7 @@ export default function Home() {
           </header>
 
           <div className="hero-content" id="heroText" ref={heroTextRef}>
-            <h1 className="hero-title">CAMPUS PRINTS</h1>
+            <h1 className="hero-title">CAMPUS PRINT</h1>
             <p className="hero-subtitle">Your ideas, printed fast &amp; affordably</p>
 
             <div className="cta-buttons">
@@ -533,11 +514,6 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="scroll-arrow" id="scrollArrow" onClick={() => scrollToId('main-content')}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M7 13l5 5 5-5M7 6l5 5 5-5" />
-            </svg>
-          </div>
         </div>
 
         {/* ── SLIDING CONTENT ── */}
@@ -557,14 +533,14 @@ export default function Home() {
                     <span className="detail-icon">🏛️</span>
                     <div>
                       <strong>Delivery Points</strong>
-                      <p>1. Main Gate<br />2. Academic Block<br />3. Hostel Gate</p>
+                      <p>1. Main Gate<br />2. Academic Block<br />3. Hostel Gate<br />4. Red Canteen</p>
                     </div>
                   </div>
                   <div className="location-detail-item">
                     <span className="detail-icon">🕐</span>
                     <div>
                       <strong>Hours</strong>
-                      <p>Mon –Fri: 9:00 AM – 4:00 PM<br />Sunday &amp; Saturday: Closed(Online Services)</p>
+                      <p>Mon –Fri: 9:00 AM – 4:00 PM<br /></p>
                     </div>
                   </div>
                   <div className="location-detail-item">
@@ -636,86 +612,72 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="pricing-cards-row" style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
-                gap: '1.5rem',
-                width: '100%',
-                maxWidth: '800px',
-                margin: '0 auto'
-              }}>
-                <div className="pricing-card" id="pcColorCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div className="pricing-cards-row">
+                <div className="pricing-card" id="pcColorCard">
                   <div className="pc-icon">🖨️</div>
-                  <h3 className="pc-title">Color Mode</h3>
-                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>B&amp;W</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹2 / page</span>
-                    </div>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>Color</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹5 / page</span>
-                    </div>
+                  <h3 className="pc-title">Printing Color</h3>
+                  <div className="pc-info-list">
+                    <div className="pc-info-row"><span>Black &amp; White</span><span className="pc-info-price">₹2 / page</span></div>
+                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹5 / page</span></div>
                   </div>
                 </div>
 
-                <div className="pricing-card" id="pcSizeCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div className="pricing-card" id="pcPaperCard">
                   <div className="pc-icon">📄</div>
-                  <h3 className="pc-title">Paper Size</h3>
-                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>A4</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>Standard</span>
-                    </div>
+                  <h3 className="pc-title">Paper &amp; Printing Sides</h3>
+                  <div className="pc-info-list">
+                    <div className="pc-info-row"><span>Paper size</span><span className="pc-info-price">A4 only</span></div>
+                    <div className="pc-info-row"><span>Single-sided</span><span className="pc-info-price">₹2 / page</span></div>
+                    <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / sheet</span></div>
+                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹5 / page</span></div>
                   </div>
                 </div>
 
-                <div className="pricing-card" id="pcSideCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div className="pc-icon">↕️</div>
-                  <h3 className="pc-title">Printing Side</h3>
-                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>Single</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>One Side</span>
-                    </div>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>Double</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>Both Sides</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pricing-card" id="pcDeliveryCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div className="pc-icon">🚚</div>
-                  <h3 className="pc-title">Classroom Delivery</h3>
-                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>No</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>Free</span>
-                    </div>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>Yes</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹5</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pricing-card" id="pcBindingCard" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div className="pc-icon">📚</div>
-                  <h3 className="pc-title">Binding</h3>
-                  <div className="pc-info-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: 'auto', paddingBottom: '0.5rem' }}>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>No</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>Free</span>
-                    </div>
-                    <div className="pc-info-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                      <span>Yes</span>
-                      <span className="pc-info-price" style={{ fontWeight: '600' }}>₹26</span>
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>₹25 binding + ₹1 service charge</div>
+                <div className="pricing-card" id="pcAddonsCard">
+                  <div className="pc-icon">✨</div>
+                  <h3 className="pc-title">Add-ons</h3>
+                  <div className="pc-info-list">
+                    <div className="pc-info-row"><span>Pickup at Point</span><span className="pc-info-price">Free</span></div>
+                    <div className="pc-info-row"><span>Classroom Delivery</span><span className="pc-info-price">₹5</span></div>
+                    <div className="pc-info-row"><span>Binding</span><span className="pc-info-price">₹26 / PDF</span></div>
                   </div>
                 </div>
               </div>
+
+              <div className="upload-interactive-section" style={{ marginTop: '2.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+                  <div className="home-options-grid" role="radiogroup" aria-label="Pickup and delivery option">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={!classroomDelivery}
+                      className={`home-option-card ${!classroomDelivery ? 'is-selected' : ''}`}
+                      onClick={() => setClassroomDelivery(false)}
+                    >
+                      <span className="home-radio-circle" aria-hidden="true">
+                        <span className="home-radio-dot" />
+                      </span>
+                      <div className="home-option-text">
+                        <span className="home-option-name">Pickup at Point</span>
+                        <span className="home-option-price">Free</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={classroomDelivery}
+                      className={`home-option-card ${classroomDelivery ? 'is-selected' : ''}`}
+                      onClick={() => setClassroomDelivery(true)}
+                    >
+                      <span className="home-radio-circle" aria-hidden="true">
+                        <span className="home-radio-dot" />
+                      </span>
+                      <div className="home-option-text">
+                        <span className="home-option-name">Classroom Delivery</span>
+                        <span className="home-option-price">+₹5</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Upload Zone */}
                 <div
@@ -918,6 +880,38 @@ export default function Home() {
                               </div>
                             </div>
 
+                            <div className="home-setting-section">
+                              <span className="home-setting-title">Binding for this PDF</span>
+                              <div className="home-options-grid" role="radiogroup" aria-label={`Binding for ${f.file.name}`}>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={!f.spiralBinding}
+                                  className={`home-option-card ${!f.spiralBinding ? 'is-selected' : ''}`}
+                                  onClick={() => updateFileBinding(f.key, false)}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true"><span className="home-radio-dot" /></span>
+                                  <span className="home-option-text">
+                                    <span className="home-option-name">No</span>
+                                    <span className="home-option-price">Free</span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={!!f.spiralBinding}
+                                  className={`home-option-card ${f.spiralBinding ? 'is-selected' : ''}`}
+                                  onClick={() => updateFileBinding(f.key, true)}
+                                >
+                                  <span className="home-radio-circle" aria-hidden="true"><span className="home-radio-dot" /></span>
+                                  <span className="home-option-text">
+                                    <span className="home-option-name">Yes</span>
+                                    <span className="home-option-price">₹26</span>
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+
                             {/* Page Range Input */}
                             {showPageRangeInput(f) && (
                               <div className="home-page-range-section">
@@ -959,7 +953,7 @@ export default function Home() {
                                 {printablePages(f)} printable page{printablePages(f) !== 1 ? 's' : ''} × {f.copies} {f.copies > 1 ? 'copies' : 'copy'}
                               </span>
                               <span className="home-file-subtotal">
-                                Doc Subtotal: <strong>₹{cost}</strong>
+                                Doc Subtotal: <strong>₹{cost + (f.spiralBinding ? 26 : 0)}</strong>
                               </span>
                             </div>
                           </div>
@@ -980,7 +974,6 @@ export default function Home() {
                     </button>
                   </div>
                 )}
-              </div>
 
               {/* Pricing Summary Card */}
               <div className="pricing-total-wrap">
@@ -988,51 +981,13 @@ export default function Home() {
                   <div className="ptc-breakdown" id="pcBreakdown">
                     <span className="ptc-line"><span className="ptc-line-label">Total Pages</span><span className="ptc-line-val">{totalPages} pages</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
-                    <span className="ptc-line"><span className="ptc-line-label">Service Charge</span><span className="ptc-line-val">₹{serviceCharge}</span></span>
-                    {classroomDelivery && (
-                      <span className="ptc-line">
-                        <span className="ptc-line-label">Classroom Delivery</span>
-                        <span className="ptc-line-val">₹5</span>
-                      </span>
+                    {deliveryCharge > 0 && (
+                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹{deliveryCharge}</span></span>
+                    )}
+                    {bindingCharge > 0 && (
+                      <span className="ptc-line"><span className="ptc-line-label">Binding</span><span className="ptc-line-val">₹{bindingCharge}</span></span>
                     )}
                   </div>
-
-                  {files.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        className="home-breakdown-toggle"
-                        onClick={() => setIsBreakdownOpen((prev) => !prev)}
-                        aria-expanded={isBreakdownOpen}
-                      >
-                        <span>Detailed calculation</span>
-                        <span>{isBreakdownOpen ? 'Hide ▲' : 'Show itemized breakdown ▼'}</span>
-                      </button>
-
-                      {isBreakdownOpen && (
-                        <div className="home-breakdown-details">
-                          {files.map((f) => (
-                            <div key={f.key} className="home-breakdown-item">
-                              <div className="home-breakdown-desc">
-                                <div className="home-breakdown-file-title">{f.file.name}</div>
-                                <div className="home-breakdown-formula">{getFileCostFormula(f)}</div>
-                              </div>
-                              <div className="home-breakdown-amount">₹{getFileCost(f)}</div>
-                            </div>
-                          ))}
-                          {classroomDelivery && (
-                            <div className="home-breakdown-item">
-                              <div className="home-breakdown-desc">
-                                <div className="home-breakdown-file-title">Classroom Delivery</div>
-                                <div className="home-breakdown-formula">Direct to classroom</div>
-                              </div>
-                              <div className="home-breakdown-amount">+₹5</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
 
                   <div className="ptc-divider"></div>
 
@@ -1074,40 +1029,11 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Mobile Sticky Bottom Summary Bar */}
-              {files.length > 0 && (
-                <div className="home-mobile-sticky-bar" aria-label="Order summary">
-                  <div className="home-mobile-sticky-content">
-                    <div className="home-mobile-sticky-info">
-                      <div className="home-mobile-sticky-total">
-                        <span className="home-mobile-sticky-label">Estimated:</span>
-                        <span className="home-mobile-sticky-amount">₹{total}</span>
-                      </div>
-                      <span className="home-mobile-sticky-meta">
-                        {totalPages} page{totalPages !== 1 ? 's' : ''} · {files.length} file{files.length > 1 ? 's' : ''}
-                        {classroomDelivery ? ' · Delivery' : ''}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="home-mobile-sticky-btn"
-                      disabled={!canOrder}
-                      onClick={handleOrderClick}
-                    >
-                      {isDetectingPages ? 'Detecting…' : hasRangeErrors ? 'Fix Range' : (
-                        <>
-                          Start Order <span aria-hidden="true">→</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-            </div>
-          </section>
-          <Footer />
-        </main>
+              </div>
+            </section>
+            <Footer />
+          </main>
+        </div>
 
        {/* Guest Details Modal for guest flow */}
       <GuestDetailsModal

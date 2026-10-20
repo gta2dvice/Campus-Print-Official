@@ -10,9 +10,9 @@ export default function LogoLink({ className = '', style = {} }) {
       ...style
     }}>
       <img
-        src="/cp.png"
+        src="/assets/cp_bg.png"
         alt="CampusPrint Logo"
-        style={{ height: '40px', width: 'auto', display: 'block', objectFit: 'contain' }}
+        style={{ height: '40px', width: 'auto', display: 'block', objectFit: 'contain', background: 'transparent' }}
       />
     </Link>
   );

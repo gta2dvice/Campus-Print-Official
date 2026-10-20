@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS order_files (
     printing_side   VARCHAR(10) NOT NULL DEFAULT 'single' CHECK (printing_side IN ('single','double')),
     copies          INTEGER NOT NULL DEFAULT 1,
     color_mode      VARCHAR(10) NOT NULL DEFAULT 'bw' CHECK (color_mode IN ('bw','color')),
+    spiral_binding  SMALLINT NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     file_deleted_at TIMESTAMPTZ NULL
 );
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS order_files (
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_side VARCHAR(10) NOT NULL DEFAULT 'single';
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS copies INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw';
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS spiral_binding SMALLINT NOT NULL DEFAULT 0;
 -- Multi-format support: the resolved logical type (PDF/DOCX/…) and the
 -- page count used for pricing (server-detected, or user-declared for types we
 -- can't count server-side).

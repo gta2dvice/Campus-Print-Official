@@ -2,7 +2,7 @@
 // Run: node --test server/tests/
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { PRICING, priceOrder } = require('../pricing');
+const { priceOrder } = require('../pricing');
 const { toPrinterOrder, financialBreakdown, PRINTER_ORDER_FIELDS } = require('../services/orderFinance');
 
 const file = (pages, copies, printingSide, colorMode) => ({ pages, copies, printingSide, colorMode });
@@ -14,27 +14,24 @@ const FORBIDDEN_FOR_PRINTER = [
 ];
 
 describe('canonical pricing split (customer prices)', () => {
-    it('page-based service charge: the spec examples (single copy, no delivery)', () => {
-        // 9 pages: ₹18 + ₹1 = ₹19; 22 pages: ₹44 + ₹2 = ₹46; 50 pages: ₹100 + ₹3 = ₹103.
+    it('does not add page-based service fees to printing totals', () => {
         const nine = priceOrder([file(9, 1, 'single', 'bw')], {});
-        assert.deepEqual([nine.printingAmount, nine.serviceCharge, nine.total], [18, 1, 19]);
+        assert.deepEqual([nine.printingAmount, nine.serviceCharge, nine.total], [18, 0, 18]);
         const twentyTwo = priceOrder([file(22, 1, 'single', 'bw')], {});
-        assert.deepEqual([twentyTwo.printingAmount, twentyTwo.serviceCharge, twentyTwo.total], [44, 2, 46]);
+        assert.deepEqual([twentyTwo.printingAmount, twentyTwo.serviceCharge, twentyTwo.total], [44, 0, 44]);
         const fifty = priceOrder([file(50, 1, 'single', 'bw')], {});
-        assert.deepEqual([fifty.printingAmount, fifty.serviceCharge, fifty.total], [100, 3, 103]);
+        assert.deepEqual([fifty.printingAmount, fifty.serviceCharge, fifty.total], [100, 0, 100]);
     });
 
-    it('service-charge tiers are based on total printed pages (pages × copies)', () => {
-        // 10 pages × 2 copies = 20 printed pages → tier 11–30 → ₹2.
+    it('charges pickup points free of delivery fees', () => {
         const c = priceOrder([file(10, 2, 'single', 'bw')], { collectionLocationId: 'main-gate' });
-        assert.deepEqual([c.printingAmount, c.serviceCharge, c.deliveryCharge, c.classroomCharge, c.bindingCharge, c.total], [40, 2, 0, 0, 0, 42]);
+        assert.deepEqual([c.printingAmount, c.serviceCharge, c.deliveryCharge, c.classroomCharge, c.bindingCharge, c.total], [40, 0, 0, 0, 0, 40]);
     });
 
     it('double-sided B&W is per sheet, rounded up per copy: 5 pages × 3 copies = 3 sheets × 3 × ₹3 = ₹27', () => {
         const c = priceOrder([file(5, 3, 'double', 'bw')], { collectionLocationId: 'red-canteen' });
         assert.equal(c.printingAmount, 27);
-        // 15 printed pages → ₹2 service.
-        assert.equal(c.total, 29);
+        assert.equal(c.total, 27);
     });
 
     it('colour is ₹5 per page on either side', () => {
@@ -48,22 +45,21 @@ describe('canonical pricing split (customer prices)', () => {
         const c = priceOrder([file(10, 1, 'single', 'bw'), file(7, 2, 'double', 'bw'), file(3, 1, 'single', 'color')], { collectionLocationId: 'academic-block' });
         assert.deepEqual(c.fileCharges, [20, 24, 15]);
         assert.equal(c.printingAmount, 59);
-        // 27 printed pages → ₹2 service.
-        assert.equal(c.total, 61);
+        assert.equal(c.total, 59);
     });
 
-    it('Hostel Gate adds the ₹3 delivery charge; classroom delivery adds ₹5 (never both)', () => {
+    it('classroom delivery adds ₹5 once; pickup at Hostel Gate remains free', () => {
         const hostel = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate', classroomDelivery: 'true' });
-        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [PRICING.hostelSurcharge, 0, 6]);
-        const classroom = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'academic-block', classroomDelivery: 'true' });
-        assert.deepEqual([classroom.deliveryCharge, classroom.classroomCharge, classroom.total], [0, PRICING.classroomDelivery, 8]);
+        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [0, 5, 7]);
+        const pickup = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate' });
+        assert.deepEqual([pickup.deliveryCharge, pickup.classroomCharge, pickup.total], [0, 0, 2]);
     });
 
-    it('binding adds ₹25 + ₹1 = ₹26 once per order, on top of the page-based service charge', () => {
+    it('legacy order-wide binding remains supported when per-file settings are absent', () => {
         const without = priceOrder([file(9, 1, 'single', 'bw')], {});
         const withBinding = priceOrder([file(9, 1, 'single', 'bw')], { binding: true });
         assert.equal(withBinding.bindingCharge, 26);
-        assert.equal(withBinding.serviceCharge, 1); // page-based charge NOT replaced or double-counted
+        assert.equal(withBinding.serviceCharge, 0);
         assert.equal(withBinding.total, without.total + 26);
         // String 'true' (form field) counts too; anything else does not.
         assert.equal(priceOrder([file(9, 1, 'single', 'bw')], { binding: 'true' }).bindingCharge, 26);
@@ -71,11 +67,11 @@ describe('canonical pricing split (customer prices)', () => {
     });
 
     it('the printer still sees only the printing amount with binding and delivery on', () => {
-        // 15 single-sided B&W pages = ₹30 printing; classroom delivery + service + binding extra.
+        // 15 B&W pages = ₹30 printing; classroom delivery + binding are extras.
         const c = priceOrder([file(15, 1, 'single', 'bw')], { collectionLocationId: 'academic-block', classroomDelivery: true, binding: true });
         const order = itemisedOrder(c);
         assert.equal(toPrinterOrder(order).printer_payable, 30);
-        assert.equal(financialBreakdown(order).summary.customerTotal, 30 + 2 + 5 + 26);
+        assert.equal(financialBreakdown(order).summary.customerTotal, 30 + 5 + 26);
     });
 });
 
@@ -128,6 +124,14 @@ describe('Printer Admin view', () => {
         ]);
     });
 
+    it('receives each file’s binding instruction', () => {
+        const boundFiles = toPrinterOrder(order, [
+            { ...files[0], spiral_binding: 1 },
+            { ...files[1], spiral_binding: 0 }
+        ]).files;
+        assert.deepEqual(boundFiles.map(f => f.spiral_binding), [1, 0]);
+    });
+
     it('an order placed before itemising shows no payable instead of the customer total', () => {
         const legacy = toPrinterOrder({ id: 5, total_price: '210.00', payment_status: 'PAID', printing_amount: null });
         assert.equal(legacy.itemised, false);
@@ -142,8 +146,8 @@ describe('Printer Admin view', () => {
 
 describe('Super Admin breakdown', () => {
     it('itemised order: printing, extras and summary reconcile with the customer total', () => {
-        const charges = priceOrder([file(15, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate', binding: true });
-        const order = itemisedOrder(charges, { collection_location_id: 'hostel-gate' });
+        const charges = priceOrder([file(15, 1, 'single', 'bw')], { classroomDelivery: true, binding: true });
+        const order = itemisedOrder(charges, { collection_location_id: 'academic-block' });
         const payments = [
             { status: 'failed', amount: '61.00' },
             { status: 'success', amount: '61.00' }
@@ -154,8 +158,8 @@ describe('Super Admin breakdown', () => {
         assert.equal(b.printing.totalPrinting, 30);
         assert.equal(b.printing.printerPayable, 30);
         assert.deepEqual(b.printing.lines.map(l => [l.category, l.printedPages, l.amount]), [['BW_SINGLE', 15, 30]]);
-        // 15 printed pages → ₹2 service; hostel ₹3; binding ₹26.
-        assert.deepEqual([b.extras.deliveryCharge, b.extras.serviceCharge, b.extras.classroomCharge, b.extras.bindingCharge, b.extras.totalExtras], [3, 2, 0, 26, 31]);
+        // Classroom delivery ₹5 and binding ₹26.
+        assert.deepEqual([b.extras.deliveryCharge, b.extras.serviceCharge, b.extras.classroomCharge, b.extras.bindingCharge, b.extras.totalExtras], [0, 0, 5, 26, 31]);
         assert.equal(b.summary.customerTotal, 61);
         assert.equal(b.summary.amountPaid, 61);
         assert.equal(b.summary.grossExtraRevenue, 31);
@@ -169,8 +173,8 @@ describe('Super Admin breakdown', () => {
         const charges = priceOrder([file(10, 1, 'single', 'bw')], {});
         const b = financialBreakdown(itemisedOrder(charges, { total_price: '99.00' }));
         assert.equal(b.reconciliation.reconciled, false);
-        // ₹20 printing + ₹1 service (10 pages) vs ₹99 saved.
-        assert.equal(b.reconciliation.difference, 78);
+        // ₹20 printing, no extras vs ₹99 saved.
+        assert.equal(b.reconciliation.difference, 79);
         assert.ok(b.notes.some(n => n.includes('do not add up')));
     });
 
