@@ -603,6 +603,26 @@ export default function NewOrder() {
   }, [modalOpen]);
 
   function goToStep(nextStep) {
+    const isForward = (current, next) => {
+      const order = { slot: 1, location: 2, payment: 3, review: 4 };
+      return order[next] > order[current];
+    };
+
+    if (isForward(step, nextStep)) {
+      if (nextStep === 'location' && !selectedTimeSlot) {
+        showToast('Please select a time slot first.', 'error');
+        return;
+      }
+      if (nextStep === 'payment' && (!selectedTimeSlot || !selectedLocationId)) {
+        showToast('Please select both time slot and location.', 'error');
+        return;
+      }
+      if (nextStep === 'review' && (!selectedTimeSlot || !selectedLocationId || !paymentMethod)) {
+        showToast('Please complete all previous steps.', 'error');
+        return;
+      }
+    }
+
     setStep(nextStep);
     if (nextStep === 'slot') loadTimeSlots();
     if (nextStep === 'location') loadLocationOptions();
@@ -625,6 +645,12 @@ export default function NewOrder() {
   }
 
   function selectTimeSlot(time) {
+    if (selectedTimeSlot === time) {
+      setSelectedTimeSlot(null);
+      setSelectedLocationId(null);
+      setSelectedLocationName(null);
+      return;
+    }
     setSelectedTimeSlot(time);
     if (selectedLocationId && !isLocationOffered(selectedLocationId, time)) {
       setSelectedLocationId(null);
@@ -690,6 +716,12 @@ export default function NewOrder() {
   }
 
   function handleLocationSelect(locId, locName) {
+    if (selectedLocationId === locId) {
+      setSelectedLocationId(null);
+      setSelectedLocationName(null);
+      setClassroomDelivery(false);
+      return;
+    }
     if (selectedTimeSlot && !isLocationOffered(locId, selectedTimeSlot)) return;
     setSelectedLocationId(locId);
     setSelectedLocationName(locName);
@@ -1723,7 +1755,7 @@ export default function NewOrder() {
             </section>
 
             {/* Step 2: Location */}
-            <section className="cp-step-view" hidden={step !== 'location'}>
+            <section className={`cp-step-view cp-location-step`} hidden={step !== 'location'}>
               <div className="cp-view-header">
                 <span className="location-tag">📍 Collection Point</span>
                 <h2 className="location-title" style={{ marginTop: '0.5rem' }}>Where should we deliver your prints?</h2>
@@ -1810,7 +1842,13 @@ export default function NewOrder() {
                           aria-checked={isSelected}
                           className={classes}
                           disabled={isDisabled}
-                          onClick={() => setPaymentMethod(opt.id)}
+                          onClick={() => {
+                        if (paymentMethod === opt.id) {
+                          setPaymentMethod(null);
+                        } else {
+                          setPaymentMethod(opt.id);
+                        }
+                      }}
                         >
                           <div className="cp-card-icon">
                             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{opt.icon}</svg>

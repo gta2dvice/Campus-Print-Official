@@ -2611,6 +2611,225 @@
         flex-wrap: wrap;
         gap: 0.5rem;
     }
+    .sidebar {
+        width: min(var(--sidebar-width), 85vw);
+        z-index: 60;
+        transition: transform 0.25s ease;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 55;
+        background: rgba(15, 23, 42, 0.45);
+    }
+
+    .sidebar .nav-item,
+    .sidebar .logout-btn {
+        min-height: 44px;
+    }
+
+    .main-content {
+        padding: 1.25rem 1rem 2rem;
+        min-height: auto;
+    }
+
+    .booking-panel,
+    .booking-panel.booking-container {
+        max-height: 100dvh;
+    }
+
+    .page-title {
+        font-size: 1.5rem;
+    }
+
+    .step-card {
+        padding: 1.1rem 1rem;
+    }
+
+    .upload-zone {
+        padding: 1.75rem 1rem;
+    }
+
+    /* File cards: long names wrap, options get full-width touch targets */
+    .file-item-main,
+    .file-item-info {
+        min-width: 0;
+    }
+
+    .file-item-name {
+        overflow-wrap: anywhere;
+    }
+
+    .file-item .file-remove {
+        width: 40px;
+        height: 40px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .file-item-settings {
+        padding-left: 0;
+    }
+
+    .file-item-row {
+        flex-wrap: wrap;
+        gap: 0.6rem;
+    }
+
+    .file-item-options {
+        flex: 1 1 100%;
+    }
+
+    .file-item-options .btn {
+        flex: 1 1 0;
+        width: auto;
+        max-width: none;
+        min-height: 40px;
+        justify-content: center;
+    }
+
+    .file-item .counter-btn {
+        width: 40px;
+        height: 40px;
+    }
+
+    .step-card .toggle-option {
+        min-height: 40px;
+    }
+
+    .toast {
+        left: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+    }
+
+    /* Booking flow is a full-screen sheet on phones. The overlay stays a fixed backdrop (no inner
+       scroll) and the panel fills the viewport; the panel’s own body is what scrolls. */
+    .booking-overlay {
+        align-items: stretch;
+        padding: 0;
+    }
+
+    .booking-panel.booking-container {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        border-radius: 0;
+        max-height: 100dvh;
+    }
+
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
+    }
+
+    .booking-close {
+        width: 44px;
+        height: 44px;
+        top: 0.5rem;
+        right: 0.5rem;
+    }
+
+    .booking-panel-body {
+        padding: 0.5rem 1rem;
+    }
+
+    .cp-nav-steps {
+        margin: 0 0 1rem;
+    }
+
+    .cp-view-header {
+        margin-bottom: 1rem;
+    }
+
+    .cp-view-header .location-tag {
+        margin-bottom: 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .cp-view-header .location-title {
+        font-size: clamp(1.5rem, 7vw, 2rem);
+        margin-bottom: 0.6rem;
+    }
+
+    .cp-view-header .location-subtitle {
+        font-size: 0.92rem;
+        margin: 0 auto 0.5rem;
+        white-space: normal;
+    }
+
+    .cp-slots-grid,
+    .cp-cards-grid,
+    .cp-review-container {
+        margin-bottom: 1rem;
+    }
+
+    .cp-slot-tag,
+    .cp-loc-status-tag {
+        text-align: center;
+    }
+
+    .cp-review-box {
+        padding: 0.95rem;
+        border-radius: 18px;
+        gap: 0.85rem;
+    }
+
+    .cp-step-footer .btn,
+    .booking-panel-footer .btn {
+        width: 100%;
+    }
+
+    .cp-review-row {
+        flex-wrap: wrap;
+    }
+
+    .cp-review-row > div {
+        min-width: 0;
+    }
+
+    .cp-review-val {
+        font-size: 1.02rem;
+        overflow-wrap: anywhere;
+    }
+
+    .cp-inline-edit {
+        min-height: 40px;
+    }
+
+    .cp-review-line {
+        flex-wrap: wrap;
+        gap: 0.25rem 1rem;
+    }
+
+    .cp-review-line > :last-child {
+        margin-left: auto;
+        min-width: 0;
+        text-align: right;
+        overflow-wrap: anywhere;
+    }
+
+    .cp-review-total strong {
+        font-size: 1.5rem;
+    }
+
+    .cp-step-footer .btn {
+        max-width: none;
+        min-height: 48px;
+    }
+
+    /* Order history list (Dashboard) */
+    .orders-list .order-item {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
 }
 
 @media (max-width: 480px) {
