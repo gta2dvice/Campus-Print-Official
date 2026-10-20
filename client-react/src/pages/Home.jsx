@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
-import LazyFloatingLines from '../components/LazyFloatingLines';
 import Footer from '../components/Footer';
 import GuestDetailsModal from '../components/GuestDetailsModal';
 import useDocumentTitle from '../lib/useDocumentTitle';
@@ -490,13 +489,6 @@ export default function Home() {
   return (
     <>
       <PageBackground />
-      <LazyFloatingLines
-        props={{
-          linesGradient: ['#3b82f6', '#a855f7', '#ec4899'],
-          animationSpeed: 0.8,
-          interactive: true
-        }}
-      />
       <div className="page-content">
 
         {/* ── STICKY HERO ── */}
@@ -562,21 +554,17 @@ export default function Home() {
                 </div>
               </div>
               <div className="location-map-card">
-                <div className="map-placeholder">
-                  <div className="map-pin-anim">
-                    <div className="map-pin">
-                      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 21s-8-7.5-8-12a8 8 0 1 1 16 0c0 4.5-8 12-8 12z" />
-                        <circle cx="12" cy="9" r="2.5" fill="#3b82f6" stroke="none" />
-                      </svg>
-                    </div>
-                    <div className="pin-pulse"></div>
-                  </div>
-                  <p className="map-label">Print Campus<br /><span>Main Academic Block</span></p>
-                  <a href="https://maps.app.goo.gl/CV2jsxgn5Jkpvqkk7" target="_blank" rel="noreferrer" className="btn btn-primary map-btn">
-                    Open in Maps →
-                  </a>
-                </div>
+                <img
+                  src="/thumbs-up-cat.jpg"
+                  alt="Thumbs up cat"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    borderRadius: '28px',
+                    display: 'block'
+                  }}
+                />
               </div>
             </div>
           </section>
