@@ -62,7 +62,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
              collection_date,
              guest_full_name, guest_email, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
              ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge, binding_charge)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?)
          RETURNING id`,
             [
                 userId || null,
@@ -92,7 +92,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 charges.bindingCharge ?? null
             ]
         );
-        const id = result.insertId;
+        const id = result.rows[0].id;
         const paymentReference = payment.referenceFor ? payment.referenceFor(id) : null;
         const paymentId = await insertPaymentAttempt(tx, id, userId, shopId, totalPrice, {
             ...payment,
@@ -122,7 +122,7 @@ async function insertPaymentAttempt(tx, orderId, userId, shopId, amount, payment
             payment.qrExpiresAt || null
         ]
     );
-    return result.insertId;
+    return result.rows[0].id;
 }
 
 /**
