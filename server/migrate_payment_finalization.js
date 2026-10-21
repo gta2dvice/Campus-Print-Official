@@ -21,7 +21,7 @@ const PAYMENT_FINALIZATION_STATEMENTS = [
     `UPDATE orders o
         SET payment_method = CASE lp.method
                 WHEN 'cashfree' THEN 'CASHFREE'
-                WHEN 'upi_qr' THEN 'UPI_QR'
+                WHEN 'upi_qr' THEN 'LEGACY_UPI_QR'
                 WHEN 'whatsapp' THEN 'WHATSAPP'
                 WHEN 'none' THEN 'PAY_AT_SHOP'
                 WHEN 'simulated' THEN 'SIMULATED'

@@ -32,7 +32,7 @@ function paymentError(code, message) {
  * @param {number} orderId internal order id
  * @param {object} details
  * @param {number} details.paymentId    the payments row being settled
- * @param {string} details.method       expected payments.method ('cashfree', 'upi_qr', …)
+ * @param {string} details.method       expected payments.method ('cashfree', …)
  * @param {number} details.amount       amount verified by the payment source
  * @param {string} [details.currency]   verified currency (default INR)
  * @param {string} [details.transactionRef] gateway / UPI transaction reference

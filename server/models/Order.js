@@ -10,14 +10,14 @@ const Profile = require('./Profile');
 // WHATSAPP / PAY_AT_SHOP are legacy manual orders; SIMULATED is dev-only.
 const ORDER_PAYMENT_METHOD = {
     cashfree: 'CASHFREE',
-    upi_qr: 'UPI_QR',
+
     whatsapp: 'WHATSAPP',
     none: 'PAY_AT_SHOP',
     simulated: 'SIMULATED'
 };
 
 // Payments a shop admin may confirm by hand (no gateway can verify them).
-const ADMIN_CONFIRMABLE_METHODS = ['upi_qr', 'whatsapp', 'none'];
+const ADMIN_CONFIRMABLE_METHODS = ['whatsapp', 'none'];
 
 // Orders the shop works with: paid orders, plus manual-payment orders still awaiting
 // the admin's confirmation. Unpaid / failed Cashfree checkouts stay hidden.
