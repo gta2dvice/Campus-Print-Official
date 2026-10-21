@@ -192,6 +192,7 @@ export default function NewOrder() {
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const [whatsappOpening, setWhatsappOpening] = useState(false);
   const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
   const persistReadyRef = useRef(false);
