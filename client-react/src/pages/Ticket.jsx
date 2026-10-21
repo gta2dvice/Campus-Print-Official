@@ -48,13 +48,13 @@ function stateHeader(order) {
       return {
         title: 'Payment processing',
         highlight: 'almost there',
-        subtitle: 'Your payment is being processed by Cashfree. This should only take a moment.',
+        subtitle: 'Your payment is being processed. This should only take a moment.',
         note: 'This page updates automatically.'
       };
     default: {
       const method = order.payment?.method;
       const subtitle = method === 'cashfree'
-        ? 'We are confirming your payment with Cashfree.'
+        ? 'We are confirming your payment.'
         : method === 'none'
           ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
           : 'The shop will confirm your payment shortly.';

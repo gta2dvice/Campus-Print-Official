@@ -91,20 +91,32 @@ async function processSuccessfulPayment(orderId, details) {
             throw paymentError('PAYMENT_AMOUNT_MISMATCH', 'Verified payment amount or currency does not match the order.');
         }
 
-        await tx.execute(
-            `UPDATE payments
-             SET status = 'success', paid_at = NOW(), updated_at = NOW(),
-                 transaction_ref = COALESCE(?, transaction_ref)
-             WHERE id = ? AND status <> 'success'`,
-            [transactionRef, payment.id]
-        );
-        await tx.execute(
-            `UPDATE orders
-             SET payment_status = 'PAID', paid_at = NOW(),
-                 ticket_status = CASE WHEN ticket_status = 'READY' THEN 'READY' ELSE 'GENERATION_PENDING' END
-             WHERE id = ?`,
-            [order.id]
-        );
+        try {
+            await tx.execute(
+                `UPDATE payments
+                 SET status = 'success', paid_at = NOW(), updated_at = NOW(),
+                     transaction_ref = COALESCE(?, transaction_ref)
+                 WHERE id = ? AND status <> 'success'`,
+                [transactionRef, payment.id]
+            );
+            await tx.execute(
+                `UPDATE orders
+                 SET payment_status = 'PAID', paid_at = NOW(),
+                     ticket_status = CASE WHEN ticket_status = 'READY' THEN 'READY' ELSE 'GENERATION_PENDING' END
+                 WHERE id = ?`,
+                [order.id]
+            );
+        } catch (dbErr) {
+            // Specifically catch missing column errors to surface schema drift in production logs
+            if (dbErr.message && (dbErr.message.includes('payment_status') || dbErr.message.includes('ticket_status'))) {
+                logPaymentEvent('ORDER_FINALIZATION_SCHEMA_ERROR', {
+                    orderId,
+                    error: dbErr.message,
+                    source
+                });
+            }
+            throw dbErr;
+        }
         return { alreadyFinalized: false };
     });
 
