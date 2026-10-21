@@ -194,6 +194,7 @@ export default function NewOrder() {
   const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
+  const persistReadyRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
   // so re-enabling persistence here doesn't reset them to defaults.
   const draftMetaRef = useRef({ colorOption: 'bw', printingSide: 'single' });
