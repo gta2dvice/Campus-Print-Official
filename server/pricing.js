@@ -51,8 +51,8 @@ function priceOrder(resolvedFiles, { classroomDelivery, binding, includeServiceC
         file => Object.prototype.hasOwnProperty.call(file, 'spiralBinding')
     );
     const bindingCount = hasPerFileBinding
-        ? resolvedFiles.filter(file => file.spiralBinding === true || file.spiralBinding === 'true').length
-        : (binding === true || binding === 'true' ? 1 : 0);
+        ? resolvedFiles.filter(file => (file.spiralBinding === true || file.spiralBinding === 'true') && (Number(file.pages) >= 5))
+        : (binding === true || binding === 'true' ? (resolvedFiles[0]?.pages >= 5 ? 1 : 0) : 0);
     const bindingCharge = bindingCount * PRICING.binding;
 
     let serviceCharge = 0;

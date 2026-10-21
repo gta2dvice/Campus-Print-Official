@@ -259,7 +259,12 @@ export default function Home() {
   }
 
   function updateFileBinding(key, spiralBinding) {
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, spiralBinding } : f)));
+    setFiles((prev) => prev.map((f) => {
+      if (f.key !== key) return f;
+      // Force binding to false if printable pages < 5
+      const isEligible = printablePages(f) >= 5;
+      return { ...f, spiralBinding: isEligible ? spiralBinding : false };
+    }));
   }
 
   function updateFileCopies(key, delta) {
@@ -899,11 +904,13 @@ export default function Home() {
                                   aria-checked={!!f.spiralBinding}
                                   className={`home-option-card ${f.spiralBinding ? 'is-selected' : ''}`}
                                   onClick={() => updateFileBinding(f.key, true)}
+                                  disabled={printablePages(f) < 5}
+                                  title={printablePages(f) < 5 ? 'Available for 5 or more pages' : ''}
                                 >
                                   <span className="home-radio-circle" aria-hidden="true"><span className="home-radio-dot" /></span>
                                   <span className="home-option-text">
-                                    <span className="home-option-name">Yes</span>
-                                    <span className="home-option-price">₹26</span>
+                                    <span className="home-option-name">{printablePages(f) < 5 ? 'Unavailable' : 'Yes'}</span>
+                                    <span className="home-option-price">{printablePages(f) < 5 ? 'Min 5 pages' : '₹26'}</span>
                                   </span>
                                 </button>
                               </div>
