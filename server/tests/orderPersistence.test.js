@@ -45,8 +45,8 @@ describe('guest Cashfree order intent persistence', () => {
             assert.match(statements[0].sql, /payment_status,\s*payment_method,\s*ticket_status/);
             assert.match(statements[0].sql, /'PAYMENT_PENDING',\s*\?,\s*'PENDING_PAYMENT'/);
             assert.equal(statements[0].params[0], null);
-            assert.equal(statements[0].params[17], 'CASHFREE');
-            assert.equal(statements[0].params[18], 'a'.repeat(64));
+            assert.equal(statements[0].params[18], 'CASHFREE');
+            assert.equal(statements[0].params[19], 'a'.repeat(64));
             assert.match(statements[1].sql, /method,\s*transaction_ref,\s*gateway_order_id/);
             assert.match(statements[1].sql, /'INR',\s*'pending',\s*\?/);
             assert.equal(statements[1].params[4], 'cashfree');
