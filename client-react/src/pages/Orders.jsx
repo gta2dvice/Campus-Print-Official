@@ -12,7 +12,7 @@ import '../styles/style.css';
 // Every order (Cashfree or UPI QR) comes from the same database-backed history.
 
 const METHOD_LABELS = {
-  CASHFREE: 'Cashfree',
+  CASHFREE: 'Online Payment',
   UPI_QR: 'UPI QR',
   WHATSAPP: 'QR Payment',
   PAY_AT_SHOP: 'Pay at shop',
