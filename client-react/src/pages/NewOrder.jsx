@@ -167,6 +167,7 @@ export default function NewOrder() {
   const [displayName, setDisplayName] = useState('');
   const [guestDetails, setGuestDetails] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [files, setFiles] = useState([]);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
