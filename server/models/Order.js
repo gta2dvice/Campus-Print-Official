@@ -92,7 +92,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 charges.bindingCharge ?? null
             ]
         );
-        const id = result.rows[0].id;
+        const id = result.insertId;
         const paymentReference = payment.referenceFor ? payment.referenceFor(id) : null;
         const paymentId = await insertPaymentAttempt(tx, id, userId, shopId, totalPrice, {
             ...payment,
@@ -122,7 +122,7 @@ async function insertPaymentAttempt(tx, orderId, userId, shopId, amount, payment
             payment.qrExpiresAt || null
         ]
     );
-    return result.rows[0].id;
+    return result.insertId;
 }
 
 /**

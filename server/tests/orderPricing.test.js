@@ -41,9 +41,9 @@ describe('server-authoritative order pricing', () => {
     });
 
     it('retains one-time binding only for legacy clients without per-file settings', () => {
-        const result = priceOrder([{ pages: 1, copies: 1, colorMode: 'bw', printingSide: 'single' }], { binding: true });
+        const result = priceOrder([{ pages: 5, copies: 1, colorMode: 'bw', printingSide: 'single' }], { binding: true });
         assert.equal(result.bindingCharge, 26);
-        assert.equal(result.total, 28);
+        assert.equal(result.total, 37);
     });
 });
 
