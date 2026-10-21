@@ -10,7 +10,7 @@ describe('server-authoritative order pricing', () => {
             copies: 2,
             printingSide: 'double',
             colorMode: 'bw'
-        }], { collectionLocationId: 'hostel-gate' });
+        }], { collectionLocationId: 'hostel-gate', includeServiceCharge: false });
 
         assert.deepEqual(result, {
             printingAmount: 12,
@@ -26,18 +26,18 @@ describe('server-authoritative order pricing', () => {
 
     it('charges classroom delivery once and binding separately for each selected PDF', () => {
         const files = [
-            { pages: 2, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true },
+            { pages: 6, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true },
             { pages: 3, copies: 1, printingSide: 'double', colorMode: 'bw', spiralBinding: false },
-            { pages: 4, copies: 1, printingSide: 'double', colorMode: 'color', spiralBinding: true }
+            { pages: 6, copies: 1, printingSide: 'double', colorMode: 'color', spiralBinding: true }
         ];
-        const result = priceOrder(files, { classroomDelivery: true });
+        const result = priceOrder(files, { classroomDelivery: true, includeServiceCharge: false });
 
-        assert.deepEqual(result.fileCharges, [4, 6, 20]);
-        assert.equal(result.printingAmount, 30);
+        assert.deepEqual(result.fileCharges, [12, 6, 30]);
+        assert.equal(result.printingAmount, 48);
         assert.equal(result.serviceCharge, 0);
         assert.equal(result.classroomCharge, 5);
         assert.equal(result.bindingCharge, 52);
-        assert.equal(result.total, 87);
+        assert.equal(result.total, 105);
     });
 
     it('retains one-time binding only for legacy clients without per-file settings', () => {

@@ -26,7 +26,7 @@ async function createFiles(orderId, files) {
                     f.spiralBinding ? 1 : 0
                 ]
             );
-            ids.push(result.rows[0].id);
+            ids.push(result.insertId);
         }
     });
     return ids;
