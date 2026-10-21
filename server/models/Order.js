@@ -60,7 +60,7 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
             (user_id, student_id, shop_id, paper_size, copies, spiral_binding, express_delivery, total_price, file_count,
              collection_location_id, collection_location, collection_time, total_pages,
              collection_date,
-             guest_full_name, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
+             guest_full_name, guest_email, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
              ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge, binding_charge)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?)
          RETURNING id`,
@@ -80,11 +80,11 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 totalPages || 0,
                 collectionDate || null,
                 guestFullName || null,
+                guestEmail ? String(guestEmail).trim().toLowerCase() : null,
                 guestPhone || null,
                 guestClassroom || null,
                 orderPaymentMethod,
                 ticketTokenHash,
-                guestEmail ? String(guestEmail).trim().toLowerCase() : null,
                 charges.printingAmount ?? null,
                 charges.serviceCharge ?? null,
                 charges.deliveryCharge ?? null,
