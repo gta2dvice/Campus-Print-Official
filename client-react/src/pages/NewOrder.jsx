@@ -168,6 +168,30 @@ export default function NewOrder() {
   const [guestDetails, setGuestDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState([]);
+  const [paperSize, setPaperSize] = useState('A4');
+  const [spiralBinding, setSpiralBinding] = useState(false);
+  const [expressDelivery, setExpressDelivery] = useState(false);
+  const [classroomDelivery, setClassroomDelivery] = useState(false);
+  const [selectedLocationId, setSelectedLocationId] = useState(null);
+  const [selectedLocationName, setSelectedLocationName] = useState(null);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState(null);
+  const [step, setStep] = useState('slot');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState(null);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slots, setSlots] = useState([]);
+  const [preOrderMode, setPreOrderMode] = useState(false);
+  const [locationStatuses, setLocationStatuses] = useState([]);
+  const [paying, setPaying] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState('');
+  const [recoveryOrderId, setRecoveryOrderId] = useState('');
+  const [canRetryPayment, setCanRetryPayment] = useState(false);
+  const [guestDetailsModalOpen, setGuestDetailsModalOpen] = useState(false);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+  const [whatsappOpening, setWhatsappOpening] = useState(false);
+  const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
