@@ -489,7 +489,11 @@ export default function NewOrder() {
   }
 
   function updateFileBinding(key, spiralBinding) {
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, spiralBinding } : f)));
+    setFiles((prev) => prev.map((f) => {
+      if (f.key !== key) return f;
+      const isEligible = printablePages(f) >= 5;
+      return { ...f, spiralBinding: isEligible ? spiralBinding : false };
+    }));
   }
 
   function updateFileColorMode(key, mode) {
