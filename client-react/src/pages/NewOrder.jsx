@@ -821,8 +821,8 @@ export default function NewOrder() {
             // polling effect's cancellation flag is set as soon as the phase flips.
             setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
           } else {
-            // PAID but the ticket/token isn't ready yet.
-            // We transition to 'received' to show the "Preparing your ticket..." UI.
+            // PAID but the ticket/token isn't ready yet. Never regress out of 'timeout'
+            // (its polling keeps retrying while its buttons keep navigation available).
             setCfConfirm(prev => prev && prev.phase !== 'success' && prev.phase !== 'timeout'
               ? { ...prev, phase: 'received' } : prev);
           }
