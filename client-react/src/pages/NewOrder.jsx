@@ -77,8 +77,7 @@ const LOCATION_ICONS = {
 };
 const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 
-// Booking step 3. 'upi_qr' is the dynamic UPI QR flow (order-first, PENDING until a shop
-// admin confirms the payment — POST /api/orders/payment/upi-qr). 'none' is the Personal
+// Booking step 3. 'none' is the Personal
 // WhatsApp manual-order flow — it opens an instruction modal and WhatsApp, no order/ticket.
 const PAYMENT_OPTIONS = [
   {
@@ -167,7 +166,7 @@ export default function NewOrder() {
   const [currentUser, setCurrentUser] = useState(null);
   const [displayName, setDisplayName] = useState('');
   const [guestDetails, setGuestDetails] = useState(null);
-  const [loading, setLoading
+  const [loading, setLoading] = useState(true);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
@@ -608,7 +607,7 @@ export default function NewOrder() {
     }
     setPaymentOptions(options);
     // UPI QR needs the shop's UPI VPA; clear the selection if it isn't configured.
-    setPaymentMethod((m) => (m === 'upi_qr' && !options.upi ? null : m));
+
     setPaymentOptionsLoading(false);
   }
 
@@ -2029,14 +2028,7 @@ export default function NewOrder() {
         showToast={showToast}
       />
 
-      {upiQrData && (
-        <UpiQrPayment
-          data={upiQrData}
-          showToast={showToast}
-          onClose={() => setUpiQrData(null)}
-          onViewTicket={() => navigate(`/ticket?token=${encodeURIComponent(upiQrData.ticketToken)}`)}
-        />
-      )}
+      
 
       {/* Payment confirmation modal for Cashfree */}
       {/* Payment confirmation modal for Cashfree */}

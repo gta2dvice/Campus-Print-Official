@@ -9,7 +9,6 @@ const Shop = require('../models/Shop');
 const { upload } = require('../middleware/upload');
 const { detectPages } = require('../pageDetect');
 const fileTypes = require('../fileTypes');
-const upiQr = require('../upiQr');
 const slots = require('../slots');
 const pool = require('../db');
 const { uploadBuffer, buildObjectPath, deleteFiles, downloadFile } = require('../storage');
@@ -33,8 +32,6 @@ const {
     isAuthorizedForOrder
 } = require('../middleware/recoveryAuth');
 
-// Pay via UPI QR: how long a generated QR stays valid before the user must refresh.
-const UPI_QR_TTL_MS = 15 * 60 * 1000;
 
 // Single-shop deployment today: new orders always go to shop id 1.
 // (Shop selection would be added here if/when multiple shops go live.)
@@ -147,10 +144,7 @@ function orderState(order, latestPayment, { processing = false } = {}) {
     } else if (paymentStatus === 'PAYMENT_PENDING') {
         // A still-pending UPI QR whose QR window lapsed is EXPIRED (the order stays
         // payable via a refreshed QR; the DB row stays 'pending').
-        if (latestPayment && latestPayment.method === 'upi_qr' && latestPayment.qr_expires_at &&
-            new Date(latestPayment.qr_expires_at).getTime() < Date.now()) {
-            paymentStatus = 'EXPIRED';
-        } else if (processing) {
+        if (processing) {
             paymentStatus = 'PAYMENT_PROCESSING';
         }
     }
@@ -1391,94 +1385,9 @@ router.post('/payment/webhook', async (req, res) => {
     }
 });
 
-// ── UPI QR ───────────────────────────────────────────────────────────────────
 
 /** Builds the UPI deep link + QR image for a payment (amount + reference from the DB). */
-async function buildUpiQr(shop, { amount, reference, orderId }) {
-    const upiUrl = upiQr.buildUpiUri({
-        vpa: shop.payment_upi,
-        payeeName: shop.shop_name || 'Campus Print',
-        amount,
-        reference,
-        note: `Campus Print order ${orderId}`
-    });
-    return { upiUrl, qrDataUrl: await upiQr.generateQrDataUrl(upiUrl) };
-}
 
-// POST /api/orders/payment/upi-qr — Pay via UPI QR. Creates the canonical order
-// (PAYMENT_PENDING) with a unique payment reference and returns a dynamic UPI QR for
-// the DB amount. A plain UPI QR has no status API, so the order is only marked PAID
-// when a shop admin confirms the transfer (through the shared finalizer).
-router.post('/payment/upi-qr', upload.array('files', 10), async (req, res) => {
-    try {
-        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
-        if (!shop?.payment_upi) {
-            return res.status(503).json({ message: 'UPI payments are not set up. Please choose another method.', code: 'UPI_NOT_CONFIGURED' });
-        }
-
-        const validated = await validateAndPriceSubmission(req, res);
-        if (!validated) return undefined; // response already sent
-        const { data, resolved, amount } = validated;
-
-        const ticketToken = crypto.randomBytes(32).toString('hex');
-        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
-        const order = await createOrderWithFiles(req, {
-            data,
-            resolved,
-            payment: { method: 'upi_qr', qrExpiresAt, referenceFor: upiQr.generatePaymentReference },
-            ticketTokenHash: hashTicketToken(ticketToken)
-        });
-        const { upiUrl, qrDataUrl } = await buildUpiQr(shop, { amount, reference: order.paymentReference, orderId: order.id });
-        logPaymentEvent('PAYMENT_INITIATED', { orderId: order.id, paymentId: order.paymentId, method: 'upi_qr', amount });
-
-        return res.status(201).json({
-            success: true,
-            id: order.id,
-            orderReference: `#${order.id}`,
-            amount,
-            paymentReference: order.paymentReference,
-            qrDataUrl,
-            upiUrl,
-            expiresAt: qrExpiresAt.toISOString(),
-            ticketToken
-        });
-    } catch (err) {
-        const safe = safeOrderError(err);
-        console.error('[UPI_QR_CREATE_FAILED]', safe.message);
-        return res.status(500).json({ message: 'Could not start UPI payment. Please retry.', code: safe.code });
-    }
-});
-
-// POST /api/orders/payment/upi-qr/:id/refresh — regenerate the QR for an existing unpaid
-// order (same order + reference; never creates a new order). Authorized by ticket token / session.
-router.post('/payment/upi-qr/:id/refresh', ticketLimiter, async (req, res) => {
-    try {
-        const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
-        if (order.payment_status === 'PAID') {
-            return res.status(409).json({ message: 'This order is already paid.', code: 'ALREADY_PAID' });
-        }
-        const payment = await Payment.findByOrderId(order.id);
-        if (!payment || payment.method !== 'upi_qr' || payment.status !== 'pending') {
-            return res.status(400).json({ message: 'No pending UPI payment for this order.' });
-        }
-        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
-        if (!shop?.payment_upi) {
-            return res.status(503).json({ message: 'UPI payments are not set up.', code: 'UPI_NOT_CONFIGURED' });
-        }
-
-        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
-        await Payment.refreshQrExpiry(order.id, qrExpiresAt);
-        const amount = Number(payment.amount);
-        const { upiUrl, qrDataUrl } = await buildUpiQr(shop, { amount, reference: payment.payment_reference, orderId: order.id });
-        return res.json({ success: true, amount, paymentReference: payment.payment_reference, qrDataUrl, upiUrl, expiresAt: qrExpiresAt.toISOString() });
-    } catch (err) {
-        console.error('[UPI_QR_REFRESH_FAILED]', safeOrderError(err).message);
-        return res.status(500).json({ message: 'Could not refresh the QR. Please retry.' });
-    }
-});
 
 // ── Manual / dev-only methods ────────────────────────────────────────────────
 
@@ -1539,7 +1448,6 @@ router.post('/payment/simulate', upload.array('files', 10), async (req, res) => 
         res.status(500).json({ message: 'Server Error' });
     }
 });
-
 module.exports = router;
 // Exposed for tests.
 module.exports.orderState = orderState;

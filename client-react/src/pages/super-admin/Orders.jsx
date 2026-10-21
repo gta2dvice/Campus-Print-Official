@@ -8,7 +8,7 @@ import { OrderFinance, fmtRupees } from './Finance';
 import { canPreview, previewFile, downloadFile } from '../../lib/fileAccess';
 
 // Manual payments the owner confirms by hand (no gateway to verify them).
-const OWNER_CONFIRMABLE_METHODS = ['upi_qr', 'whatsapp', 'none'];
+const OWNER_CONFIRMABLE_METHODS = ['whatsapp', 'none'];
 
 export default function Orders() {
   const [searchParams] = useSearchParams();
