@@ -731,7 +731,15 @@ export default function Home() {
                     Choose PDFs
                   </button>
                   <p className="home-upload-limit-note">
-                    {SUPPORTED_LABEL} · Up to {formatSize(MAX_FILE_BYTES)} per file
+                    {SUPPORTED_LABEL}
+                    <span className="upload-rec-tag">(PDF recommended)</span>
+                    <span className="upload-info-tooltip-wrap" tabIndex="0" role="note" aria-label="Format recommendation details">
+                      <span className="upload-info-icon" aria-hidden="true">i</span>
+                      <span className="upload-info-tooltip-bubble" role="tooltip">
+                        DOC/DOCX formatting, fonts, and spacing may change during conversion. For the most accurate layout and printing, convert your document to PDF before uploading.
+                      </span>
+                    </span>
+                    {' '}· Up to {formatSize(MAX_FILE_BYTES)} per file
                   </p>
                 </div>
 

@@ -1308,7 +1308,15 @@ export default function NewOrder() {
                     Choose PDFs
                   </button>
                   <p className="upload-zone-note">
-                    Supports {SUPPORTED_LABEL} · Max 20 MB each (up to 10 files)
+                    Supports {SUPPORTED_LABEL}
+                    <span className="upload-rec-tag">(PDF recommended)</span>
+                    <span className="upload-info-tooltip-wrap" tabIndex="0" role="note" aria-label="Format recommendation details">
+                      <span className="upload-info-icon" aria-hidden="true">i</span>
+                      <span className="upload-info-tooltip-bubble" role="tooltip">
+                        DOC/DOCX formatting, fonts, and spacing may change during conversion. For the most accurate layout and printing, convert your document to PDF before uploading.
+                      </span>
+                    </span>
+                    {' '}· Max 20 MB each (up to 10 files)
                   </p>
                 </div>
 
