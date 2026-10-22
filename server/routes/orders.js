@@ -198,7 +198,7 @@ async function buildTicketView(order) {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
         if (order?.ticket_status === 'READY') {
-            try { await sendTicketEmail(order.id, { source: 'ticket_view' }); } catch {}
+            try { sendTicketEmail(order.id, { source: 'ticket_view' }).catch(() => {}); } catch {}
         }
     }
     // Prefer the successful attempt; otherwise the latest one.
@@ -900,7 +900,7 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             await tryEnsureTicket(order.id);
             const updated = await Order.getOrderRecord(order.id);
             if (updated?.ticket_status === 'READY') {
-                try { await sendTicketEmail(order.id, { source: 'payment_status_poll' }); } catch {}
+                try { sendTicketEmail(order.id, { source: 'payment_status_poll' }).catch(() => {}); } catch {}
             }
         }
         order = await Order.getOrderRecord(order.id);

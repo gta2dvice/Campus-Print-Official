@@ -126,13 +126,11 @@ async function processSuccessfulPayment(orderId, details) {
     }
 
     const ticket = await tryEnsureTicket(orderId);
-    let emailDelivery = null;
     if (ticket.ticketStatus === 'READY') {
-        try {
-            emailDelivery = await sendTicketEmail(orderId, { source });
-        } catch (emailErr) {
+        // Dispatch email in background to avoid blocking the payment response
+        sendTicketEmail(orderId, { source }).catch(emailErr => {
             console.error('[TICKET_EMAIL_DISPATCH_FAILED]', { orderId, error: emailErr.message });
-        }
+        });
     }
     return {
         orderId,
@@ -141,7 +139,6 @@ async function processSuccessfulPayment(orderId, details) {
         duplicateCapture: Boolean(settled.duplicateCapture),
         ticketStatus: ticket.ticketStatus,
         ticketNumber: ticket.ticketNumber,
-        emailDelivery
     };
 }
 
