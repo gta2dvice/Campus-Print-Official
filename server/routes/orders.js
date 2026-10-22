@@ -8,6 +8,7 @@ const Payment = require('../models/Payment');
 const Shop = require('../models/Shop');
 const { upload } = require('../middleware/upload');
 const { detectPages } = require('../pageDetect');
+const { renderDocxToPdf } = require('../docxConverter');
 const fileTypes = require('../fileTypes');
 const slots = require('../slots');
 const pool = require('../db');
@@ -279,20 +280,50 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             e.code = 'FILE_CONTENT_MISMATCH'; e.httpStatus = 400; throw e;
         }
 
-        const det = await detectPages(file);
         const setting = settings[idx] || {};
         let pages;
-        if (!det.estimated && typeof det.pages === 'number' && det.pages >= 1) {
-            // Reliable server-side count — ignore any client-sent page value.
+        let convertedPdfBuffer = null;
+
+        if (type.key === 'docx') {
+            convertedPdfBuffer = await renderDocxToPdf(file.buffer);
+            if (!convertedPdfBuffer) {
+                const isConfirmed = setting.pagesConfirmed === true || setting.pagesConfirmed === 'true' || setting.confirmed === true;
+                const declared = parseInt(setting.pages, 10);
+                if (!isConfirmed || !Number.isFinite(declared) || declared < 1) {
+                    const e = new Error(`Please provide a confirmed page count for ${file.originalname}.`);
+                    e.code = 'PAGE_COUNT_REQUIRED'; e.httpStatus = 400; throw e;
+                }
+                const e = new Error(`Could not convert ${file.originalname} to PDF. Please save it as PDF and upload again.`);
+                e.code = 'DOCX_CONVERSION_FAILED';
+                e.httpStatus = 400;
+                throw e;
+            }
+            const det = await detectPages({
+                buffer: convertedPdfBuffer,
+                originalname: file.originalname.replace(/\.docx$/i, '.pdf'),
+                mimetype: 'application/pdf'
+            });
+            if (!det || det.estimated || typeof det.pages !== 'number' || det.pages < 1) {
+                const e = new Error(`Could not detect page count for converted ${file.originalname}. Please convert to PDF and re-upload.`);
+                e.code = 'DOCX_PAGE_DETECTION_FAILED';
+                e.httpStatus = 400;
+                throw e;
+            }
             pages = det.pages;
         } else {
-            const isConfirmed = setting.pagesConfirmed === true || setting.pagesConfirmed === 'true' || setting.confirmed === true;
-            const declared = parseInt(setting.pages, 10);
-            if (!isConfirmed || !Number.isFinite(declared) || declared < 1) {
-                const e = new Error(`Please provide a confirmed page count for ${file.originalname}.`);
-                e.code = 'PAGE_COUNT_REQUIRED'; e.httpStatus = 400; throw e;
+            const det = await detectPages(file);
+            if (!det.estimated && typeof det.pages === 'number' && det.pages >= 1) {
+                // Reliable server-side count — ignore any client-sent page value.
+                pages = det.pages;
+            } else {
+                const isConfirmed = setting.pagesConfirmed === true || setting.pagesConfirmed === 'true' || setting.confirmed === true;
+                const declared = parseInt(setting.pages, 10);
+                if (!isConfirmed || !Number.isFinite(declared) || declared < 1) {
+                    const e = new Error(`Please provide a confirmed page count for ${file.originalname}.`);
+                    e.code = 'PAGE_COUNT_REQUIRED'; e.httpStatus = 400; throw e;
+                }
+                pages = Math.min(MAX_DECLARED_PAGES, declared);
             }
-            pages = Math.min(MAX_DECLARED_PAGES, declared);
         }
 
         // Optional PDF page range (e.g. "33-55"). It is validated against the REAL
@@ -323,6 +354,7 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
 
         resolved.push({
             file,
+            convertedPdfBuffer,
             originalname: file.originalname,
             mimetype: type.mime,
             size: file.size,
@@ -465,15 +497,19 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
     const stored = [];
     try {
         for (const [index, rf] of resolvedFiles.entries()) {
-            const { storedName, storagePath } = buildObjectPath(userId || 'guest', orderId, rf.originalname);
-            await uploadBuffer({ storagePath, buffer: rf.file.buffer, contentType: rf.mimetype });
+            const uploadBufferData = rf.convertedPdfBuffer || rf.file.buffer;
+            const uploadMime = rf.convertedPdfBuffer ? 'application/pdf' : rf.mimetype;
+            const uploadSize = uploadBufferData.length;
+            const storageOriginalName = rf.convertedPdfBuffer ? rf.originalname.replace(/\.docx$/i, '.pdf') : rf.originalname;
+            const { storedName, storagePath } = buildObjectPath(userId || 'guest', orderId, storageOriginalName);
+            await uploadBuffer({ storagePath, buffer: uploadBufferData, contentType: uploadMime });
             stored.push({
                 originalname: rf.originalname,
                 storedName,
                 storagePath,
-                mimetype: rf.mimetype,
-                size: rf.size,
-                fileType: rf.fileType,
+                mimetype: uploadMime,
+                size: uploadSize,
+                fileType: rf.convertedPdfBuffer ? 'PDF' : rf.fileType,
                 pageCount: rf.pages,
                 pageRange: rf.pageRange || null,
                 printingSide: rf.printingSide,

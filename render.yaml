@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: campus-print-backend
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/orders/slots
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DOCX_RENDERER_CMD
+        value: soffice
