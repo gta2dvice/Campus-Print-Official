@@ -29,7 +29,8 @@ const {
     establishRecoverySession,
     clearRecoverySession,
     requireRecoverySession,
-    isAuthorizedForOrder
+    resolveTicketAccess,
+    AuthorizationError
 } = require('../middleware/recoveryAuth');
 
 
@@ -834,16 +835,18 @@ router.post('/ticket/:token/retry-email', ticketLimiter, async (req, res) => {
 // guest_phone), this order's ticket token, or account ownership. A bare id is never enough.
 router.get('/:id', ticketLimiter, async (req, res) => {
     try {
-        const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            // Same response for "missing" and "not yours" so ids can't be probed.
-            return res.status(404).json({
-                message: 'This ticket link is no longer valid. Recover your order from the Orders page.',
-                code: 'ORDER_NOT_FOUND'
-            });
-        }
+        const orderId = req.params.id;
+        const order = await Order.getOrderRecord(orderId);
+        await resolveTicketAccess(req, order);
         res.json(await buildTicketView(order));
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         const safeError = safeOrderError(err);
         console.error('[TICKET_LOAD_FAILED]', { orderId: req.params.id, code: safeError.code, message: safeError.message });
         res.status(500).json({ message: 'Unable to load this ticket right now. Please retry.', code: 'TICKET_LOAD_FAILED' });
@@ -854,9 +857,7 @@ router.get('/:id', ticketLimiter, async (req, res) => {
 router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found.', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
         if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
             return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
         }
@@ -868,6 +869,13 @@ router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
             message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
         });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
     }
@@ -880,9 +888,7 @@ router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
 router.get('/:id/payment-status', pollLimiter, async (req, res) => {
     try {
         let order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         let processing = false;
         if (order.payment_status === 'PAYMENT_PENDING' && order.payment_method === 'CASHFREE' && paymentGatewayReady()) {
@@ -918,6 +924,13 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             ...state
         });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[PAYMENT_STATUS_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to check payment status right now. Please retry.' });
     }
@@ -927,9 +940,7 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
 router.get('/:id/documents', documentLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         const files = await OrderFile.getFilesByOrder(order.id);
         const documents = files.map(f => ({
@@ -943,6 +954,13 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
         }));
         return res.json({ orderId: order.id, documents });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[DOCUMENTS_LIST_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to load documents right now. Please retry.' });
     }
@@ -953,9 +971,7 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
 router.get('/:id/documents/:fileId', documentLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         const file = await OrderFile.getFileById(req.params.fileId);
         // The file must belong to this exact order — blocks IDOR via a mismatched file id.
@@ -964,6 +980,13 @@ router.get('/:id/documents/:fileId', documentLimiter, async (req, res) => {
         }
         return await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[DOCUMENT_FETCH_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to load this document right now. Please retry.' });
     }
