@@ -834,12 +834,30 @@ router.post('/ticket/:token/retry-email', ticketLimiter, async (req, res) => {
 // GET /api/orders/:id — single order ticket. Requires a recovery session (matching
 // guest_phone), this order's ticket token, or account ownership. A bare id is never enough.
 router.get('/:id', ticketLimiter, async (req, res) => {
+    const orderId = req.params.id;
     try {
-        const orderId = req.params.id;
+        console.info(`[TICKET_TRACE] order_lookup_start | orderId: ${orderId}`);
         const order = await Order.getOrderRecord(orderId);
+        console.info(`[TICKET_TRACE] order_lookup_success | orderId: ${orderId}`);
+
+        console.info(`[TICKET_TRACE] authorization_start | orderId: ${orderId}`);
         await resolveTicketAccess(req, order);
-        res.json(await buildTicketView(order));
+        console.info(`[TICKET_TRACE] authorization_success | orderId: ${orderId}`);
+
+        console.info(`[TICKET_TRACE] ticket_view_start | orderId: ${orderId}`);
+        const view = await buildTicketView(order);
+        console.info(`[TICKET_TRACE] ticket_view_success | orderId: ${orderId}`);
+
+        res.json(view);
     } catch (err) {
+        console.error(`[TICKET_TRACE] ticket_lookup_failed | orderId: ${orderId}`, {
+            errorName: err.name,
+            errorMessage: err.message,
+            code: err.code,
+            stack: err.stack,
+            stage: err instanceof AuthorizationError ? 'authorization' : 'processing'
+        });
+
         if (err instanceof AuthorizationError) {
             const isAuthError = err.code === 'NOT_AUTHORIZED';
             return res.status(isAuthError ? 404 : err.status).json({
@@ -848,7 +866,6 @@ router.get('/:id', ticketLimiter, async (req, res) => {
             });
         }
         const safeError = safeOrderError(err);
-        console.error('[TICKET_LOAD_FAILED]', { orderId: req.params.id, code: safeError.code, message: safeError.message });
         res.status(500).json({ message: 'Unable to load this ticket right now. Please retry.', code: 'TICKET_LOAD_FAILED' });
     }
 });
