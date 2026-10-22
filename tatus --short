@@ -1,0 +1,56 @@
+[1mdiff --git a/server/models/Order.js b/server/models/Order.js[m
+[1mindex 58e49bb..3b9eb73 100644[m
+[1m--- a/server/models/Order.js[m
+[1m+++ b/server/models/Order.js[m
+[36m@@ -231,7 +231,7 @@[m [masync function getAdminConfirmablePayment(orderId) {[m
+ /** Unfiltered order lookup for student-facing routes; callers MUST authorize access. */[m
+ async function getOrderRecord(orderId) {[m
+     const [rows] = await pool.execute([m
+[31m-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number[m
+[32m+[m[32m        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number[m
+          FROM orders o LEFT JOIN users u ON u.id = o.user_id[m
+          LEFT JOIN student_profiles p ON p.id = o.student_id[m
+          WHERE o.id = ?`,[m
+[36m@@ -240,14 +240,14 @@[m [masync function getOrderRecord(orderId) {[m
+     const row = rows[0] || null;[m
+     if (!row) return null;[m
+     const fullName = row.full_name || row.guest_full_name || null;[m
+[31m-    const name = fullName || row.customer_name || null;[m
+[32m+[m[32m    const name = fullName || null;[m
+     const phone = row.phone_number || row.guest_phone || null;[m
+     return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };[m
+ }[m
+ [m
+ async function getOrderForUser(orderId, userId) {[m
+     const [rows] = await pool.execute([m
+[31m-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number[m
+[32m+[m[32m        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number[m
+          FROM orders o[m
+          JOIN users u ON u.id = o.user_id[m
+          LEFT JOIN student_profiles p ON p.id = o.student_id[m
+[36m@@ -257,14 +257,14 @@[m [masync function getOrderForUser(orderId, userId) {[m
+     const row = rows[0] || null;[m
+     if (!row) return null;[m
+     const fullName = row.full_name || row.guest_full_name || null;[m
+[31m-    const name = fullName || row.customer_name || null;[m
+[32m+[m[32m    const name = fullName || null;[m
+     const phone = row.phone_number || row.guest_phone || null;[m
+     return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };[m
+ }[m
+ [m
+ async function getOrdersByUser(userId) {[m
+     const [rows] = await pool.execute([m
+[31m-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number[m
+[32m+[m[32m        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number[m
+          FROM orders o[m
+          JOIN users u ON u.id = o.user_id[m
+          LEFT JOIN student_profiles p ON p.id = o.student_id[m
+[36m@@ -273,7 +273,7 @@[m [masync function getOrdersByUser(userId) {[m
+     );[m
+     return rows.map(row => {[m
+         const fullName = row.full_name || row.guest_full_name || null;[m
+[31m-        const name = fullName || row.customer_name || null;[m
+[32m+[m[32m        const name = fullName || null;[m
+         const phone = row.phone_number || row.guest_phone || null;[m
+         return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };[m
+     });[m
