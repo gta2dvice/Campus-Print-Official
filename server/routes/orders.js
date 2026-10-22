@@ -1116,9 +1116,22 @@ async function openCashfreeCheckout(req, { cashfreeOrderId, amount, phone, email
  * hash is stored on the order). Returns null if it doesn't match the stored hash.
  */
 async function cashfreeTicketToken(orderId) {
-    const [order, attempt] = await Promise.all([Order.getOrderRecord(orderId), Order.getLatestCashfreeAttempt(orderId)]);
-    if (!order || !attempt) return null;
-    const token = createTicketToken(attempt.gateway_order_id);
+    const order = await Order.getOrderRecord(orderId);
+    if (!order) return null;
+
+    // Find the payment attempt that actually succeeded.
+    // The ticket hash is tied to the attempt that finalized the order.
+    const [payments] = await pool.query(
+        `SELECT gateway_order_id FROM payments
+         WHERE order_id = ? AND status = 'success'
+         ORDER BY id ASC LIMIT 1`,
+        [orderId]
+    );
+
+    const successAttempt = payments[0];
+    if (!successAttempt || !successAttempt.gateway_order_id) return null;
+
+    const token = createTicketToken(successAttempt.gateway_order_id);
     return isValidTicketToken(token, order.ticket_access_token_hash) ? token : null;
 }
 
