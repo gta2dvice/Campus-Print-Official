@@ -54,12 +54,15 @@ function isAuthorizedForOrder(req, order) {
     const token = (req.headers && req.headers['x-ticket-token']) || (req.query && req.query.token);
     if (token && isValidTicketToken(String(token), order.ticket_access_token_hash)) return true;
 
-    // (a) recovery session whose email matches the order's guest email or user email
+    // (a) recovery session whose email matches the order's associated email
     const sessionEmail = activeRecoveryEmail(req);
     if (sessionEmail) {
         const normSession = normalizeEmail(sessionEmail);
         const normGuest = normalizeEmail(order.guest_email);
         const normCustomer = normalizeEmail(order.customer_email);
+
+        // Use the same logic as getOrdersByVerifiedEmail to ensure consistency:
+        // An order is authorized if the session email matches either the guest email or the account email.
         if (normSession && (normSession === normGuest || normSession === normCustomer)) return true;
     }
 

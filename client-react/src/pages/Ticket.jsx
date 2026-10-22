@@ -95,9 +95,10 @@ export default function Ticket() {
           console.error('[TICKET_LOAD_FAILED]', {
             stage: 'ticket_lookup_response',
             httpStatus: res.status,
-            code: data.code || 'TICKET_LOAD_FAILED'
+            code: data.code || 'TICKET_LOAD_FAILED',
+            message: data.message
           });
-          if (!cancelled) setTicketError(data.message || `Ticket lookup failed (${res.status}).`);
+          if (!cancelled) setTicketError(`${data.message || `Ticket lookup failed (${res.status})`}`);
           return;
         }
         const data = await res.json();
