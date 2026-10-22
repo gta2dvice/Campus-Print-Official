@@ -123,7 +123,7 @@ function createFakeDb() {
         }
 
         // ── Order lookups & attempt lookups ──
-        if (/^SELECT o\.\*, COALESCE\(o\.guest_email, u\.email\) AS customer_email FROM orders o LEFT JOIN users u ON u\.id = o\.user_id WHERE o\.id = \?$/.test(s)) {
+        if (/^SELECT o\.\*, COALESCE\(o\.guest_email, u\.email\) AS customer_email(?:, p\.full_name, p\.phone_number, p\.class_room_number)? FROM orders o LEFT JOIN users u ON u\.id = o\.user_id(?: LEFT JOIN student_profiles p ON p\.id = o\.student_id)? WHERE o\.id = \?$/.test(s)) {
             const order = one(db.orders, params[0]);
             return [order ? [{ customer_email: order.guest_email || order.customer_email || null, ...order }] : []];
         }

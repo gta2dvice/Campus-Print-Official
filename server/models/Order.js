@@ -231,7 +231,7 @@ async function getAdminConfirmablePayment(orderId) {
 /** Unfiltered order lookup for student-facing routes; callers MUST authorize access. */
 async function getOrderRecord(orderId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
+        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number
          FROM orders o LEFT JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
          WHERE o.id = ?`,
@@ -240,14 +240,14 @@ async function getOrderRecord(orderId) {
     const row = rows[0] || null;
     if (!row) return null;
     const fullName = row.full_name || row.guest_full_name || null;
-    const name = fullName || row.customer_name || null;
+    const name = fullName || null;
     const phone = row.phone_number || row.guest_phone || null;
     return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
 }
 
 async function getOrderForUser(orderId, userId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
+        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number
          FROM orders o
          JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
@@ -257,14 +257,14 @@ async function getOrderForUser(orderId, userId) {
     const row = rows[0] || null;
     if (!row) return null;
     const fullName = row.full_name || row.guest_full_name || null;
-    const name = fullName || row.customer_name || null;
+    const name = fullName || null;
     const phone = row.phone_number || row.guest_phone || null;
     return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
 }
 
 async function getOrdersByUser(userId) {
     const [rows] = await pool.execute(
-        `SELECT o.*, u.email AS customer_email, u.name AS customer_name, p.full_name, p.phone_number, p.class_room_number
+        `SELECT o.*, COALESCE(o.guest_email, u.email) AS customer_email, p.full_name, p.phone_number, p.class_room_number
          FROM orders o
          JOIN users u ON u.id = o.user_id
          LEFT JOIN student_profiles p ON p.id = o.student_id
@@ -273,7 +273,7 @@ async function getOrdersByUser(userId) {
     );
     return rows.map(row => {
         const fullName = row.full_name || row.guest_full_name || null;
-        const name = fullName || row.customer_name || null;
+        const name = fullName || null;
         const phone = row.phone_number || row.guest_phone || null;
         return { ...row, full_name: fullName, customer_name: name, customer_phone: phone };
     });
