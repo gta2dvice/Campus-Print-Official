@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -444,9 +444,12 @@ export default function NewOrder() {
           if (idx === -1) return entry;
           const result = results[idx];
           if (result && typeof result.pages === 'number' && result.pages >= 1) {
-            return { ...entry, pages: result.pages, estimated: !!result.estimated };
+            if (!result.estimated) {
+              return { ...entry, pages: result.pages, estimated: false, pagesConfirmed: true };
+            }
+            return { ...entry, pages: result.pages, estimated: true, pagesConfirmed: false };
           }
-          return { ...entry, pages: entry.pages || 1, estimated: true };
+          return { ...entry, pages: entry.pages || null, estimated: true, pagesConfirmed: false };
         }));
       }
     } catch {
@@ -459,8 +462,9 @@ export default function NewOrder() {
   }
 
   function updateFilePages(key, val) {
-    const pages = Math.max(1, parseInt(val, 10) || 1);
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pages, estimated: false } : f)));
+    const parsed = parseInt(val, 10);
+    const pages = Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pages, estimated: false, pagesConfirmed: pages !== null } : f)));
   }
 
   function removeFile(key) {
@@ -542,7 +546,8 @@ export default function NewOrder() {
   }
 
   // totalPagesCount is now handled inside calcPrice()
-  const pagesStillDetecting = files.some((f) => f.pages === null);
+  const pagesStillDetecting = files.some((f) => f.pages === null && !f.estimated);
+  const hasUnconfirmedPages = files.some((f) => f.pages === null || (f.estimated && !f.pagesConfirmed));
 
   function calcPrice() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
@@ -576,6 +581,8 @@ export default function NewOrder() {
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
+    if (hasUnconfirmedPages) { showToast('Please enter and confirm the page count for all files.', 'error'); return; }
+    if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
     const invalidRange = files.find((f) => hasInvalidPageRange(f));
     if (invalidRange) { showToast(`Fix the page range for “${invalidRange.file.name}” before continuing.`, 'error'); return; }
     setModalOpen(true);
@@ -1291,22 +1298,22 @@ export default function NewOrder() {
                         const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
                         const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
                         let pagesText;
-                        if (f.pages === null) {
+                        if (f.pages === null && !f.estimated) {
                           pagesText = (
                             <span className="file-pages-detecting">
                               <span className="loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }}></span> Detecting pages…
                             </span>
                           );
-                        } else if (f.estimated) {
+                        } else if (f.estimated || !f.pagesConfirmed || f.pages === null) {
                           pagesText = (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                               <span>Pages:</span>
                               <input
-                                type="number" min="1" max="2000" value={f.pages}
+                                type="number" min="1" max="2000" value={f.pages ?? ''} placeholder="e.g. 5" aria-label={`Confirm page count for ${f.file.name}`}
                                 onChange={(e) => updateFilePages(f.key, e.target.value)}
                                 style={{ width: '4rem', padding: '0.15rem 0.35rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.8rem' }}
                               />
-                              <span style={{ color: '#9a3412' }}>(confirm — page count finalized at processing)</span>
+                              <span style={{ color: '#c2410c', fontSize: '0.8rem', fontWeight: 500 }}>(Please confirm document pages)</span>
                             </span>
                           );
                         } else {
@@ -1530,6 +1537,7 @@ export default function NewOrder() {
                               <div className="cp-file-footer">
                                 <span className="cp-file-footer-pages">
                                   {printablePages(f) * (f.copies || 1)} printed page{printablePages(f) * (f.copies || 1) !== 1 ? 's' : ''}
+                                  {f.printingSide === 'double' ? ` (${Math.ceil(printablePages(f) / 2) * (f.copies || 1)} physical sheet${Math.ceil(printablePages(f) / 2) * (f.copies || 1) !== 1 ? 's' : ''})` : ''}
                                   {f.copies > 1 ? ` (${printablePages(f)} × ${f.copies} copies)` : ''}
                                 </span>
                                 <span className="cp-file-subtotal">
@@ -1593,6 +1601,13 @@ export default function NewOrder() {
                   <span className="summary-line-label">Printing Charges</span>
                   <span className="summary-line-value">₹{p.base + p.a3Extra}</span>
                 </div>
+                {p.serviceCharge > 0 && (
+                  <div className="summary-line">
+                    <span className="summary-line-label">Service Charge</span>
+                    <span className="summary-line-value">₹{p.serviceCharge}</span>
+                  </div>
+                )}
+                
                 {p.bindingCharge > 0 && (
                   <div className="summary-line">
                     <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>

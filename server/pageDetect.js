@@ -19,7 +19,7 @@ async function detectPages(file) {
         });
     } catch (err) {
         console.error(`Piscina pool error for ${file.originalname}:`, err.message);
-        return { pages: 1, estimated: true };
+        return { pages: null, estimated: true, requiresConfirmation: true };
     }
 }
 

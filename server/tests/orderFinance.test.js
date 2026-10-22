@@ -2,7 +2,8 @@
 // Run: node --test server/tests/
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { priceOrder } = require('../pricing');
+const { priceOrder: basePriceOrder } = require('../pricing');
+const priceOrder = (files, opts) => basePriceOrder(files, { includeServiceCharge: false, ...opts });
 const { toPrinterOrder, financialBreakdown, PRINTER_ORDER_FIELDS } = require('../services/orderFinance');
 
 const file = (pages, copies, printingSide, colorMode) => ({ pages, copies, printingSide, colorMode });

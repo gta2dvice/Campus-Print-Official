@@ -41,6 +41,7 @@ export function normalizeFileSettings(entry = {}) {
     ...(entry.key !== undefined ? { key: entry.key } : {}),
     pages: validInteger(entry.pages) ? entry.pages : null,
     estimated: !!entry.estimated,
+    pagesConfirmed: entry.pagesConfirmed !== undefined ? !!entry.pagesConfirmed : (!entry.estimated && validInteger(entry.pages)),
     copies: validInteger(entry.copies) ? entry.copies : null,
     printingSide: ['single', 'double'].includes(entry.printingSide) ? entry.printingSide : null,
     colorMode: ['bw', 'color'].includes(entry.colorMode) ? entry.colorMode : null,
@@ -52,6 +53,7 @@ export function normalizeFileSettings(entry = {}) {
 export function hasCompleteFileSettings(entry) {
   const settings = normalizeFileSettings(entry);
   return settings.pages !== null &&
+    settings.pagesConfirmed !== false &&
     settings.copies !== null &&
     settings.printingSide !== null &&
     settings.colorMode !== null &&

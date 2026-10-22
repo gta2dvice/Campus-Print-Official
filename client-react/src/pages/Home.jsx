@@ -295,16 +295,25 @@ export default function Home() {
     const deliveryCharge = classroomDelivery ? 5 : 0;
     const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? 26 : 0), 0);
 
+    // Tiered Service Charge (Slabs) matching NewOrder.jsx and server/pricing.js
+    let serviceCharge = 0;
+    if (totalPages > 0) {
+      if (totalPages <= 10) serviceCharge = 1;
+      else if (totalPages <= 30) serviceCharge = 2;
+      else serviceCharge = 3;
+    }
+
     return {
       basePrice: printingSubtotal,
       a3Extra: 0,
       deliveryCharge,
       bindingCharge,
-      total: printingSubtotal + deliveryCharge + bindingCharge
+      serviceCharge,
+      total: printingSubtotal + deliveryCharge + bindingCharge + serviceCharge
     };
   }
 
-  const { basePrice, a3Extra, deliveryCharge, bindingCharge, total } = calcPrice();
+  const { basePrice, a3Extra, deliveryCharge, bindingCharge, serviceCharge, total } = calcPrice();
 
   function getFileCost(f) {
     const pages = printablePages(f);
@@ -985,6 +994,9 @@ export default function Home() {
                   <div className="ptc-breakdown" id="pcBreakdown">
                     <span className="ptc-line"><span className="ptc-line-label">Total Pages</span><span className="ptc-line-val">{totalPages} pages</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
+                    {serviceCharge > 0 && (
+                      <span className="ptc-line"><span className="ptc-line-label">Service Charge</span><span className="ptc-line-val">₹{serviceCharge}</span></span>
+                    )}
                     {deliveryCharge > 0 && (
                       <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹{deliveryCharge}</span></span>
                     )}
