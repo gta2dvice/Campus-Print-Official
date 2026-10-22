@@ -398,17 +398,21 @@ export default function NewOrder() {
         continue;
       }
       let clientPages = null;
-      if (file.type?.startsWith('image/') || isImageName(file.name)) {
+      const isImg = file.type?.startsWith('image/') || isImageName(file.name);
+      if (isImg) {
         clientPages = 1;
       } else {
         // PDFs get a quick client-side guess; other docs are counted by the server.
         clientPages = await countPdfPagesClient(file);
       }
+      const hasExactClientPages = typeof clientPages === 'number' && clientPages >= 1;
       accepted.push({
         key: ++fileKeySeq,
         file,
-        pages: clientPages || null,
+        pages: hasExactClientPages ? clientPages : null,
         estimated: false,
+        requiresConfirmation: false,
+        pagesConfirmed: hasExactClientPages,
         copies: 1,
         printingSide: 'single',
         colorMode: 'bw',
@@ -443,15 +447,29 @@ export default function NewOrder() {
           const idx = needDetection.findIndex((n) => n.key === entry.key);
           if (idx === -1) return entry;
           const result = results[idx];
-          if (result && typeof result.pages === 'number' && result.pages >= 1) {
-            return { ...entry, pages: result.pages, estimated: !!result.estimated };
+          if (result && typeof result.pages === 'number' && result.pages >= 1 && !result.estimated) {
+            return {
+              ...entry,
+              pages: result.pages,
+              estimated: false,
+              requiresConfirmation: false,
+              pagesConfirmed: true
+            };
           }
-          return { ...entry, pages: entry.pages || 1, estimated: true };
+          return {
+            ...entry,
+            pages: null,
+            estimated: true,
+            requiresConfirmation: true,
+            pagesConfirmed: false
+          };
         }));
       }
     } catch {
       setFiles((prev) => prev.map((entry) =>
-        needDetection.some((n) => n.key === entry.key) ? { ...entry, pages: entry.pages || 1, estimated: true } : entry
+        needDetection.some((n) => n.key === entry.key)
+          ? { ...entry, pages: null, estimated: true, requiresConfirmation: true, pagesConfirmed: false }
+          : entry
       ));
     } finally {
       clearTimeout(timeoutId);
@@ -459,8 +477,19 @@ export default function NewOrder() {
   }
 
   function updateFilePages(key, val) {
-    const pages = Math.max(1, parseInt(val, 10) || 1);
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, pages, estimated: false } : f)));
+    const parsed = parseInt(val, 10);
+    const pages = Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+    setFiles((prev) => prev.map((f) => (
+      f.key === key
+        ? {
+            ...f,
+            pages,
+            estimated: true,
+            requiresConfirmation: true,
+            pagesConfirmed: pages !== null
+          }
+        : f
+    )));
   }
 
   function removeFile(key) {
@@ -542,7 +571,8 @@ export default function NewOrder() {
   }
 
   // totalPagesCount is now handled inside calcPrice()
-  const pagesStillDetecting = files.some((f) => f.pages === null);
+  const pagesStillDetecting = files.some((f) => f.pages === null && !f.estimated && !f.requiresConfirmation);
+  const hasUnconfirmedPages = files.some((f) => f.pages === null || ((f.estimated || f.requiresConfirmation) && !f.pagesConfirmed));
 
   function calcPrice() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
@@ -577,6 +607,8 @@ export default function NewOrder() {
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
+    if (hasUnconfirmedPages) { showToast('Please enter and confirm the page count for all files.', 'error'); return; }
+    if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
     const invalidRange = files.find((f) => hasInvalidPageRange(f));
     if (invalidRange) { showToast(`Fix the page range for “${invalidRange.file.name}” before continuing.`, 'error'); return; }
     setModalOpen(true);
@@ -1195,6 +1227,7 @@ export default function NewOrder() {
   let summaryNote = '';
   if (!hasFiles) summaryNote = 'Please upload at least one file to continue.';
   else if (pagesStillDetecting) summaryNote = 'Detecting page count…';
+  else if (hasUnconfirmedPages) summaryNote = 'Please enter and confirm page count for all files.';
   else if (files.some((f) => hasInvalidPageRange(f))) summaryNote = 'Fix the invalid page range to continue.';
   else if (filesMissingSettings) summaryNote = 'Please choose printing settings for all files.';
 
@@ -1292,22 +1325,26 @@ export default function NewOrder() {
                         const pageRangeState = f.pageRange && showPageRangeInput(f) ? parsePageRange(f.pageRange, f.pages) : null;
                         const rangeErr = pageRangeState && !pageRangeState.ok ? pageRangeState.message : '';
                         let pagesText;
-                        if (f.pages === null) {
+                        if (f.pages === null && !f.estimated && !f.requiresConfirmation) {
                           pagesText = (
                             <span className="file-pages-detecting">
                               <span className="loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }}></span> Detecting pages…
                             </span>
                           );
-                        } else if (f.estimated) {
+                        } else if (f.requiresConfirmation || f.estimated) {
                           pagesText = (
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                               <span>Pages:</span>
                               <input
-                                type="number" min="1" max="2000" value={f.pages}
+                                type="number" min="1" max="2000" value={f.pages ?? ''} placeholder="e.g. 5" aria-label={`Confirm page count for ${f.file.name}`}
                                 onChange={(e) => updateFilePages(f.key, e.target.value)}
                                 style={{ width: '4rem', padding: '0.15rem 0.35rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.8rem' }}
                               />
-                              <span style={{ color: '#9a3412' }}>(confirm — page count finalized at processing)</span>
+                              {f.pagesConfirmed && f.pages ? (
+                                <span style={{ color: '#059669', fontSize: '0.8rem', fontWeight: 500 }}>(Manual count)</span>
+                              ) : (
+                                <span style={{ color: '#c2410c', fontSize: '0.8rem', fontWeight: 500 }}>(Please confirm document pages)</span>
+                              )}
                             </span>
                           );
                         } else {
@@ -1531,6 +1568,7 @@ export default function NewOrder() {
                               <div className="cp-file-footer">
                                 <span className="cp-file-footer-pages">
                                   {printablePages(f) * (f.copies || 1)} printed page{printablePages(f) * (f.copies || 1) !== 1 ? 's' : ''}
+                                  {f.printingSide === 'double' ? ` (${Math.ceil(printablePages(f) / 2) * (f.copies || 1)} physical sheet${Math.ceil(printablePages(f) / 2) * (f.copies || 1) !== 1 ? 's' : ''})` : ''}
                                   {f.copies > 1 ? ` (${printablePages(f)} × ${f.copies} copies)` : ''}
                                 </span>
                                 <span className="cp-file-subtotal">
@@ -1624,7 +1662,7 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="confirm-btn"
-                disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue to Order
@@ -1649,7 +1687,7 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="cp-mobile-sticky-btn"
-                disabled={!hasFiles || pagesStillDetecting || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue →

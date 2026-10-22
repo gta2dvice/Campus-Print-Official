@@ -27,6 +27,13 @@ process.env.FRONTEND_URL = 'http://localhost:3000';
 let db;
 let sentEmails = [];
 let resendFailure = null;
+async function waitForEmail(targetCount = 1, timeoutMs = 2000) {
+    const start = Date.now();
+    while (sentEmails.length < targetCount && Date.now() - start < timeoutMs) {
+        await new Promise(r => setTimeout(r, 10));
+    }
+}
+
 const originalSendEmail = emailService.sendEmail;
 
 beforeEach(() => {
@@ -92,6 +99,7 @@ describe('Automatic Ticket Email Delivery', () => {
 
         assert.equal(result.ticketStatus, 'READY');
         assert.equal(result.ticketNumber, 'CP-2001');
+        await waitForEmail(1);
 
         // Check email sent
         assert.equal(sentEmails.length, 1, 'Expected exactly one email to be sent');
@@ -209,6 +217,7 @@ describe('Automatic Ticket Email Delivery', () => {
             processSuccessfulPayment(orderId, { paymentId: payment.id, method: 'cashfree', amount: 50, source: 'status_poll' })
         ]);
 
+        await waitForEmail(1);
         assert.equal(sentEmails.length, 1, 'Only one email must be sent despite concurrent payment verifications');
         assert.equal(db.ticketWrites, 1, 'Only one ticket write allowed');
 
