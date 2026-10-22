@@ -66,10 +66,12 @@ function canAccessOrder({ sessionEmail, sessionUserId, order }) {
     // 1. Direct Email Match (Normalized)
     if (sessionEmail) {
         const normSession = normalizeEmail(sessionEmail);
-        const normGuest = normalizeEmail(order.guest_email);
-        const normCustomer = normalizeEmail(order.customer_email);
+        if (!normSession) return false;
 
-        if (normSession && (normSession === normGuest || normSession === normCustomer)) {
+        const normGuest = order.guest_email ? normalizeEmail(order.guest_email) : null;
+        const normCustomer = order.customer_email ? normalizeEmail(order.customer_email) : null;
+
+        if (normSession === normGuest || normSession === normCustomer) {
             return true;
         }
     }
