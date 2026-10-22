@@ -1594,6 +1594,12 @@ export default function NewOrder() {
                   <span className="summary-line-label">Printing Charges</span>
                   <span className="summary-line-value">₹{p.base + p.a3Extra}</span>
                 </div>
+                {p.serviceCharge > 0 && (
+                  <div className="summary-line">
+                    <span className="summary-line-label">Service Charge</span>
+                    <span className="summary-line-value">₹{p.serviceCharge}</span>
+                  </div>
+                )}
                 {p.bindingCharge > 0 && (
                   <div className="summary-line">
                     <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
