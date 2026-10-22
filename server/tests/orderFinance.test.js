@@ -49,11 +49,11 @@ describe('canonical pricing split (customer prices)', () => {
         assert.equal(c.total, 59);
     });
 
-    it('classroom delivery adds ₹5 once; pickup at Hostel Gate remains free', () => {
+    it('classroom delivery adds ₹5 once; Hostel Gate adds ?3 delivery', () => {
         const hostel = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate', classroomDelivery: 'true' });
-        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [0, 5, 7]);
+        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [3, 5, 11]);
         const pickup = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate' });
-        assert.deepEqual([pickup.deliveryCharge, pickup.classroomCharge, pickup.total], [0, 0, 2]);
+        assert.deepEqual([pickup.deliveryCharge, pickup.classroomCharge, pickup.total], [3, 0, 6]);
     });
 
     it('legacy order-wide binding remains supported when per-file settings are absent', () => {
@@ -150,8 +150,8 @@ describe('Super Admin breakdown', () => {
         const charges = priceOrder([file(15, 1, 'single', 'bw')], { classroomDelivery: true, binding: true });
         const order = itemisedOrder(charges, { collection_location_id: 'academic-block' });
         const payments = [
-            { status: 'failed', amount: '61.00' },
-            { status: 'success', amount: '61.00' }
+            { status: 'failed', amount: '63.00' },
+            { status: 'success', amount: '63.00' }
         ];
         const b = financialBreakdown(order, [{ page_count: 15, copies: 1, printing_side: 'single', color_mode: 'bw', printing_charge: '30.00' }], payments);
 
@@ -160,10 +160,10 @@ describe('Super Admin breakdown', () => {
         assert.equal(b.printing.printerPayable, 30);
         assert.deepEqual(b.printing.lines.map(l => [l.category, l.printedPages, l.amount]), [['BW_SINGLE', 15, 30]]);
         // Classroom delivery ₹5 and binding ₹26.
-        assert.deepEqual([b.extras.deliveryCharge, b.extras.serviceCharge, b.extras.classroomCharge, b.extras.bindingCharge, b.extras.totalExtras], [0, 0, 5, 26, 31]);
-        assert.equal(b.summary.customerTotal, 61);
-        assert.equal(b.summary.amountPaid, 61);
-        assert.equal(b.summary.grossExtraRevenue, 31);
+        assert.deepEqual([b.extras.deliveryCharge, b.extras.serviceCharge, b.extras.classroomCharge, b.extras.bindingCharge, b.extras.totalExtras], [0, 2, 5, 26, 33]);
+        assert.equal(b.summary.customerTotal, 63);
+        assert.equal(b.summary.amountPaid, 63);
+        assert.equal(b.summary.grossExtraRevenue, 33);
         assert.equal(b.reconciliation.reconciled, true);
         assert.equal(b.reconciliation.difference, 0);
         // Not tracked by the system → explicit nulls, never guessed.

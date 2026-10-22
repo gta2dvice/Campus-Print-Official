@@ -576,7 +576,8 @@ export default function NewOrder() {
 
   function calcPrice() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
-    const deliveryCharge = classroomDelivery ? 5 : 0;
+    const hostelCharge = selectedLocationId === 'hostel-gate' ? 3 : 0;
+    const deliveryCharge = (classroomDelivery ? 5 : 0) + hostelCharge;
     const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
 
     // Tiered Service Charge (Slabs)
@@ -1637,7 +1638,6 @@ export default function NewOrder() {
                     <span className="summary-line-value">₹{p.serviceCharge}</span>
                   </div>
                 )}
-                
                 {p.bindingCharge > 0 && (
                   <div className="summary-line">
                     <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
@@ -1646,7 +1646,7 @@ export default function NewOrder() {
                 )}
                 {p.deliveryCharge > 0 && (
                   <div className="summary-line">
-                    <span className="summary-line-label">Classroom Delivery</span>
+                    <span className="summary-line-label">Delivery{classroomDelivery ? ' (Classroom)' : ''}{selectedLocationId === 'hostel-gate' ? ' (Hostel Gate)' : ''}</span>
                     <span className="summary-line-value">₹{p.deliveryCharge}</span>
                   </div>
                 )}

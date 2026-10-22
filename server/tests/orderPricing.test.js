@@ -10,7 +10,7 @@ const { resolveAndPriceFiles, validateAndPriceSubmission } = require('../routes/
 const slots = require('../slots');
 
 describe('server-authoritative order pricing', () => {
-    it('prices files using the established B&W per-sheet rule without hidden order fees', () => {
+    it('prices files using the established B&W per-sheet rule and adds hostel delivery fee', () => {
         const result = priceOrder([{
             pages: 4,
             copies: 2,
@@ -23,11 +23,23 @@ describe('server-authoritative order pricing', () => {
             fileCharges: [12],
             printedPages: 8,
             serviceCharge: 0,
-            deliveryCharge: 0,
+            deliveryCharge: 3,
             classroomCharge: 0,
             bindingCharge: 0,
-            total: 12
+            total: 15
         });
+    });
+
+    it('does not charge hostel delivery for non-hostel locations', () => {
+        const result = priceOrder([{
+            pages: 4,
+            copies: 2,
+            printingSide: 'double',
+            colorMode: 'bw'
+        }], { collectionLocationId: 'main-gate', includeServiceCharge: false });
+
+        assert.equal(result.deliveryCharge, 0);
+        assert.equal(result.total, 12);
     });
 
     it('charges classroom delivery once and binding separately for each selected PDF', () => {
