@@ -98,7 +98,13 @@ export default function Ticket() {
             code: data.code || 'TICKET_LOAD_FAILED',
             message: data.message
           });
-          if (!cancelled) setTicketError(`${data.message || `Ticket lookup failed (${res.status})`}`);
+          if (!cancelled) {
+            setTicketError(`Ticket unavailable — ${data.message || `Ticket lookup failed (${res.status})`}`);
+            // Temporarily add status for debugging as requested
+            if (process.env.NODE_ENV === 'development') {
+                setTicketError(prev => `${prev} (HTTP ${res.status} - ${data.code || 'NO_CODE'})`);
+            }
+          }
           return;
         }
         const data = await res.json();
