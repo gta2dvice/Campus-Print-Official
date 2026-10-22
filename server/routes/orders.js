@@ -420,8 +420,9 @@ async function validateAndPriceSubmission(req, res) {
 
     let resolved;
     let amount;
+    let priced;
     try {
-        const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+        priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
             collectionLocationId: data.collectionLocationId,
             classroomDelivery: req.body.classroomDelivery,
             // Preserve compatibility with old clients; per-file settings are canonical.
@@ -437,8 +438,19 @@ async function validateAndPriceSubmission(req, res) {
     }
     if (!amount || amount <= 0) { res.status(400).json({ message: 'Invalid order amount' }); return null; }
 
+    if (req.body.totalPrice !== undefined && req.body.totalPrice !== null && req.body.totalPrice !== '') {
+        const declaredTotal = Number(req.body.totalPrice);
+        if (Number.isFinite(declaredTotal) && Math.abs(declaredTotal - amount) > 0.01) {
+            res.status(400).json({
+                message: 'Order total mismatch. Please refresh and review your order charges.',
+                code: 'PRICE_MISMATCH'
+            });
+            return null;
+        }
+    }
+
     data.totalPrice = amount;
-    data.totalPages = priced.charges.printedPages;
+    data.totalPages = data.charges ? data.charges.printedPages : 0;
     data.fileCount = resolved.length;
     data.guestFullName = fullName;
     data.guestEmail = normalizedEmail || null;

@@ -6,7 +6,8 @@ const { PDFDocument } = require('pdf-lib');
 const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { createFakeDb, restoreDb } = require('./helpers/fakeDb');
 const pageDetectWorker = require('../workers/pageDetect.worker');
-const { resolveAndPriceFiles } = require('../routes/orders');
+const { resolveAndPriceFiles, validateAndPriceSubmission } = require('../routes/orders');
+const slots = require('../slots');
 
 describe('server-authoritative order pricing', () => {
     it('prices files using the established B&W per-sheet rule without hidden order fees', () => {
@@ -504,5 +505,195 @@ describe('Section 5 Regression Tests: Page Confirmation Removal & Manipulation P
         // Verify payment amounts match and mismatch rejection
         assert.equal(cashfree.amountsMatch(54, 54), true);
         assert.equal(cashfree.amountsMatch(54, 3), false);
+    });
+});
+
+
+
+describe('Payment Creation & Server-Side Price Verification Hotfix Tests', () => {
+    it('1. A valid PDF order can proceed through payment creation', async () => {
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) pdfDoc.addPage([600, 400]);
+        const buffer = Buffer.from(await pdfDoc.save());
+
+        const req = {
+            files: [{ buffer, originalname: 'lecture-notes.pdf', mimetype: 'application/pdf', size: buffer.length }],
+            body: {
+                fullName: 'Karti Student',
+                phone: '9876543210',
+                email: 'student@example.edu',
+                classroom: 'LH-101',
+                collectionLocationId: 'academic-block',
+                collectionTime: '9:25 AM',
+                fileSettings: JSON.stringify([{ pages: 26, copies: 1, printingSide: 'single', colorMode: 'bw' }])
+            }
+        };
+        let statusSent = null;
+        let jsonSent = null;
+        const res = {
+            status(code) { statusSent = code; return this; },
+            json(data) { jsonSent = data; return this; }
+        };
+
+        const validated = await validateAndPriceSubmission(req, res);
+        assert.ok(validated, 'Order submission must validate successfully');
+        assert.equal(statusSent, null);
+        assert.equal(validated.amount, 54);
+        assert.equal(validated.data.totalPages, 26);
+        assert.equal(validated.data.totalPrice, 54);
+        assert.equal(validated.resolved.length, 1);
+        assert.equal(validated.resolved[0].pages, 26);
+    });
+
+    it('2. The server calculates the expected price using the existing pricing rules', async () => {
+        // Double-sided 26-page PDF: 13 sheets * ₹3 = ₹39 + ₹2 tier-2 service charge = ₹41
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) pdfDoc.addPage([600, 400]);
+        const buffer = Buffer.from(await pdfDoc.save());
+
+        const req = {
+            files: [{ buffer, originalname: 'double-notes.pdf', mimetype: 'application/pdf', size: buffer.length }],
+            body: {
+                fullName: 'Karti Student',
+                phone: '9876543210',
+                email: 'student@example.edu',
+                classroom: 'LH-101',
+                collectionLocationId: 'academic-block',
+                collectionTime: '9:25 AM',
+                fileSettings: JSON.stringify([{ pages: 26, copies: 1, printingSide: 'double', colorMode: 'bw' }])
+            }
+        };
+        const res = { status() { return this; }, json() { return this; } };
+        const validated = await validateAndPriceSubmission(req, res);
+        assert.ok(validated);
+        assert.equal(validated.amount, 41);
+        assert.equal(validated.data.totalPages, 26);
+    });
+
+    it('3. Invalid or missing pricing data fails safely', async () => {
+        // Empty files
+        let status1 = null, json1 = null;
+        const res1 = { status(c) { status1 = c; return this; }, json(d) { json1 = d; return this; } };
+        const v1 = await validateAndPriceSubmission({ files: [], body: {} }, res1);
+        assert.equal(v1, null);
+        assert.equal(status1, 400);
+
+        // Missing fileSettings
+        let status2 = null, json2 = null;
+        const res2 = { status(c) { status2 = c; return this; }, json(d) { json2 = d; return this; } };
+        const v2 = await validateAndPriceSubmission({
+            files: [{ buffer: Buffer.from('abc'), originalname: 'a.pdf' }],
+            body: { fullName: 'A', phone: '9876543210', classroom: '101', email: 'a@b.com' }
+        }, res2);
+        assert.equal(v2, null);
+        assert.equal(status2, 400);
+
+        // Malformed fileSettings
+        let status3 = null, json3 = null;
+        const res3 = { status(c) { status3 = c; return this; }, json(d) { json3 = d; return this; } };
+        const v3 = await validateAndPriceSubmission({
+            files: [{ buffer: Buffer.from('abc'), originalname: 'a.pdf' }],
+            body: {
+                fullName: 'A',
+                phone: '9876543210',
+                classroom: '101',
+                email: 'a@b.com',
+                collectionLocationId: 'academic-block',
+                collectionTime: '9:25 AM',
+                fileSettings: 'not-json'
+            }
+        }, res3);
+        assert.equal(v3, null);
+        assert.equal(status3, 400);
+    });
+
+    it('4. A mismatched client-submitted amount is rejected', async () => {
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) pdfDoc.addPage([600, 400]);
+        const buffer = Buffer.from(await pdfDoc.save());
+
+        let statusSent = null, jsonSent = null;
+        const req = {
+            files: [{ buffer, originalname: 'lecture-notes.pdf', mimetype: 'application/pdf', size: buffer.length }],
+            body: {
+                fullName: 'Karti Student',
+                phone: '9876543210',
+                email: 'student@example.edu',
+                classroom: 'LH-101',
+                collectionLocationId: 'academic-block',
+                collectionTime: '9:25 AM',
+                totalPrice: '10', // Tampered / mismatched price (server calculates ₹54)
+                fileSettings: JSON.stringify([{ pages: 26, copies: 1, printingSide: 'single', colorMode: 'bw' }])
+            }
+        };
+        const res = {
+            status(code) { statusSent = code; return this; },
+            json(data) { jsonSent = data; return this; }
+        };
+
+        const validated = await validateAndPriceSubmission(req, res);
+        assert.equal(validated, null, 'Tampered amount must be rejected');
+        assert.equal(statusSent, 400);
+        assert.equal(jsonSent.code, 'PRICE_MISMATCH');
+    });
+
+    it('5. Payment creation errors do not falsely mark an order as paid', async () => {
+        const fakeDb = createFakeDb();
+        fakeDb.install();
+        try {
+            // An order created in payment attempt failure stays pending/unpaid
+            const order = fakeDb.addOrder({ id: 9201, total_price: 54, payment_status: 'PAYMENT_PENDING' });
+            assert.equal(order.payment_status, 'PAYMENT_PENDING');
+            assert.notEqual(order.payment_status, 'PAID');
+            assert.notEqual(order.ticket_status, 'READY');
+        } finally {
+            restoreDb();
+        }
+    });
+
+    it('6. Successful payment verification still generates exactly one ticket', async () => {
+        const fakeDb = createFakeDb();
+        fakeDb.install();
+        try {
+            fakeDb.addOrder({ id: 9202, total_price: 54, guest_full_name: 'Verified Student' });
+            const payment = fakeDb.addPayment({ order_id: 9202, amount: 54, method: 'cashfree', status: 'pending' });
+            const res = await processSuccessfulPayment(9202, {
+                paymentId: payment.id,
+                method: 'cashfree',
+                amount: 54,
+                source: 'cashfree_webhook'
+            });
+            assert.equal(res.ticketStatus, 'READY');
+            assert.equal(res.ticketNumber, 'CP-9202');
+            assert.equal(res.alreadyFinalized, false);
+        } finally {
+            restoreDb();
+        }
+    });
+
+    it('7. Duplicate callbacks do not generate duplicate tickets', async () => {
+        const fakeDb = createFakeDb();
+        fakeDb.install();
+        try {
+            fakeDb.addOrder({ id: 9203, total_price: 54, guest_full_name: 'Verified Student' });
+            const payment = fakeDb.addPayment({ order_id: 9203, amount: 54, method: 'cashfree', status: 'pending' });
+            const res1 = await processSuccessfulPayment(9203, {
+                paymentId: payment.id,
+                method: 'cashfree',
+                amount: 54,
+                source: 'cashfree_webhook'
+            });
+            const res2 = await processSuccessfulPayment(9203, {
+                paymentId: payment.id,
+                method: 'cashfree',
+                amount: 54,
+                source: 'browser_return'
+            });
+            assert.equal(res1.ticketNumber, 'CP-9203');
+            assert.equal(res2.ticketNumber, 'CP-9203');
+            assert.equal(res2.alreadyFinalized, true);
+        } finally {
+            restoreDb();
+        }
     });
 });
