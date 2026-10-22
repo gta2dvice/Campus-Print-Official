@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageBackground from '../components/PageBackground';
-import UpiQrPayment from '../components/UpiQrPayment';
 import Footer from '../components/Footer';
 import LogoLink from '../components/LogoLink';
 import useDocumentTitle from '../lib/useDocumentTitle';
@@ -12,7 +11,7 @@ import '../styles/style.css';
 // Every order (Cashfree or UPI QR) comes from the same database-backed history.
 
 const METHOD_LABELS = {
-  CASHFREE: 'Cashfree',
+  CASHFREE: 'Online Payment',
   UPI_QR: 'UPI QR',
   WHATSAPP: 'QR Payment',
   PAY_AT_SHOP: 'Pay at shop',
@@ -248,23 +247,6 @@ export default function Orders() {
   // Unpaid Cashfree order: reopen payment for the SAME order on the booking page.
   function payAgain(order) {
     navigate(`/new-order?cf_order=${encodeURIComponent(order.cashfreeOrderId)}&pay_again=1`);
-  }
-
-  // Unpaid UPI QR order: get a fresh QR for the same order + reference.
-  async function showUpiQr(order) {
-    resetMessages();
-    try {
-      const res = await fetch(`/api/orders/payment/upi-qr/${order.orderId}/refresh`, { method: 'POST', credentials: 'include' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (data.code === 'ALREADY_PAID') { await loadHistory(); return; }
-        setError(data.message || 'Could not load the payment QR.');
-        return;
-      }
-      setUpiQrData({ ...data, id: order.orderId, orderReference: order.orderReference });
-    } catch {
-      setError('Connection error. Please try again.');
-    }
   }
 
   async function checkStatus(order) {
@@ -526,13 +508,7 @@ export default function Orders() {
           </div>
         )}
       </div>
-      {upiQrData && (
-        <UpiQrPayment
-          data={upiQrData}
-          onClose={() => { setUpiQrData(null); loadHistory(); }}
-          onViewTicket={() => navigate(`/ticket?id=${upiQrData.id}`)}
-        />
-      )}
+      
       <Footer />
     </>
   );

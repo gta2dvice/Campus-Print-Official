@@ -63,7 +63,6 @@ body {
     z-index: -1;
     pointer-events: none;
     isolation: isolate;
-    background-color: #0f172a;
     background-image: url('/bg-horizontal.jpg');
     background-size: cover;
     background-position: center center;

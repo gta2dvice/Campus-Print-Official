@@ -32,7 +32,7 @@ function paymentError(code, message) {
  * @param {number} orderId internal order id
  * @param {object} details
  * @param {number} details.paymentId    the payments row being settled
- * @param {string} details.method       expected payments.method ('cashfree', 'upi_qr', …)
+ * @param {string} details.method       expected payments.method ('cashfree', …)
  * @param {number} details.amount       amount verified by the payment source
  * @param {string} [details.currency]   verified currency (default INR)
  * @param {string} [details.transactionRef] gateway / UPI transaction reference
@@ -91,20 +91,32 @@ async function processSuccessfulPayment(orderId, details) {
             throw paymentError('PAYMENT_AMOUNT_MISMATCH', 'Verified payment amount or currency does not match the order.');
         }
 
-        await tx.execute(
-            `UPDATE payments
-             SET status = 'success', paid_at = NOW(), updated_at = NOW(),
-                 transaction_ref = COALESCE(?, transaction_ref)
-             WHERE id = ? AND status <> 'success'`,
-            [transactionRef, payment.id]
-        );
-        await tx.execute(
-            `UPDATE orders
-             SET payment_status = 'PAID', paid_at = NOW(),
-                 ticket_status = CASE WHEN ticket_status = 'READY' THEN 'READY' ELSE 'GENERATION_PENDING' END
-             WHERE id = ?`,
-            [order.id]
-        );
+        try {
+            await tx.execute(
+                `UPDATE payments
+                 SET status = 'success', paid_at = NOW(), updated_at = NOW(),
+                     transaction_ref = COALESCE(?, transaction_ref)
+                 WHERE id = ? AND status <> 'success'`,
+                [transactionRef, payment.id]
+            );
+            await tx.execute(
+                `UPDATE orders
+                 SET payment_status = 'PAID', paid_at = NOW(),
+                     ticket_status = CASE WHEN ticket_status = 'READY' THEN 'READY' ELSE 'GENERATION_PENDING' END
+                 WHERE id = ?`,
+                [order.id]
+            );
+        } catch (dbErr) {
+            // Specifically catch missing column errors to surface schema drift in production logs
+            if (dbErr.message && (dbErr.message.includes('payment_status') || dbErr.message.includes('ticket_status'))) {
+                logPaymentEvent('ORDER_FINALIZATION_SCHEMA_ERROR', {
+                    orderId,
+                    error: dbErr.message,
+                    source
+                });
+            }
+            throw dbErr;
+        }
         return { alreadyFinalized: false };
     });
 
@@ -114,13 +126,11 @@ async function processSuccessfulPayment(orderId, details) {
     }
 
     const ticket = await tryEnsureTicket(orderId);
-    let emailDelivery = null;
     if (ticket.ticketStatus === 'READY') {
-        try {
-            emailDelivery = await sendTicketEmail(orderId, { source });
-        } catch (emailErr) {
+        // Dispatch email in background to avoid blocking the payment response
+        sendTicketEmail(orderId, { source }).catch(emailErr => {
             console.error('[TICKET_EMAIL_DISPATCH_FAILED]', { orderId, error: emailErr.message });
-        }
+        });
     }
     return {
         orderId,
@@ -129,7 +139,6 @@ async function processSuccessfulPayment(orderId, details) {
         duplicateCapture: Boolean(settled.duplicateCapture),
         ticketStatus: ticket.ticketStatus,
         ticketNumber: ticket.ticketNumber,
-        emailDelivery
     };
 }
 

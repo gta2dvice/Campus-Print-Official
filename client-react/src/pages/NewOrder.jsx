@@ -5,7 +5,6 @@ import GuestDetailsModal from '../components/GuestDetailsModal';
 import Toast from '../components/Toast';
 import PaymentWarningModal from '../components/PaymentWarningModal';
 import WhatsAppOrderModal, { WA_ORDER_TEMPLATE } from '../components/WhatsAppOrderModal';
-import UpiQrPayment from '../components/UpiQrPayment';
 import useToast from '../lib/useToast';
 import useBodyClass from '../lib/useBodyClass';
 import useDocumentTitle from '../lib/useDocumentTitle';
@@ -78,27 +77,18 @@ const LOCATION_ICONS = {
 };
 const LOCATIONS = SLOT_LOCATIONS.map((loc) => ({ ...loc, sub: loc.hint, icon: LOCATION_ICONS[loc.id] }));
 
-// Booking step 3. 'upi_qr' is the dynamic UPI QR flow (order-first, PENDING until a shop
-// admin confirms the payment — POST /api/orders/payment/upi-qr). 'none' is the Personal
+// Booking step 3. 'none' is the Personal
 // WhatsApp manual-order flow — it opens an instruction modal and WhatsApp, no order/ticket.
 const PAYMENT_OPTIONS = [
   {
     id: 'cashfree',
-    name: 'Cashfree',
+    name: 'Online Payment',
     tone: 'best',
     recommended: true,
     badge: '⭐ RECOMMENDED',
     reliability: 'Most Reliable — Instant Ticket',
     description: <><strong>Instant</strong> payment verification &amp; <strong>instant ticket</strong> generation.</>,
     icon: <><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></>,
-  },
-  {
-    id: 'upi_qr',
-    name: 'UPI QR / Scanner',
-    tone: 'mid',
-    reliability: 'Reliable — Ticket After Verification',
-    description: <>Pay by scanning the QR. Ticket generated <strong>after payment verification</strong>.</>,
-    icon: <><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></>,
   },
   {
     id: 'none',
@@ -177,45 +167,38 @@ export default function NewOrder() {
   const [displayName, setDisplayName] = useState('');
   const [guestDetails, setGuestDetails] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  // ── Order configuration state ──
-  const [files, setFiles] = useState([]); // [{ key, file, pages, estimated, copies, printingSide, colorMode, spiralBinding, pageRange }]
+  const [files, setFiles] = useState([]);
   const [paperSize, setPaperSize] = useState('A4');
-  const spiralBinding = files.some((file) => file.spiralBinding);
+  const [spiralBinding, setSpiralBinding] = useState(false);
   const [expressDelivery, setExpressDelivery] = useState(false);
   const [classroomDelivery, setClassroomDelivery] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef(null);
-
-  // ── Booking modal state ──
-  const [modalOpen, setModalOpen] = useState(false);
-  const [step, setStep] = useState('slot'); // 'slot' | 'location' | 'payment' | 'review'
-  const [preOrderMode, setPreOrderMode] = useState(false); // true once same-day booking closed (after 5 PM IST) — slots shown are tomorrow's
   const [selectedLocationId, setSelectedLocationId] = useState(null);
   const [selectedLocationName, setSelectedLocationName] = useState(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
-  const [slots, setSlots] = useState([]);
-  const [slotsLoading, setSlotsLoading] = useState(false);
-  const [locationStatuses, setLocationStatuses] = useState([]);
-  const [paymentMethod, setPaymentMethod] = useState(null); // 'cashfree' | 'upi_qr' | 'none' (WhatsApp order)
-  const [paymentOptions, setPaymentOptions] = useState(null); // { phone, upi, hasQr, qrVersion } from /api/orders/payment-options
+  const [paymentMethod, setPaymentMethod] = useState(null);
+  const [step, setStep] = useState('slot');
+  const [modalOpen, setModalOpen] = useState(false);
   const [paymentOptionsLoading, setPaymentOptionsLoading] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState(null);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slots, setSlots] = useState([]);
+  const [preOrderMode, setPreOrderMode] = useState(false);
+  const [locationStatuses, setLocationStatuses] = useState([]);
   const [paying, setPaying] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState('');
-  const [recoveryOrderId, setRecoveryOrderId] = useState(returnedCashfreeOrderId || '');
+  const [recoveryOrderId, setRecoveryOrderId] = useState('');
   const [canRetryPayment, setCanRetryPayment] = useState(false);
-  const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
-  const confirmingPaymentRef = useRef(false); // guards against double-firing the pay flow
-  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
-  // Shown when a saved draft has no (valid) email — email is mandatory before ordering.
   const [guestDetailsModalOpen, setGuestDetailsModalOpen] = useState(false);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const [whatsappOpening, setWhatsappOpening] = useState(false);
-  const whatsappOpenedRef = useRef(false); // guards against opening WhatsApp more than once
-  const [upiQrData, setUpiQrData] = useState(null);
-  const upiSubmittingRef = useRef(false); // guards against creating duplicate UPI orders
-  const persistReadyRef = useRef(false);
+  const [paymentWarningOpen, setPaymentWarningOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   // Set before discarding the current draft so the persist effect skips that one change.
   const skipPersistRef = useRef(false);
+  const persistReadyRef = useRef(false);
+  const fileInputRef = useRef(null);
+  const confirmingPaymentRef = useRef(false);
+  const whatsappOpenedRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
   // so re-enabling persistence here doesn't reset them to defaults.
   const draftMetaRef = useRef({ colorOption: 'bw', printingSide: 'single' });
@@ -489,7 +472,11 @@ export default function NewOrder() {
   }
 
   function updateFileBinding(key, spiralBinding) {
-    setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, spiralBinding } : f)));
+    setFiles((prev) => prev.map((f) => {
+      if (f.key !== key) return f;
+      const isEligible = printablePages(f) >= 5;
+      return { ...f, spiralBinding: isEligible ? spiralBinding : false };
+    }));
   }
 
   function updateFileColorMode(key, mode) {
@@ -554,7 +541,7 @@ export default function NewOrder() {
     navigate(`/ticket?token=${encodeURIComponent(ticketToken)}`);
   }
 
-  const totalPagesCount = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
+  // totalPagesCount is now handled inside calcPrice()
   const pagesStillDetecting = files.some((f) => f.pages === null);
 
   function calcPrice() {
@@ -562,13 +549,23 @@ export default function NewOrder() {
     const deliveryCharge = classroomDelivery ? 5 : 0;
     const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
 
+    // Tiered Service Charge (Slabs)
+    const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
+    let serviceCharge = 0;
+    if (totalPages > 0) {
+        if (totalPages <= 10) serviceCharge = 1;
+        else if (totalPages <= 30) serviceCharge = 2;
+        else serviceCharge = 3;
+    }
+
     return {
-      pages: totalPagesCount || 0,
+      pages: totalPages || 0,
       base: printingSubtotal || 0,
       a3Extra: 0,
       deliveryCharge,
       bindingCharge,
-      total: (printingSubtotal || 0) + deliveryCharge + bindingCharge
+      serviceCharge,
+      total: (printingSubtotal || 0) + deliveryCharge + bindingCharge + serviceCharge
     };
   }
 
@@ -640,7 +637,7 @@ export default function NewOrder() {
     }
     setPaymentOptions(options);
     // UPI QR needs the shop's UPI VPA; clear the selection if it isn't configured.
-    setPaymentMethod((m) => (m === 'upi_qr' && !options.upi ? null : m));
+
     setPaymentOptionsLoading(false);
   }
 
@@ -824,8 +821,8 @@ export default function NewOrder() {
             // polling effect's cancellation flag is set as soon as the phase flips.
             setCfConfirm(prev => prev ? { ...prev, phase: 'success', ticketToken: data.ticketToken, ticketNumber: data.ticketNumber } : null);
           } else {
-            // PAID but the ticket/token isn't ready yet. Never regress out of 'timeout'
-            // (its polling keeps retrying while its buttons keep navigation available).
+            // PAID but the ticket/token isn't ready yet.
+            // We transition to 'received' to show the "Preparing your ticket..." UI.
             setCfConfirm(prev => prev && prev.phase !== 'success' && prev.phase !== 'timeout'
               ? { ...prev, phase: 'received' } : prev);
           }
@@ -1007,8 +1004,38 @@ export default function NewOrder() {
 
   async function handlePay() {
     if (recoveryOrderId) {
-      showToast('A payment attempt is already saved. Check its status before starting another order.', 'error');
-      return;
+      setPaying(true);
+      try {
+        const res = await fetch(`/api/orders/payment/status?orderId=${recoveryOrderId}`, {
+          method: 'GET',
+          credentials: 'include',
+        });
+        const statusData = await res.json().catch(() => ({}));
+
+        if (res.ok && statusData.status === 'PAID') {
+          showToast('This order is already paid. You can check your ticket on the Orders page.', 'info');
+          setPaying(false);
+          return;
+        }
+
+        if (res.ok && (statusData.status === 'FAILED' || statusData.status === 'EXPIRED')) {
+          showToast('The previous payment failed or expired. You can safely retry now.', 'info');
+          // Allow proceeding by not returning early
+        } else if (!res.ok) {
+          showToast('Could not verify previous payment status. Please try again later.', 'error');
+          setPaying(false);
+          return;
+        } else {
+          // Status is likely PAYMENT_PENDING or similar
+          showToast('A payment attempt is still pending. Please check its status or wait before starting another order.', 'error');
+          setPaying(false);
+          return;
+        }
+      } catch (error) {
+        showToast('Network error while verifying payment status. Please try again.', 'error');
+        setPaying(false);
+        return;
+      }
     }
     if (!selectedLocationId || !selectedTimeSlot) {
       showToast('Please select a collection location and time slot.', 'error');
@@ -1100,7 +1127,6 @@ export default function NewOrder() {
 
   // Review-step button routes by method:
   //  'none'   → Personal WhatsApp instruction modal (no order/payment)
-  //  'upi_qr' → create the order + show the UPI QR screen
   //  else     → the pre-payment warning (Cashfree)
   function requestPayment() {
     // Email is mandatory for every order — older saved drafts may predate the field.
@@ -1113,37 +1139,7 @@ export default function NewOrder() {
       setWhatsappModalOpen(true);
       return;
     }
-    if (paymentMethod === 'upi_qr') {
-      startUpiQr();
-      return;
-    }
     setPaymentWarningOpen(true);
-  }
-
-  // Order-first UPI QR: create the PENDING order on the server and show its QR.
-  // The guard prevents a double-click from creating two orders.
-  async function startUpiQr() {
-    if (upiSubmittingRef.current || paying) return;
-    upiSubmittingRef.current = true;
-    setPaying(true);
-    try {
-      const res = await fetch('/api/orders/payment/upi-qr', {
-        method: 'POST', credentials: 'include', body: buildOrderFormData(),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        showToast(data.message || 'Could not start UPI payment. Please try again.', 'error');
-        return;
-      }
-      try { await clearCompletedOrder(); } catch { /* draft cleanup is best-effort */ }
-      closeBookingModal();
-      setUpiQrData(data); // stays on a pending QR screen — no navigation to the ticket
-    } catch {
-      showToast('Connection error. Please try again.', 'error');
-    } finally {
-      setPaying(false);
-      upiSubmittingRef.current = false;
-    }
   }
 
   // Normalizes an Indian number to wa.me's international form (digits, no '+').
@@ -1828,12 +1824,10 @@ export default function NewOrder() {
                 <>
                   <div className="cp-cards-grid" role="radiogroup" aria-label="Payment options">
                     {PAYMENT_OPTIONS.map((opt) => {
-                      const isDisabled = opt.id === 'upi_qr' && !paymentOptions?.upi;
-                      const isSelected = paymentMethod === opt.id && !isDisabled;
+                      const isSelected = paymentMethod === opt.id;
                       let classes = 'cp-loc-card cp-pay-card';
                       if (opt.recommended) classes += ' cp-pay-recommended';
                       if (isSelected) classes += ' is-selected';
-                      if (isDisabled) classes += ' is-unavailable';
                       return (
                         <button
                           key={opt.id}
@@ -1841,7 +1835,6 @@ export default function NewOrder() {
                           role="radio"
                           aria-checked={isSelected}
                           className={classes}
-                          disabled={isDisabled}
                           onClick={() => {
                         if (paymentMethod === opt.id) {
                           setPaymentMethod(null);
@@ -1857,25 +1850,11 @@ export default function NewOrder() {
                           {opt.badge && <span className="cp-pay-badge">{opt.badge}</span>}
                           <p className={`cp-pay-reliability cp-pay-reliability--${opt.tone}`}>{opt.reliability}</p>
                           <p className="cp-card-sub cp-pay-desc">{opt.description}</p>
-                          <span className="cp-loc-status-tag">{isDisabled ? 'Not set up' : (isSelected ? 'Selected' : 'Available')}</span>
+                          <span className="cp-loc-status-tag">{isSelected ? 'Selected' : 'Available'}</span>
                         </button>
                       );
                     })}
                   </div>
-
-                  {paymentMethod === 'upi_qr' && (
-                    <div className="cp-review-box cp-payment-detail">
-                      <h3 className="cp-review-heading">Pay via UPI QR</h3>
-                      <p className="cp-card-sub">
-                        When you continue, we'll create your order and show a UPI QR for <strong>₹{p.total}</strong>.
-                        Scan it with any UPI app to pay. Your payment is <strong>confirmed by our team</strong> — the
-                        order stays <strong>pending</strong> until then.
-                      </p>
-                      {!paymentOptions?.upi && (
-                        <p className="cp-card-sub"><strong>UPI isn't set up yet — please choose another method.</strong></p>
-                      )}
-                    </div>
-                  )}
 
                   {paymentMethod === 'none' && (
                     <div className="cp-review-box cp-payment-detail">
@@ -2049,7 +2028,7 @@ export default function NewOrder() {
                   {paying ? (
                     <><span className="loading-spinner"></span>&nbsp; Processing…</>
                   ) : (
-                    <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : paymentMethod === 'none' ? 'Order via WhatsApp' : paymentMethod === 'upi_qr' ? 'Pay via UPI QR' : 'Place Order'} <span className="arrow-icon">→</span></>
+                    <>{paymentMethod === 'cashfree' ? 'Proceed to Payment' : paymentMethod === 'none' ? 'Order via WhatsApp' : 'Place Order'} <span className="arrow-icon">→</span></>
                   )}
                 </button>
               </div>
@@ -2079,15 +2058,11 @@ export default function NewOrder() {
         showToast={showToast}
       />
 
-      {upiQrData && (
-        <UpiQrPayment
-          data={upiQrData}
-          showToast={showToast}
-          onClose={() => setUpiQrData(null)}
-          onViewTicket={() => navigate(`/ticket?token=${encodeURIComponent(upiQrData.ticketToken)}`)}
-        />
-      )}
+      
 
+      {/* Payment confirmation modal for Cashfree */}
+      {/* Payment confirmation modal for Cashfree */}
+      {/* Payment confirmation modal for Cashfree */}
       {cfConfirm && (() => {
         const timeLeft = Math.max(0, 120 - Math.floor((Date.now() - cfConfirm.startedAt) / 1000));
         const progress = Math.min(100, ((Date.now() - cfConfirm.startedAt) / 120000) * 100);
@@ -2095,12 +2070,13 @@ export default function NewOrder() {
           <div className="booking-overlay" style={{ zIndex: 1100 }}>
             <div className="booking-panel" style={{ maxWidth: 440, textAlign: 'center', padding: '2rem 1.5rem', margin: '2rem auto' }}>
 
+
               {cfConfirm.phase === 'confirming' && (<>
                 <div style={{ width: 56, height: 56, margin: '0 auto 1rem', borderRadius: '50%', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span className="loading-spinner" style={{ width: 28, height: 28 }} />
                 </div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.25rem' }}>Confirming your payment...</h2>
-                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>Confirming your payment with Cashfree. This usually takes a few seconds.</p>
+                <p style={{ color: '#6b7280', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>Confirming your payment. This usually takes a few seconds.</p>
                 <div style={{ background: '#e5e7eb', borderRadius: 999, height: 6, margin: '0 0 0.75rem', overflow: 'hidden' }}>
                   <div style={{ background: '#3b82f6', height: '100%', width: `${progress}%`, borderRadius: 999, transition: 'width 1s linear' }} />
                 </div>

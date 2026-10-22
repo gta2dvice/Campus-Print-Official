@@ -128,9 +128,17 @@ function createFakeDb() {
             return [order ? [{ customer_email: order.guest_email || order.customer_email || null, ...order }] : []];
         }
         if (/^SELECT gateway_order_id, status FROM payments WHERE order_id = \? ORDER BY id DESC LIMIT 1$/.test(s) ||
-            /FROM payments WHERE order_id = \? AND method = 'cashfree' ORDER BY id DESC LIMIT 1/.test(s)) {
-            const payments = [...db.payments.values()].filter(p => p.order_id === Number(params[0]) && (!s.includes('cashfree') || p.method === 'cashfree')).sort((a, b) => b.id - a.id);
-            const p = payments[0];
+            /FROM payments WHERE order_id = \? AND method = 'cashfree' ORDER BY id DESC LIMIT 1/.test(s) ||
+            /^SELECT gateway_order_id FROM payments WHERE order_id = \? AND status = 'success' ORDER BY id ASC LIMIT 1$/.test(s)) {
+            const payments = [...db.payments.values()].filter(p => p.order_id === Number(params[0]) && (!s.includes('cashfree') || p.method === 'cashfree'));
+
+            if (s.includes('status = \'success\'')) {
+                const successful = payments.filter(p => p.status === 'success').sort((a, b) => a.id - b.id);
+                return [successful.length ? [{ gateway_order_id: successful[0].gateway_order_id }] : []];
+            }
+
+            const sorted = payments.sort((a, b) => b.id - a.id);
+            const p = sorted[0];
             return [p ? [{ ...p }] : []];
         }
         if (/WHERE o\.ticket_access_token_hash = \?/.test(s)) {

@@ -10,9 +10,19 @@
 // A bare /order/:id is never, on its own, sufficient.
 const { isValidTicketToken } = require('../ticketTokens');
 const { normalizeEmail } = require('../email');
+const User = require('../models/User');
 
 // Short-lived recovery session, independent of the 1-day cookie lifetime.
 const RECOVERY_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+class AuthorizationError extends Error {
+    constructor(code, message, status = 403) {
+        super(message);
+        this.name = 'AuthorizationError';
+        this.code = code;
+        this.status = status;
+    }
+}
 
 function establishRecoverySession(req, email) {
     const normalized = normalizeEmail(email);
@@ -46,27 +56,74 @@ function requireRecoverySession(req, res, next) {
     next();
 }
 
-// Returns true when the request is authorized for THIS order.
-function isAuthorizedForOrder(req, order) {
+/**
+ * Pure logic to determine if an identity (email/userId) owns an order.
+ * Handles legacy cases where emails may be NULL but userId is present.
+ */
+function canAccessOrder({ sessionEmail, sessionUserId, order }) {
     if (!order) return false;
 
-    // (b) ticket link token for this order
-    const token = (req.headers && req.headers['x-ticket-token']) || (req.query && req.query.token);
-    if (token && isValidTicketToken(String(token), order.ticket_access_token_hash)) return true;
-
-    // (a) recovery session whose email matches the order's guest email or user email
-    const sessionEmail = activeRecoveryEmail(req);
+    // 1. Direct Email Match (Normalized)
     if (sessionEmail) {
         const normSession = normalizeEmail(sessionEmail);
-        const normGuest = normalizeEmail(order.guest_email);
-        const normCustomer = normalizeEmail(order.customer_email);
-        if (normSession && (normSession === normGuest || normSession === normCustomer)) return true;
+        if (!normSession) return false;
+
+        const normGuest = order.guest_email ? normalizeEmail(order.guest_email) : null;
+        const normCustomer = order.customer_email ? normalizeEmail(order.customer_email) : null;
+
+        if (normSession === normGuest || normSession === normCustomer) {
+            return true;
+        }
     }
 
-    // (c) authenticated owner of a user order
-    if (order.user_id && Number(req.session?.userId) === Number(order.user_id)) return true;
+    // 2. User ID Match (Authenticated or Resolved from Recovery Email)
+    if (sessionUserId && order.user_id) {
+        if (Number(sessionUserId) === Number(order.user_id)) {
+            return true;
+        }
+    }
 
     return false;
+}
+
+/**
+ * Canonical Resolver for ticket/order access.
+ * Replaces isAuthorizedForOrder.
+ */
+async function resolveTicketAccess(req, order) {
+    if (!order) {
+        throw new AuthorizationError('ORDER_NOT_FOUND', 'This ticket link is no longer valid.', 404);
+    }
+
+    // (a) Secure ticket token check (High priority)
+    const token = (req.headers && req.headers['x-ticket-token']) || (req.query && req.query.token);
+    if (token && isValidTicketToken(String(token), order.ticket_access_token_hash)) {
+        return { authorized: true, method: 'TICKET_TOKEN' };
+    }
+
+    // (b) Identify requester
+    const sessionEmail = activeRecoveryEmail(req);
+    const sessionUserId = req.session?.userId;
+
+    let resolvedUserId = sessionUserId;
+
+    // If we have a recovery email but no auth session, resolve the email to a userId
+    if (sessionEmail && !resolvedUserId) {
+        const user = await User.findByEmail(sessionEmail);
+        if (user) {
+            resolvedUserId = user.id;
+        }
+    }
+
+    // (c) Unified Ownership Check
+    if (canAccessOrder({ sessionEmail, sessionUserId: resolvedUserId, order })) {
+        return {
+            authorized: true,
+            method: sessionUserId ? 'AUTHENTICATED_USER' : (sessionEmail ? 'RECOVERY_SESSION' : 'UNKNOWN')
+        };
+    }
+
+    throw new AuthorizationError('NOT_AUTHORIZED', 'You are not authorized to view this order.', 403);
 }
 
 module.exports = {
@@ -75,5 +132,7 @@ module.exports = {
     clearRecoverySession,
     activeRecoveryEmail,
     requireRecoverySession,
-    isAuthorizedForOrder
+    resolveTicketAccess,
+    AuthorizationError
 };
+

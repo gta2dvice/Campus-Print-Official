@@ -48,13 +48,13 @@ function stateHeader(order) {
       return {
         title: 'Payment processing',
         highlight: 'almost there',
-        subtitle: 'Your payment is being processed by Cashfree. This should only take a moment.',
+        subtitle: 'Your payment is being processed. This should only take a moment.',
         note: 'This page updates automatically.'
       };
     default: {
       const method = order.payment?.method;
       const subtitle = method === 'cashfree'
-        ? 'We are confirming your payment with Cashfree.'
+        ? 'We are confirming your payment.'
         : method === 'none'
           ? 'Pay at the counter when you collect your prints. The shop will confirm your payment.'
           : 'The shop will confirm your payment shortly.';
@@ -95,9 +95,16 @@ export default function Ticket() {
           console.error('[TICKET_LOAD_FAILED]', {
             stage: 'ticket_lookup_response',
             httpStatus: res.status,
-            code: data.code || 'TICKET_LOAD_FAILED'
+            code: data.code || 'TICKET_LOAD_FAILED',
+            message: data.message
           });
-          if (!cancelled) setTicketError(data.message || `Ticket lookup failed (${res.status}).`);
+          if (!cancelled) {
+            setTicketError(`Ticket unavailable — ${data.message || `Ticket lookup failed (${res.status})`}`);
+            // Temporarily add status for debugging as requested
+            if (process.env.NODE_ENV === 'development') {
+                setTicketError(prev => `${prev} (HTTP ${res.status} - ${data.code || 'NO_CODE'})`);
+            }
+          }
           return;
         }
         const data = await res.json();

@@ -9,7 +9,6 @@ const Shop = require('../models/Shop');
 const { upload } = require('../middleware/upload');
 const { detectPages } = require('../pageDetect');
 const fileTypes = require('../fileTypes');
-const upiQr = require('../upiQr');
 const slots = require('../slots');
 const pool = require('../db');
 const { uploadBuffer, buildObjectPath, deleteFiles, downloadFile } = require('../storage');
@@ -30,11 +29,10 @@ const {
     establishRecoverySession,
     clearRecoverySession,
     requireRecoverySession,
-    isAuthorizedForOrder
+    resolveTicketAccess,
+    AuthorizationError
 } = require('../middleware/recoveryAuth');
 
-// Pay via UPI QR: how long a generated QR stays valid before the user must refresh.
-const UPI_QR_TTL_MS = 15 * 60 * 1000;
 
 // Single-shop deployment today: new orders always go to shop id 1.
 // (Shop selection would be added here if/when multiple shops go live.)
@@ -147,10 +145,7 @@ function orderState(order, latestPayment, { processing = false } = {}) {
     } else if (paymentStatus === 'PAYMENT_PENDING') {
         // A still-pending UPI QR whose QR window lapsed is EXPIRED (the order stays
         // payable via a refreshed QR; the DB row stays 'pending').
-        if (latestPayment && latestPayment.method === 'upi_qr' && latestPayment.qr_expires_at &&
-            new Date(latestPayment.qr_expires_at).getTime() < Date.now()) {
-            paymentStatus = 'EXPIRED';
-        } else if (processing) {
+        if (processing) {
             paymentStatus = 'PAYMENT_PROCESSING';
         }
     }
@@ -204,7 +199,7 @@ async function buildTicketView(order) {
         await tryEnsureTicket(order.id);
         order = await Order.getOrderRecord(order.id);
         if (order?.ticket_status === 'READY') {
-            try { await sendTicketEmail(order.id, { source: 'ticket_view' }); } catch {}
+            try { sendTicketEmail(order.id, { source: 'ticket_view' }).catch(() => {}); } catch {}
         }
     }
     // Prefer the successful attempt; otherwise the latest one.
@@ -839,19 +834,38 @@ router.post('/ticket/:token/retry-email', ticketLimiter, async (req, res) => {
 // GET /api/orders/:id — single order ticket. Requires a recovery session (matching
 // guest_phone), this order's ticket token, or account ownership. A bare id is never enough.
 router.get('/:id', ticketLimiter, async (req, res) => {
+    const orderId = req.params.id;
     try {
-        const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            // Same response for "missing" and "not yours" so ids can't be probed.
-            return res.status(404).json({
-                message: 'This ticket link is no longer valid. Recover your order from the Orders page.',
-                code: 'ORDER_NOT_FOUND'
+        console.info(`[TICKET_TRACE] order_lookup_start | orderId: ${orderId}`);
+        const order = await Order.getOrderRecord(orderId);
+        console.info(`[TICKET_TRACE] order_lookup_success | orderId: ${orderId}`);
+
+        console.info(`[TICKET_TRACE] authorization_start | orderId: ${orderId}`);
+        await resolveTicketAccess(req, order);
+        console.info(`[TICKET_TRACE] authorization_success | orderId: ${orderId}`);
+
+        console.info(`[TICKET_TRACE] ticket_view_start | orderId: ${orderId}`);
+        const view = await buildTicketView(order);
+        console.info(`[TICKET_TRACE] ticket_view_success | orderId: ${orderId}`);
+
+        res.json(view);
+    } catch (err) {
+        console.error(`[TICKET_TRACE] ticket_lookup_failed | orderId: ${orderId}`, {
+            errorName: err.name,
+            errorMessage: err.message,
+            code: err.code,
+            stack: err.stack,
+            stage: err instanceof AuthorizationError ? 'authorization' : 'processing'
+        });
+
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
             });
         }
-        res.json(await buildTicketView(order));
-    } catch (err) {
         const safeError = safeOrderError(err);
-        console.error('[TICKET_LOAD_FAILED]', { orderId: req.params.id, code: safeError.code, message: safeError.message });
         res.status(500).json({ message: 'Unable to load this ticket right now. Please retry.', code: 'TICKET_LOAD_FAILED' });
     }
 });
@@ -860,9 +874,7 @@ router.get('/:id', ticketLimiter, async (req, res) => {
 router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found.', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
         if (order.payment_status !== 'PAID' || order.ticket_status !== 'READY') {
             return res.status(400).json({ message: 'This order is not ready for ticket delivery.', code: 'ORDER_NOT_READY' });
         }
@@ -874,6 +886,13 @@ router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
             message: result.status === 'SENT' ? 'Ticket email delivered successfully.' : 'Email delivery failed; please retry later.'
         });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[RETRY_EMAIL_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Could not retry sending email.', code: 'RETRY_EMAIL_FAILED' });
     }
@@ -886,9 +905,7 @@ router.post('/:id/retry-email', ticketLimiter, async (req, res) => {
 router.get('/:id/payment-status', pollLimiter, async (req, res) => {
     try {
         let order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         let processing = false;
         if (order.payment_status === 'PAYMENT_PENDING' && order.payment_method === 'CASHFREE' && paymentGatewayReady()) {
@@ -906,7 +923,7 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             await tryEnsureTicket(order.id);
             const updated = await Order.getOrderRecord(order.id);
             if (updated?.ticket_status === 'READY') {
-                try { await sendTicketEmail(order.id, { source: 'payment_status_poll' }); } catch {}
+                try { sendTicketEmail(order.id, { source: 'payment_status_poll' }).catch(() => {}); } catch {}
             }
         }
         order = await Order.getOrderRecord(order.id);
@@ -924,6 +941,13 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
             ...state
         });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[PAYMENT_STATUS_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to check payment status right now. Please retry.' });
     }
@@ -933,9 +957,7 @@ router.get('/:id/payment-status', pollLimiter, async (req, res) => {
 router.get('/:id/documents', documentLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         const files = await OrderFile.getFilesByOrder(order.id);
         const documents = files.map(f => ({
@@ -949,6 +971,13 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
         }));
         return res.json({ orderId: order.id, documents });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[DOCUMENTS_LIST_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to load documents right now. Please retry.' });
     }
@@ -959,9 +988,7 @@ router.get('/:id/documents', documentLimiter, async (req, res) => {
 router.get('/:id/documents/:fileId', documentLimiter, async (req, res) => {
     try {
         const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
+        await resolveTicketAccess(req, order);
 
         const file = await OrderFile.getFileById(req.params.fileId);
         // The file must belong to this exact order — blocks IDOR via a mismatched file id.
@@ -970,6 +997,13 @@ router.get('/:id/documents/:fileId', documentLimiter, async (req, res) => {
         }
         return await sendStoredFile(res, file, { download: req.query.download === '1' || req.query.download === 'true' });
     } catch (err) {
+        if (err instanceof AuthorizationError) {
+            const isAuthError = err.code === 'NOT_AUTHORIZED';
+            return res.status(isAuthError ? 404 : err.status).json({
+                message: isAuthError ? 'Order not found' : err.message,
+                code: isAuthError ? 'ORDER_NOT_FOUND' : err.code
+            });
+        }
         console.error('[DOCUMENT_FETCH_FAILED]', safeOrderError(err).message);
         return res.status(500).json({ message: 'Unable to load this document right now. Please retry.' });
     }
@@ -1082,9 +1116,22 @@ async function openCashfreeCheckout(req, { cashfreeOrderId, amount, phone, email
  * hash is stored on the order). Returns null if it doesn't match the stored hash.
  */
 async function cashfreeTicketToken(orderId) {
-    const [order, attempt] = await Promise.all([Order.getOrderRecord(orderId), Order.getLatestCashfreeAttempt(orderId)]);
-    if (!order || !attempt) return null;
-    const token = createTicketToken(attempt.gateway_order_id);
+    const order = await Order.getOrderRecord(orderId);
+    if (!order) return null;
+
+    // Find the payment attempt that actually succeeded.
+    // The ticket hash is tied to the attempt that finalized the order.
+    const [payments] = await pool.query(
+        `SELECT gateway_order_id FROM payments
+         WHERE order_id = ? AND status = 'success'
+         ORDER BY id ASC LIMIT 1`,
+        [orderId]
+    );
+
+    const successAttempt = payments[0];
+    if (!successAttempt || !successAttempt.gateway_order_id) return null;
+
+    const token = createTicketToken(successAttempt.gateway_order_id);
     return isValidTicketToken(token, order.ticket_access_token_hash) ? token : null;
 }
 
@@ -1391,94 +1438,9 @@ router.post('/payment/webhook', async (req, res) => {
     }
 });
 
-// ── UPI QR ───────────────────────────────────────────────────────────────────
 
 /** Builds the UPI deep link + QR image for a payment (amount + reference from the DB). */
-async function buildUpiQr(shop, { amount, reference, orderId }) {
-    const upiUrl = upiQr.buildUpiUri({
-        vpa: shop.payment_upi,
-        payeeName: shop.shop_name || 'Campus Print',
-        amount,
-        reference,
-        note: `Campus Print order ${orderId}`
-    });
-    return { upiUrl, qrDataUrl: await upiQr.generateQrDataUrl(upiUrl) };
-}
 
-// POST /api/orders/payment/upi-qr — Pay via UPI QR. Creates the canonical order
-// (PAYMENT_PENDING) with a unique payment reference and returns a dynamic UPI QR for
-// the DB amount. A plain UPI QR has no status API, so the order is only marked PAID
-// when a shop admin confirms the transfer (through the shared finalizer).
-router.post('/payment/upi-qr', upload.array('files', 10), async (req, res) => {
-    try {
-        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
-        if (!shop?.payment_upi) {
-            return res.status(503).json({ message: 'UPI payments are not set up. Please choose another method.', code: 'UPI_NOT_CONFIGURED' });
-        }
-
-        const validated = await validateAndPriceSubmission(req, res);
-        if (!validated) return undefined; // response already sent
-        const { data, resolved, amount } = validated;
-
-        const ticketToken = crypto.randomBytes(32).toString('hex');
-        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
-        const order = await createOrderWithFiles(req, {
-            data,
-            resolved,
-            payment: { method: 'upi_qr', qrExpiresAt, referenceFor: upiQr.generatePaymentReference },
-            ticketTokenHash: hashTicketToken(ticketToken)
-        });
-        const { upiUrl, qrDataUrl } = await buildUpiQr(shop, { amount, reference: order.paymentReference, orderId: order.id });
-        logPaymentEvent('PAYMENT_INITIATED', { orderId: order.id, paymentId: order.paymentId, method: 'upi_qr', amount });
-
-        return res.status(201).json({
-            success: true,
-            id: order.id,
-            orderReference: `#${order.id}`,
-            amount,
-            paymentReference: order.paymentReference,
-            qrDataUrl,
-            upiUrl,
-            expiresAt: qrExpiresAt.toISOString(),
-            ticketToken
-        });
-    } catch (err) {
-        const safe = safeOrderError(err);
-        console.error('[UPI_QR_CREATE_FAILED]', safe.message);
-        return res.status(500).json({ message: 'Could not start UPI payment. Please retry.', code: safe.code });
-    }
-});
-
-// POST /api/orders/payment/upi-qr/:id/refresh — regenerate the QR for an existing unpaid
-// order (same order + reference; never creates a new order). Authorized by ticket token / session.
-router.post('/payment/upi-qr/:id/refresh', ticketLimiter, async (req, res) => {
-    try {
-        const order = await Order.getOrderRecord(req.params.id);
-        if (!order || !isAuthorizedForOrder(req, order)) {
-            return res.status(404).json({ message: 'Order not found', code: 'ORDER_NOT_FOUND' });
-        }
-        if (order.payment_status === 'PAID') {
-            return res.status(409).json({ message: 'This order is already paid.', code: 'ALREADY_PAID' });
-        }
-        const payment = await Payment.findByOrderId(order.id);
-        if (!payment || payment.method !== 'upi_qr' || payment.status !== 'pending') {
-            return res.status(400).json({ message: 'No pending UPI payment for this order.' });
-        }
-        const shop = await Shop.getShopById(DEFAULT_SHOP_ID);
-        if (!shop?.payment_upi) {
-            return res.status(503).json({ message: 'UPI payments are not set up.', code: 'UPI_NOT_CONFIGURED' });
-        }
-
-        const qrExpiresAt = new Date(Date.now() + UPI_QR_TTL_MS);
-        await Payment.refreshQrExpiry(order.id, qrExpiresAt);
-        const amount = Number(payment.amount);
-        const { upiUrl, qrDataUrl } = await buildUpiQr(shop, { amount, reference: payment.payment_reference, orderId: order.id });
-        return res.json({ success: true, amount, paymentReference: payment.payment_reference, qrDataUrl, upiUrl, expiresAt: qrExpiresAt.toISOString() });
-    } catch (err) {
-        console.error('[UPI_QR_REFRESH_FAILED]', safeOrderError(err).message);
-        return res.status(500).json({ message: 'Could not refresh the QR. Please retry.' });
-    }
-});
 
 // ── Manual / dev-only methods ────────────────────────────────────────────────
 
@@ -1539,7 +1501,6 @@ router.post('/payment/simulate', upload.array('files', 10), async (req, res) => 
         res.status(500).json({ message: 'Server Error' });
     }
 });
-
 module.exports = router;
 // Exposed for tests.
 module.exports.orderState = orderState;

@@ -1,10 +1,4 @@
-/** Renders the horizontal ripped-paper background used across the app. */
-export default function PageBackground({ className = '' }) {
-  return (
-    <div
-      className={`page-background ${className}`.trim()}
-      id="page-background"
-      aria-hidden="true"
-    />
-  );
+/** Renders the background used on Home/About/Select-Location/Ticket. */
+export default function PageBackground() {
+  return <div className="page-background" id="page-background" />;
 }
