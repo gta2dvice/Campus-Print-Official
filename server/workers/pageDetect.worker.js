@@ -2,6 +2,12 @@ const { parentPort } = require('worker_threads');
 const { PDFParse } = require('pdf-parse');
 const JSZip = require('jszip');
 const { resolveFileType } = require('../fileTypes');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const util = require('util');
+const execFileAsync = util.promisify(execFile);
 
 const DETECT_TIMEOUT_MS = 15000;
 
@@ -53,19 +59,61 @@ async function detectPdfPages(buffer) {
         return { pages: binaryCount, estimated: false };
     }
 
-    return { pages: 1, estimated: true };
+    return { pages: null, estimated: true, requiresConfirmation: true };
 }
 
-async function detectDocxPages(buffer) {
-    const zip = await JSZip.loadAsync(buffer);
-    const appXmlFile = zip.file('docProps/app.xml');
-    if (!appXmlFile) return { pages: 1, estimated: true };
-    const xml = await appXmlFile.async('string');
-    const match = /<Pages>(\d+)<\/Pages>/i.exec(xml);
-    if (!match) return { pages: 1, estimated: true };
-    const pages = parseInt(match[1], 10);
-    if (!pages || pages < 1) return { pages: 1, estimated: true };
-    return { pages, estimated: false };
+/**
+ * Attempts to render DOCX to PDF using an available rendering engine (e.g. LibreOffice or configured tool).
+ * Returns PDF buffer if successful, or null if rendering is unavailable or fails.
+ */
+async function renderDocxToPdf(buffer) {
+    const cmd = process.env.DOCX_RENDERER_CMD || 'soffice';
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docx-render-'));
+    const inputPath = path.join(tmpDir, 'input.docx');
+    const outputPath = path.join(tmpDir, 'input.pdf');
+
+    try {
+        fs.writeFileSync(inputPath, buffer);
+        await withTimeout(
+            execFileAsync(cmd, ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, inputPath]),
+            DETECT_TIMEOUT_MS
+        );
+        if (fs.existsSync(outputPath)) {
+            return fs.readFileSync(outputPath);
+        }
+    } catch {
+        // Converter command not found in environment or conversion failed
+    } finally {
+        try {
+            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+            if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+            fs.rmdirSync(tmpDir);
+        } catch {}
+    }
+    return null;
+}
+
+/**
+ * Detects pages for DOCX files.
+ * Uses exact PDF rendering if a rendering engine is available in the deployment environment.
+ * If exact rendering is unavailable, does NOT guess by counting paragraphs or silently fall back to 1.
+ * Instead, returns pages: null with estimated: true and requiresConfirmation: true.
+ */
+async function detectDocxPages(buffer, customRenderer = null) {
+    try {
+        const renderedPdf = customRenderer ? await customRenderer(buffer) : await renderDocxToPdf(buffer);
+        if (renderedPdf) {
+            const pdfResult = await detectPdfPages(renderedPdf);
+            if (pdfResult && typeof pdfResult.pages === 'number' && pdfResult.pages >= 1 && !pdfResult.estimated) {
+                return { pages: pdfResult.pages, estimated: false };
+            }
+        }
+    } catch {
+        // Rendering failed
+    }
+
+    // Exact rendering unavailable — prevent incorrect checkout pricing and request confirmation
+    return { pages: null, estimated: true, requiresConfirmation: true };
 }
 
 async function detectPptxPages(buffer) {
@@ -74,10 +122,10 @@ async function detectPptxPages(buffer) {
         name => /^ppt\/slides\/slide\d+\.xml$/i.test(name)
     ).length;
     if (slideCount >= 1) return { pages: slideCount, estimated: false };
-    return { pages: 1, estimated: true };
+    return { pages: null, estimated: true, requiresConfirmation: true };
 }
 
-module.exports = async ({ buffer, originalname, mimetype }) => {
+const workerFunction = async ({ buffer, originalname, mimetype }) => {
     const resolved = resolveFileType(originalname, mimetype);
     const key = resolved ? resolved.key : null;
     try {
@@ -92,10 +140,16 @@ module.exports = async ({ buffer, originalname, mimetype }) => {
             case 'png':
                 return { pages: 1, estimated: false };
             default:
-                return { pages: 1, estimated: true };
+                return { pages: null, estimated: true, requiresConfirmation: true };
         }
     } catch (err) {
         console.error(`Worker page detection failed for ${originalname}:`, err.message);
-        return { pages: 1, estimated: true };
+        return { pages: null, estimated: true, requiresConfirmation: true };
     }
 };
+
+workerFunction.detectDocxPages = detectDocxPages;
+workerFunction.detectPdfPages = detectPdfPages;
+workerFunction.renderDocxToPdf = renderDocxToPdf;
+
+module.exports = workerFunction;

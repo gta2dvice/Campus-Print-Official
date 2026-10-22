@@ -145,7 +145,10 @@ function orderState(order, latestPayment, { processing = false } = {}) {
     } else if (paymentStatus === 'PAYMENT_PENDING') {
         // A still-pending UPI QR whose QR window lapsed is EXPIRED (the order stays
         // payable via a refreshed QR; the DB row stays 'pending').
-        if (processing) {
+        if (latestPayment && latestPayment.method === 'upi_qr' && latestPayment.qr_expires_at &&
+            new Date(latestPayment.qr_expires_at).getTime() < Date.now()) {
+            paymentStatus = 'EXPIRED';
+        } else if (processing) {
             paymentStatus = 'PAYMENT_PROCESSING';
         }
     }
@@ -279,12 +282,17 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
         const det = await detectPages(file);
         const setting = settings[idx] || {};
         let pages;
-        if (!det.estimated && det.pages >= 1) {
+        if (!det.estimated && typeof det.pages === 'number' && det.pages >= 1) {
             // Reliable server-side count — ignore any client-sent page value.
             pages = det.pages;
         } else {
+            const isConfirmed = setting.pagesConfirmed === true || setting.pagesConfirmed === 'true' || setting.confirmed === true;
             const declared = parseInt(setting.pages, 10);
-            pages = Math.max(1, Math.min(MAX_DECLARED_PAGES, Number.isFinite(declared) ? declared : 1));
+            if (!isConfirmed || !Number.isFinite(declared) || declared < 1) {
+                const e = new Error(`Please provide a confirmed page count for ${file.originalname}.`);
+                e.code = 'PAGE_COUNT_REQUIRED'; e.httpStatus = 400; throw e;
+            }
+            pages = Math.min(MAX_DECLARED_PAGES, declared);
         }
 
         // Optional PDF page range (e.g. "33-55"). It is validated against the REAL
@@ -412,8 +420,9 @@ async function validateAndPriceSubmission(req, res) {
 
     let resolved;
     let amount;
+    let priced;
     try {
-        const priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
+        priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
             collectionLocationId: data.collectionLocationId,
             classroomDelivery: req.body.classroomDelivery,
             // Preserve compatibility with old clients; per-file settings are canonical.
@@ -429,7 +438,19 @@ async function validateAndPriceSubmission(req, res) {
     }
     if (!amount || amount <= 0) { res.status(400).json({ message: 'Invalid order amount' }); return null; }
 
+    if (req.body.totalPrice !== undefined && req.body.totalPrice !== null && req.body.totalPrice !== '') {
+        const declaredTotal = Number(req.body.totalPrice);
+        if (Number.isFinite(declaredTotal) && Math.abs(declaredTotal - amount) > 0.01) {
+            res.status(400).json({
+                message: 'Order total mismatch. Please refresh and review your order charges.',
+                code: 'PRICE_MISMATCH'
+            });
+            return null;
+        }
+    }
+
     data.totalPrice = amount;
+    data.totalPages = data.charges ? data.charges.printedPages : 0;
     data.fileCount = resolved.length;
     data.guestFullName = fullName;
     data.guestEmail = normalizedEmail || null;
@@ -1022,9 +1043,9 @@ router.post('/detect-pages', detectUpload.array('files', 10), async (req, res) =
             if (!type || !fileTypes.validateMagic(f.buffer, type.family)) {
                 return { name: f.originalname, fileType: null, mimeType: f.mimetype, pages: null, estimated: true, unsupported: true };
             }
-            const { pages, estimated } = await detectPages(f);
+            const { pages, estimated, requiresConfirmation } = await detectPages(f);
             // For estimated types the UI shows an editable page-count field.
-            return { name: f.originalname, fileType: type.label, mimeType: type.mime, pages, estimated };
+            return { name: f.originalname, fileType: type.label, mimeType: type.mime, pages, estimated, requiresConfirmation: !!requiresConfirmation };
         }));
         res.json({ files: results });
     } catch (err) {
@@ -1505,3 +1526,5 @@ module.exports = router;
 // Exposed for tests.
 module.exports.orderState = orderState;
 module.exports.reconcileCashfreePayment = reconcileCashfreePayment;
+module.exports.resolveAndPriceFiles = resolveAndPriceFiles;
+module.exports.validateAndPriceSubmission = validateAndPriceSubmission;

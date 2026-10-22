@@ -57,6 +57,7 @@ describe('shared payment finalizer', () => {
 
     it('UPI QR (admin-confirmed) success → one PAID order + one ticket', async () => {
         const order = db.addOrder({ id: 1051, total_price: 35 });
+        const payment = db.addPayment({ order_id: 1051, method: 'upi_qr', amount: 35 });
 
         const result = await finalize(order, payment);
 
@@ -78,6 +79,7 @@ describe('shared payment finalizer', () => {
 
     it('the same order finalized again later returns the existing ticket', async () => {
         const order = db.addOrder({ id: 8, total_price: 20 });
+        const payment = db.addPayment({ order_id: 8, method: 'upi_qr', amount: 20 });
         await finalize(order, payment);
         const again = await finalize(order, payment);
 
@@ -98,6 +100,7 @@ describe('shared payment finalizer', () => {
 
     it('rejects a payment row whose stored amount differs from the order', async () => {
         const order = db.addOrder({ id: 10, total_price: 50 });
+        const payment = db.addPayment({ order_id: 10, method: 'upi_qr', amount: 5 });
         await assert.rejects(finalize(order, payment, { amount: 5 }), { code: 'PAYMENT_AMOUNT_MISMATCH' });
     });
 
@@ -110,6 +113,7 @@ describe('shared payment finalizer', () => {
     it('rejects a method mismatch (e.g. an admin trying to settle a Cashfree payment as UPI)', async () => {
         const order = db.addOrder({ id: 12, total_price: 50 });
         const payment = db.addPayment({ order_id: 12, method: 'cashfree', amount: 50 });
+        await assert.rejects(finalize(order, payment, { method: 'upi_qr' }), { code: 'PAYMENT_METHOD_MISMATCH' });
     });
 
     it('rejects a payment that belongs to another order', async () => {
@@ -380,6 +384,7 @@ describe('order state shown to students', () => {
         assert.equal(orderState({ payment_status: 'PAID', ticket_status: 'GENERATION_PENDING' }).state, 'TICKET_GENERATION_PENDING');
         assert.equal(orderState({ payment_status: 'PAYMENT_FAILED', ticket_status: 'PENDING_PAYMENT' }).state, 'PAYMENT_FAILED');
         assert.equal(orderState({ payment_status: 'PAYMENT_PENDING' }, null, { processing: true }).state, 'PAYMENT_PROCESSING');
+        const expired = { method: 'upi_qr', status: 'pending', qr_expires_at: new Date(Date.now() - 1000) };
         assert.equal(orderState({ payment_status: 'PAYMENT_PENDING' }, expired).state, 'EXPIRED');
         assert.equal(orderState({ payment_status: 'PAID', ticket_status: 'READY' }, { status: 'refunded' }).paymentStatus, 'REFUNDED');
     });
