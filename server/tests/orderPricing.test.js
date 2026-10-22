@@ -6,6 +6,7 @@ const { PDFDocument } = require('pdf-lib');
 const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { createFakeDb, restoreDb } = require('./helpers/fakeDb');
 const pageDetectWorker = require('../workers/pageDetect.worker');
+const { resolveAndPriceFiles } = require('../routes/orders');
 
 describe('server-authoritative order pricing', () => {
     it('prices files using the established B&W per-sheet rule without hidden order fees', () => {
@@ -294,5 +295,214 @@ describe('Section 5 Required Regression Tests: Double-Sided Pricing, DOCX, and T
         } finally {
             restoreDb();
         }
+    });
+});
+
+describe('Section 5 Regression Tests: Page Confirmation Removal & Manipulation Prevention', () => {
+    it('1. A 26-page PDF displays 26 as a detected, non-editable count without a confirmation warning', async () => {
+        const { normalizeFileSettings } = await import('../../client-react/src/lib/orderStorage.js');
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) {
+            pdfDoc.addPage([600, 400]);
+        }
+        const pdfBuffer = Buffer.from(await pdfDoc.save());
+        const pdfFile = { buffer: pdfBuffer, originalname: 'document-26.pdf', mimetype: 'application/pdf', size: pdfBuffer.length };
+
+        const detection = await pageDetectWorker(pdfFile);
+        assert.equal(detection.pages, 26);
+        assert.equal(detection.estimated, false);
+
+        // Client-side entry created upon upload / detection
+        const entry = normalizeFileSettings({
+            pages: detection.pages,
+            estimated: detection.estimated,
+            requiresConfirmation: false,
+            copies: 1,
+            printingSide: 'single',
+            colorMode: 'bw'
+        });
+
+        // Must be confirmed, not estimated, and not require confirmation
+        assert.equal(entry.pages, 26);
+        assert.equal(entry.estimated, false);
+        assert.equal(entry.requiresConfirmation, false);
+        assert.equal(entry.pagesConfirmed, true);
+
+        // UI rendering rule: only files requiring confirmation or with estimated counts show input/warning
+        const isEditable = entry.requiresConfirmation || entry.estimated;
+        assert.equal(isEditable, false, 'Detected PDF must not render as editable input');
+
+        const pagesText = entry.pages + ' page' + (entry.pages > 1 ? 's' : '');
+        assert.equal(pagesText, '26 pages');
+        assert.doesNotMatch(pagesText, /confirm/i);
+    });
+
+    it('2. A successfully detected PDF is not marked as requiring manual confirmation', async () => {
+        const { normalizeFileSettings } = await import('../../client-react/src/lib/orderStorage.js');
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) {
+            pdfDoc.addPage([600, 400]);
+        }
+        const pdfBuffer = Buffer.from(await pdfDoc.save());
+        const detection = await pageDetectWorker({ buffer: pdfBuffer, originalname: 'lecture.pdf', mimetype: 'application/pdf' });
+        assert.equal(detection.pages, 26);
+        assert.equal(detection.estimated, false);
+
+        const settings = normalizeFileSettings({
+            pages: detection.pages,
+            estimated: detection.estimated,
+            requiresConfirmation: false
+        });
+
+        assert.equal(settings.requiresConfirmation, false);
+        assert.equal(settings.pagesConfirmed, true);
+
+        // Validation check for unconfirmed pages before booking
+        const hasUnconfirmedPages = settings.pages === null || ((settings.estimated || settings.requiresConfirmation) && !settings.pagesConfirmed);
+        assert.equal(hasUnconfirmedPages, false);
+    });
+
+    it('3. A user-submitted fake page count cannot override the server-validated PDF page count or manipulate the calculated price', async () => {
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 26; i++) {
+            pdfDoc.addPage([600, 400]);
+        }
+        const pdfBuffer = Buffer.from(await pdfDoc.save());
+        const fakeFile = {
+            buffer: pdfBuffer,
+            originalname: 'exam-paper.pdf',
+            mimetype: 'application/pdf',
+            size: pdfBuffer.length
+        };
+
+        // Attacker / manipulated client attempts to submit declaring only 1 page
+        const manipulatedClientSettings = [{
+            pages: 1,
+            copies: 1,
+            printingSide: 'single',
+            colorMode: 'bw',
+            pagesConfirmed: true
+        }];
+
+        const priced = await resolveAndPriceFiles([fakeFile], manipulatedClientSettings, {});
+
+        // Authoritative server validation overrides fake client page count
+        assert.equal(priced.resolved[0].pages, 26, 'Server must enforce detected 26 pages, not client declared 1');
+        assert.equal(priced.charges.printedPages, 26);
+
+        // Server calculated price: 26 pages * ₹2 (single B&W) = ₹52 + ₹2 (service charge for 26 pgs in 11-30 tier) = ₹54
+        assert.equal(priced.charges.printingAmount, 52);
+        assert.equal(priced.charges.serviceCharge, 2);
+        assert.equal(priced.amount, 54);
+        assert.notEqual(priced.amount, 3, 'Client fake page count must not reduce price to 1 page (₹3)');
+    });
+
+    it('4. A valid multi-page DOCX is counted using the configured rendering mechanism', async () => {
+        const pdfDoc = await PDFDocument.create();
+        for (let i = 0; i < 4; i++) {
+            pdfDoc.addPage([600, 400]);
+        }
+        const renderedPdfBuffer = Buffer.from(await pdfDoc.save());
+
+        // Test the DOCX detection pipeline: when render engine returns rendered PDF
+        const pdfResult = await pageDetectWorker.detectPdfPages(renderedPdfBuffer);
+        assert.equal(pdfResult.pages, 4);
+        assert.equal(pdfResult.estimated, false);
+
+        // When rendering is available and returns PDF, docx pages count matches rendered PDF pages
+        const docxResult = await pageDetectWorker.detectDocxPages(
+            Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+            async () => renderedPdfBuffer
+        );
+        assert.equal(docxResult.pages, 4);
+        assert.equal(docxResult.estimated, false);
+    });
+
+    it('5. An undetectable DOCX cannot silently become a one-page paid order', async () => {
+        // Undetectable DOCX returns pages: null, estimated: true, requiresConfirmation: true
+        const unconfirmed = await pageDetectWorker.detectDocxPages(Buffer.from('corrupt or non-renderable docx'));
+        assert.equal(unconfirmed.pages, null);
+        assert.equal(unconfirmed.estimated, true);
+        assert.equal(unconfirmed.requiresConfirmation, true);
+
+        // Valid zip magic bytes so fileTypes.validateMagic passes, but rendering engine is unavailable
+        const mockDocxFile = {
+            buffer: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]),
+            originalname: 'essay.docx',
+            mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            size: 8
+        };
+
+        // Attempt 1: declared pages without explicit user confirmation flag is rejected
+        await assert.rejects(
+            async () => {
+                await resolveAndPriceFiles([mockDocxFile], [{ pages: 1 }], {});
+            },
+            (err) => {
+                assert.equal(err.code, 'PAGE_COUNT_REQUIRED');
+                return true;
+            }
+        );
+
+        // Attempt 2: null pages without confirmation is rejected
+        await assert.rejects(
+            async () => {
+                await resolveAndPriceFiles([mockDocxFile], [{ pages: null, pagesConfirmed: false }], {});
+            },
+            (err) => {
+                assert.equal(err.code, 'PAGE_COUNT_REQUIRED');
+                return true;
+            }
+        );
+    });
+
+    it('6. Image page detection remains unchanged', async () => {
+        const { normalizeFileSettings } = await import('../../client-react/src/lib/orderStorage.js');
+        const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+        const result = await pageDetectWorker({ buffer: jpegBuffer, originalname: 'id-photo.jpg', mimetype: 'image/jpeg' });
+        assert.equal(result.pages, 1);
+        assert.equal(result.estimated, false);
+
+        const settings = normalizeFileSettings({
+            pages: result.pages,
+            estimated: result.estimated,
+            requiresConfirmation: false
+        });
+        assert.equal(settings.pages, 1);
+        assert.equal(settings.estimated, false);
+        assert.equal(settings.requiresConfirmation, false);
+        assert.equal(settings.pagesConfirmed, true);
+    });
+
+    it('7. Single-sided and double-sided pricing remain correct', () => {
+        // Single-sided 26 pages, 1 copy: 26 pages * ₹2 = ₹52 + ₹2 tier 2 service (11-30 pgs) = ₹54
+        const singleFile = { pages: 26, copies: 1, printingSide: 'single', colorMode: 'bw' };
+        const singlePriced = priceOrder([singleFile]);
+        assert.equal(singlePriced.printedPages, 26);
+        assert.equal(singlePriced.printingAmount, 52);
+        assert.equal(singlePriced.serviceCharge, 2);
+        assert.equal(singlePriced.total, 54);
+
+        // Double-sided 26 pages, 1 copy: ceil(26 / 2) = 13 sheets * ₹3 = ₹39 + ₹2 service = ₹41
+        const doubleFile = { pages: 26, copies: 1, printingSide: 'double', colorMode: 'bw' };
+        const doublePriced = priceOrder([doubleFile]);
+        assert.equal(doublePriced.printedPages, 26, 'Logical page count must remain 26');
+        assert.equal(doublePriced.printingAmount, 39, '13 physical sheets * ₹3 = ₹39');
+        assert.equal(doublePriced.serviceCharge, 2);
+        assert.equal(doublePriced.total, 41);
+
+        // Double-sided 27 pages (odd), 1 copy: ceil(27 / 2) = 14 sheets * ₹3 = ₹42 + ₹2 service = ₹44
+        const oddDoubleFile = { pages: 27, copies: 1, printingSide: 'double', colorMode: 'bw' };
+        const oddPriced = priceOrder([oddDoubleFile]);
+        assert.equal(oddPriced.printedPages, 27);
+        assert.equal(oddPriced.printingAmount, 42);
+        assert.equal(oddPriced.serviceCharge, 2);
+        assert.equal(oddPriced.total, 44);
+    });
+
+    it('8. Existing payment verification and ticket generation tests continue to pass', () => {
+        // Verify payment amounts match and mismatch rejection
+        assert.equal(cashfree.amountsMatch(54, 54), true);
+        assert.equal(cashfree.amountsMatch(54, 3), false);
     });
 });

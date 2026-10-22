@@ -286,8 +286,9 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             // Reliable server-side count — ignore any client-sent page value.
             pages = det.pages;
         } else {
+            const isConfirmed = setting.pagesConfirmed === true || setting.pagesConfirmed === 'true' || setting.confirmed === true;
             const declared = parseInt(setting.pages, 10);
-            if (!Number.isFinite(declared) || declared < 1) {
+            if (!isConfirmed || !Number.isFinite(declared) || declared < 1) {
                 const e = new Error(`Please provide a confirmed page count for ${file.originalname}.`);
                 e.code = 'PAGE_COUNT_REQUIRED'; e.httpStatus = 400; throw e;
             }
@@ -437,6 +438,7 @@ async function validateAndPriceSubmission(req, res) {
     if (!amount || amount <= 0) { res.status(400).json({ message: 'Invalid order amount' }); return null; }
 
     data.totalPrice = amount;
+    data.totalPages = priced.charges.printedPages;
     data.fileCount = resolved.length;
     data.guestFullName = fullName;
     data.guestEmail = normalizedEmail || null;
@@ -1512,3 +1514,5 @@ module.exports = router;
 // Exposed for tests.
 module.exports.orderState = orderState;
 module.exports.reconcileCashfreePayment = reconcileCashfreePayment;
+module.exports.resolveAndPriceFiles = resolveAndPriceFiles;
+module.exports.validateAndPriceSubmission = validateAndPriceSubmission;

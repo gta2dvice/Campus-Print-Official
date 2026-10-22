@@ -225,14 +225,14 @@ export default function Home() {
           if (idx === -1) return entry;
           const result = results[idx];
           if (result && typeof result.pages === 'number' && result.pages >= 1) {
-            return { ...entry, pages: result.pages, estimated: !!result.estimated };
+            return { ...entry, pages: result.pages, estimated: false };
           }
-          return { ...entry, pages: entry.pages || 1, estimated: true };
+          return { ...entry, pages: null, estimated: true };
         }));
       }
     } catch {
       setFiles((prev) => prev.map((entry) =>
-        needDetection.some((n) => n.key === entry.key) ? { ...entry, pages: entry.pages || 1, estimated: true } : entry
+        needDetection.some((n) => n.key === entry.key) ? { ...entry, pages: null, estimated: true } : entry
       ));
     }
   }

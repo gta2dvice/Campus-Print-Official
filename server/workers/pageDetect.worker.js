@@ -59,7 +59,7 @@ async function detectPdfPages(buffer) {
         return { pages: binaryCount, estimated: false };
     }
 
-    return { pages: 1, estimated: true };
+    return { pages: null, estimated: true, requiresConfirmation: true };
 }
 
 /**
@@ -99,9 +99,9 @@ async function renderDocxToPdf(buffer) {
  * If exact rendering is unavailable, does NOT guess by counting paragraphs or silently fall back to 1.
  * Instead, returns pages: null with estimated: true and requiresConfirmation: true.
  */
-async function detectDocxPages(buffer) {
+async function detectDocxPages(buffer, customRenderer = null) {
     try {
-        const renderedPdf = await renderDocxToPdf(buffer);
+        const renderedPdf = customRenderer ? await customRenderer(buffer) : await renderDocxToPdf(buffer);
         if (renderedPdf) {
             const pdfResult = await detectPdfPages(renderedPdf);
             if (pdfResult && typeof pdfResult.pages === 'number' && pdfResult.pages >= 1 && !pdfResult.estimated) {
@@ -122,7 +122,7 @@ async function detectPptxPages(buffer) {
         name => /^ppt\/slides\/slide\d+\.xml$/i.test(name)
     ).length;
     if (slideCount >= 1) return { pages: slideCount, estimated: false };
-    return { pages: 1, estimated: true };
+    return { pages: null, estimated: true, requiresConfirmation: true };
 }
 
 const workerFunction = async ({ buffer, originalname, mimetype }) => {
@@ -140,11 +140,11 @@ const workerFunction = async ({ buffer, originalname, mimetype }) => {
             case 'png':
                 return { pages: 1, estimated: false };
             default:
-                return { pages: 1, estimated: true };
+                return { pages: null, estimated: true, requiresConfirmation: true };
         }
     } catch (err) {
         console.error(`Worker page detection failed for ${originalname}:`, err.message);
-        return { pages: 1, estimated: true };
+        return { pages: null, estimated: true, requiresConfirmation: true };
     }
 };
 
