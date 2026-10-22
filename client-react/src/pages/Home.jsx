@@ -569,8 +569,8 @@ export default function Home() {
               </div>
               <div className="location-map-card">
                 <img
-                  src="/thumbs-up-cat.jpg"
-                  alt="Thumbs up cat"
+                  src="/a_clean_high_resolution_isolated_png_style_carto.png"
+                  alt="find up image"
                   style={{
                     width: '100%',
                     height: '100%',
