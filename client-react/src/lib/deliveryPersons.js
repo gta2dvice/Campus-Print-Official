@@ -1,37 +1,32 @@
 // Delivery contacts shown on paid collection tickets — the ONE place to edit them.
-//
-// Replace each ADD_... placeholder with the real name and phone number.
-// Phone: a 10-digit Indian mobile number, e.g. "9876543210" ("+91 98765 43210" also works).
-// Until a real name AND a valid phone are entered, the ticket shows
-// "Delivery contact unavailable" instead of a placeholder.
 import slotMatrix from './slotMatrix.json';
 
 export const DELIVERY_PERSONS = {
-  // Delivery Person 1 — Academic Block (incl. classroom delivery) and Red Canteen
+  // Academic Block (incl. classroom delivery)
   academicBlock: {
-    name: 'Tejasv',
-    phone: 'ADD_ACADEMIC_BLOCK_DELIVERY_PHONE',
+    name: 'Tejasv Tyagi',
+    phone: '8287925992',
   },
 
-  // Delivery Person 2 — Main Gate
+  // Main Gate
   mainGate: {
-    name: 'Atishay',
-    phone: 'ADD_MAIN_GATE_DELIVERY_PHONE',
+    name: 'Atishay Jain',
+    phone: '9411840651',
   },
 
-  // Delivery Person 3 — Hostel Gate
-  hostelGate: {
-    name: 'Ankit',
-    phone: 'ADD_HOSTEL_GATE_DELIVERY_PHONE',
+  // Red Canteen and Hostel Gate
+  hostelAndCanteen: {
+    name: 'Ankit Chaurasia',
+    phone: '8076756723',
   },
 };
 
 // Keys are the location ids from lib/slotMatrix.json (stored on each order as collection_location_id).
 export const LOCATION_DELIVERY_MAP = {
   'academic-block': 'academicBlock',
-  'red-canteen': 'academicBlock',
+  'red-canteen': 'hostelAndCanteen',
   'main-gate': 'mainGate',
-  'hostel-gate': 'hostelGate',
+  'hostel-gate': 'hostelAndCanteen',
 };
 
 // 10-digit Indian mobile (accepts +91 / 0 prefixes and spaces), or null if invalid.
@@ -49,7 +44,11 @@ function normalizeIndianMobile(raw) {
  * Falls back to matching the location name for orders saved without an id.
  */
 export function getDeliveryContact(locationId, locationName) {
-  const id = locationId || slotMatrix.locations.find((loc) => loc.name === locationName)?.id;
+  const normalizedName = (locationName || '').trim().toLowerCase();
+  const id = locationId || slotMatrix.locations.find((loc) => 
+    loc.name.toLowerCase() === normalizedName ||
+    loc.id.toLowerCase() === normalizedName
+  )?.id;
   const person = DELIVERY_PERSONS[LOCATION_DELIVERY_MAP[id]];
   if (!person) return null;
 
