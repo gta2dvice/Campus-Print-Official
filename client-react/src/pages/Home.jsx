@@ -287,7 +287,7 @@ export default function Home() {
     const printingSubtotal = files.reduce((sum, f) => {
       const pages = printablePages(f);
       const copies = f?.copies || 1;
-      if (f?.colorMode === 'color') return sum + pages * copies * 5;
+      if (f?.colorMode === 'color') return sum + pages * copies * 18;
       if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
       return sum + pages * copies * 2;
     }, 0);
@@ -319,7 +319,7 @@ export default function Home() {
     const pages = printablePages(f);
     const copies = f?.copies || 1;
     if (pages === 0) return 0;
-    if (f?.colorMode === 'color') return pages * copies * 5;
+    if (f?.colorMode === 'color') return pages * copies * 18;
     if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
     return pages * copies * 2;
   }
@@ -629,7 +629,7 @@ export default function Home() {
                   <h3 className="pc-title">Printing Color</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Black &amp; White</span><span className="pc-info-price">₹2 / page</span></div>
-                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹5 / page</span></div>
+                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹18 / page</span></div>
                   </div>
                 </div>
 
@@ -640,7 +640,7 @@ export default function Home() {
                     <div className="pc-info-row"><span>Paper size</span><span className="pc-info-price">A4 only</span></div>
                     <div className="pc-info-row"><span>Single-sided</span><span className="pc-info-price">₹2 / page</span></div>
                     <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / sheet</span></div>
-                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹5 / page</span></div>
+                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹18 / page</span></div>
                   </div>
                 </div>
 
@@ -856,7 +856,7 @@ export default function Home() {
                                   </span>
                                   <div className="home-option-text">
                                     <span className="home-option-name">Color</span>
-                                    <span className="home-option-price">₹5/page</span>
+                                    <span className="home-option-price">₹18/page</span>
                                   </div>
                                 </button>
                               </div>

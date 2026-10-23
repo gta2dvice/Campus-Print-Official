@@ -138,7 +138,7 @@ function isSlotPast(time) {
 function filePrintingCost(f) {
   const pages = printablePages(f);
   const copies = f?.copies || 1;
-  if (f?.colorMode === 'color') return pages * copies * 5;
+  if (f?.colorMode === 'color') return pages * copies * 18;
   if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
   return pages * copies * 2;
 }
@@ -1462,7 +1462,7 @@ export default function NewOrder() {
                                     </span>
                                     <div className="cp-option-text">
                                       <span className="cp-option-name">Color</span>
-                                      <span className="cp-option-price">₹5/page</span>
+                                      <span className="cp-option-price">₹18/page</span>
                                     </div>
                                   </button>
                                 </div>
