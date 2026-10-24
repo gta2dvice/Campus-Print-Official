@@ -278,7 +278,7 @@ export default function Home() {
     const printingSubtotal = files.reduce((sum, f) => {
       const pages = printablePages(f);
       const copies = f?.copies || 1;
-      if (f?.colorMode === 'color') return sum + pages * copies * 5;
+      if (f?.colorMode === 'color') return sum + pages * copies * 18;
       if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
       return sum + pages * copies * 2;
     }, 0);
@@ -310,7 +310,7 @@ export default function Home() {
     const pages = printablePages(f);
     const copies = f?.copies || 1;
     if (pages === 0) return 0;
-    if (f?.colorMode === 'color') return pages * copies * 5;
+    if (f?.colorMode === 'color') return pages * copies * 18;
     if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
     return pages * copies * 2;
   }
@@ -551,8 +551,8 @@ export default function Home() {
               </div>
               <div className="location-map-card">
                 <img
-                  src="/thumbs-up-cat.jpg"
-                  alt="Thumbs up cat"
+                  src="/a_clean_high_resolution_isolated_png_style_carto.png"
+                  alt="find up image"
                   style={{
                     width: '100%',
                     height: '100%',
@@ -585,7 +585,7 @@ export default function Home() {
                   <h3 className="pc-title">Printing Color</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Black &amp; White</span><span className="pc-info-price">₹2 / page</span></div>
-                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹5 / page</span></div>
+                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹18 / page</span></div>
                   </div>
                 </div>
 
@@ -595,7 +595,7 @@ export default function Home() {
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Single-sided</span><span className="pc-info-price">₹2 / page</span></div>
                     <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / sheet</span></div>
-                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹5 / page</span></div>
+                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹18 / page</span></div>
                   </div>
                 </div>
 
@@ -685,7 +685,15 @@ export default function Home() {
                     Choose PDFs
                   </button>
                   <p className="home-upload-limit-note">
-                    {SUPPORTED_LABEL} · Up to {formatSize(MAX_FILE_BYTES)} per file
+                    {SUPPORTED_LABEL}
+                    <span className="upload-rec-tag">(PDF recommended)</span>
+                    <span className="upload-info-tooltip-wrap" tabIndex="0" role="note" aria-label="Format recommendation details">
+                      <span className="upload-info-icon" aria-hidden="true">i</span>
+                      <span className="upload-info-tooltip-bubble" role="tooltip">
+                        DOC/DOCX formatting, fonts, and spacing may change during conversion. For the most accurate layout and printing, convert your document to PDF before uploading.
+                      </span>
+                    </span>
+                    {' '}· Up to {formatSize(MAX_FILE_BYTES)} per file
                   </p>
                 </div>
 
@@ -802,7 +810,7 @@ export default function Home() {
                                   </span>
                                   <div className="home-option-text">
                                     <span className="home-option-name">Color</span>
-                                    <span className="home-option-price">₹5/page</span>
+                                    <span className="home-option-price">₹18/page</span>
                                   </div>
                                 </button>
                               </div>

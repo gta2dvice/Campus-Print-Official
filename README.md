@@ -107,7 +107,7 @@ Mapping to the product lifecycle names:
 - Dashboard: order list and counts (total / in progress / ready).
 - New order: up to 10 files, 20 MB each; types PDF, DOCX, DOC, PNG, JPEG.
 - Page detection via `POST /api/orders/detect-pages` (PDF/DOCX parsed; images = 1 page; failures fall back to 1-page estimate).
-- Print options: B&W ₹2/page, colour ₹5/page (double-sided B&W ₹3/sheet), A4 only, single/double sided (required), copies 1–99.
+- Print options: B&W ₹2/page, colour ₹18/page (double-sided B&W ₹3/sheet), A4 only, single/double sided (required), copies 1–99.
 - Pricing (server/pricing.js is canonical): no service charge; pickup at a point is free; classroom delivery +₹5 per order; binding +₹26 per PDF. Binding selections are stored independently for each uploaded file.
 - Pickup: Main Gate, Red Canteen, Hostel Gate. Booking is **time first**, then location. Offered points depend on the slot (9:25 and 11:15 → Red Canteen only; 1:15 → Red Canteen + Hostel Gate; 2:05 and 4:00 → all three). Slots close **5 minutes before** the labeled time (IST). Capacity 6 per location+slot, with live booking counts plus seed occupancy.
 - Collection ticket after payment (`/ticket`).

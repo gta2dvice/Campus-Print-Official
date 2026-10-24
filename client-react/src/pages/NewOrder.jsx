@@ -138,7 +138,7 @@ function isSlotPast(time) {
 function filePrintingCost(f) {
   const pages = printablePages(f);
   const copies = f?.copies || 1;
-  if (f?.colorMode === 'color') return pages * copies * 5;
+  if (f?.colorMode === 'color') return pages * copies * 18;
   if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
   return pages * copies * 2;
 }
@@ -576,7 +576,8 @@ export default function NewOrder() {
 
   function calcPrice() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
-    const deliveryCharge = classroomDelivery ? 5 : 0;
+    const hostelCharge = selectedLocationId === 'hostel-gate' ? 3 : 0;
+    const deliveryCharge = (classroomDelivery ? 5 : 0) + hostelCharge;
     const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
 
     // Tiered Service Charge (Slabs)
@@ -1307,7 +1308,15 @@ export default function NewOrder() {
                     Choose PDFs
                   </button>
                   <p className="upload-zone-note">
-                    Supports {SUPPORTED_LABEL} · Max 20 MB each (up to 10 files)
+                    Supports {SUPPORTED_LABEL}
+                    <span className="upload-rec-tag">(PDF recommended)</span>
+                    <span className="upload-info-tooltip-wrap" tabIndex="0" role="note" aria-label="Format recommendation details">
+                      <span className="upload-info-icon" aria-hidden="true">i</span>
+                      <span className="upload-info-tooltip-bubble" role="tooltip">
+                        DOC/DOCX formatting, fonts, and spacing may change during conversion. For the most accurate layout and printing, convert your document to PDF before uploading.
+                      </span>
+                    </span>
+                    {' '}· Max 20 MB each (up to 10 files)
                   </p>
                 </div>
 
@@ -1453,7 +1462,7 @@ export default function NewOrder() {
                                     </span>
                                     <div className="cp-option-text">
                                       <span className="cp-option-name">Color</span>
-                                      <span className="cp-option-price">₹5/page</span>
+                                      <span className="cp-option-price">₹18/page</span>
                                     </div>
                                   </button>
                                 </div>
@@ -1637,7 +1646,6 @@ export default function NewOrder() {
                     <span className="summary-line-value">₹{p.serviceCharge}</span>
                   </div>
                 )}
-                
                 {p.bindingCharge > 0 && (
                   <div className="summary-line">
                     <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
@@ -1646,7 +1654,7 @@ export default function NewOrder() {
                 )}
                 {p.deliveryCharge > 0 && (
                   <div className="summary-line">
-                    <span className="summary-line-label">Classroom Delivery</span>
+                    <span className="summary-line-label">Delivery{classroomDelivery ? ' (Classroom)' : ''}{selectedLocationId === 'hostel-gate' ? ' (Hostel Gate)' : ''}</span>
                     <span className="summary-line-value">₹{p.deliveryCharge}</span>
                   </div>
                 )}

@@ -10,7 +10,7 @@ const { resolveAndPriceFiles, validateAndPriceSubmission } = require('../routes/
 const slots = require('../slots');
 
 describe('server-authoritative order pricing', () => {
-    it('prices files using the established B&W per-sheet rule without hidden order fees', () => {
+    it('prices files using the established B&W per-sheet rule and adds hostel delivery fee', () => {
         const result = priceOrder([{
             pages: 4,
             copies: 2,
@@ -23,11 +23,23 @@ describe('server-authoritative order pricing', () => {
             fileCharges: [12],
             printedPages: 8,
             serviceCharge: 0,
-            deliveryCharge: 0,
+            deliveryCharge: 3,
             classroomCharge: 0,
             bindingCharge: 0,
-            total: 12
+            total: 15
         });
+    });
+
+    it('does not charge hostel delivery for non-hostel locations', () => {
+        const result = priceOrder([{
+            pages: 4,
+            copies: 2,
+            printingSide: 'double',
+            colorMode: 'bw'
+        }], { collectionLocationId: 'main-gate', includeServiceCharge: false });
+
+        assert.equal(result.deliveryCharge, 0);
+        assert.equal(result.total, 12);
     });
 
     it('charges classroom delivery once and binding separately for each selected PDF', () => {
@@ -187,10 +199,24 @@ describe('Section 5 Required Regression Tests: Double-Sided Pricing, DOCX, and T
     it('7. Service charges and printing prices follow verified existing rules', () => {
         assert.equal(priceOrder([{ pages: 5, copies: 1, printingSide: 'single', colorMode: 'bw' }]).printingAmount, 10);
         assert.equal(priceOrder([{ pages: 5, copies: 1, printingSide: 'double', colorMode: 'bw' }]).printingAmount, 9);
-        assert.equal(priceOrder([{ pages: 5, copies: 1, printingSide: 'single', colorMode: 'color' }]).printingAmount, 25);
+        assert.equal(priceOrder([{ pages: 5, copies: 1, printingSide: 'single', colorMode: 'color' }]).printingAmount, 90);
         assert.equal(priceOrder([{ pages: 10, copies: 1, printingSide: 'single', colorMode: 'bw' }]).serviceCharge, 1);
         assert.equal(priceOrder([{ pages: 11, copies: 1, printingSide: 'single', colorMode: 'bw' }]).serviceCharge, 2);
         assert.equal(priceOrder([{ pages: 31, copies: 1, printingSide: 'single', colorMode: 'bw' }]).serviceCharge, 3);
+    });
+
+    it('verifies canonical colour printing rates: 1 page costs ₹18, 10 pages cost ₹180, 2 pages × 3 copies cost ₹108', () => {
+        // 1 colour page: 1 * 1 * 18 = 18
+        assert.equal(priceOrder([{ pages: 1, copies: 1, printingSide: 'single', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 18);
+        assert.equal(priceOrder([{ pages: 1, copies: 1, printingSide: 'double', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 18);
+
+        // 10 colour pages: 10 * 1 * 18 = 180
+        assert.equal(priceOrder([{ pages: 10, copies: 1, printingSide: 'single', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 180);
+        assert.equal(priceOrder([{ pages: 10, copies: 1, printingSide: 'double', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 180);
+
+        // 2 pages with 3 copies: 2 * 3 * 18 = 108
+        assert.equal(priceOrder([{ pages: 2, copies: 3, printingSide: 'single', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 108);
+        assert.equal(priceOrder([{ pages: 2, copies: 3, printingSide: 'double', colorMode: 'color' }], { includeServiceCharge: false }).printingAmount, 108);
     });
 
     it('8. Frontend and backend totals agree', () => {
@@ -202,7 +228,7 @@ describe('Section 5 Required Regression Tests: Double-Sided Pricing, DOCX, and T
         let clientPages = 0;
         for (const f of files) {
             clientPages += f.pages * f.copies;
-            if (f.colorMode === 'color') clientPrinting += f.pages * f.copies * 5;
+            if (f.colorMode === 'color') clientPrinting += f.pages * f.copies * 18;
             else if (f.printingSide === 'double') clientPrinting += Math.ceil(f.pages / 2) * f.copies * 3;
             else clientPrinting += f.pages * f.copies * 2;
         }

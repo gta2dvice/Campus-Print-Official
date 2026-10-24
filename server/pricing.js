@@ -3,8 +3,9 @@
 const PRICING = {
     single: 2,             // ₹ per page, B&W single-sided
     double: 3,             // ₹ per sheet (2 pages), B&W double-sided
-    color: 5,              // ₹ per page, colour (either side)
+    color: 18,             // ₹ per page, colour (either side)
     classroomDelivery: 5,  // ₹ per order
+    hostelDelivery: 3,     // ₹ per order (Hostel Gate delivery surcharge)
     binding: 26             // ₹ per document
 };
 
@@ -35,7 +36,7 @@ function filePrintingCost(f) {
  * Prices server-resolved files.
  * @param {boolean} includeServiceCharge - Whether to include the tiered service charge.
  */
-function priceOrder(resolvedFiles, { classroomDelivery, binding, includeServiceCharge = true } = {}) {
+function priceOrder(resolvedFiles, { collectionLocationId, classroomDelivery, binding, includeServiceCharge = true } = {}) {
     if (!Array.isArray(resolvedFiles) || resolvedFiles.length === 0) {
         return { printingAmount: 0, fileCharges: [], printedPages: 0, serviceCharge: 0, deliveryCharge: 0, classroomCharge: 0, bindingCharge: 0, total: 0 };
     }
@@ -46,6 +47,9 @@ function priceOrder(resolvedFiles, { classroomDelivery, binding, includeServiceC
     );
     const classroomCharge = classroomDelivery === 'true' || classroomDelivery === true
         ? PRICING.classroomDelivery
+        : 0;
+    const deliveryCharge = collectionLocationId === 'hostel-gate'
+        ? PRICING.hostelDelivery
         : 0;
     const hasPerFileBinding = resolvedFiles.some(
         file => Object.prototype.hasOwnProperty.call(file, 'spiralBinding')
@@ -66,10 +70,10 @@ function priceOrder(resolvedFiles, { classroomDelivery, binding, includeServiceC
         fileCharges,
         printedPages,
         serviceCharge,
-        deliveryCharge: 0,
+        deliveryCharge,
         classroomCharge,
         bindingCharge,
-        total: printingAmount + classroomCharge + bindingCharge + serviceCharge
+        total: printingAmount + classroomCharge + deliveryCharge + bindingCharge + serviceCharge
     };
 }
 
