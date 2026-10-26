@@ -37,7 +37,7 @@ describe('classroom delivery order handling', () => {
 });
 
 describe('current pricing rules', () => {
-    it('charges each print mode per billable page and applies the service charge once', () => {
+    it('charges each print mode per billable page and applies the tiered service charge per copy', () => {
         const priced = priceOrder([
             { pages: 2, copies: 1, printingSide: 'single', colorMode: 'bw' },
             { pages: 2, copies: 1, printingSide: 'double', colorMode: 'bw' },
@@ -46,8 +46,8 @@ describe('current pricing rules', () => {
         ]);
         assert.deepEqual(priced.fileCharges, [4, 6, 24, 30]);
         assert.equal(priced.printedPages, 8);
-        assert.equal(priced.serviceCharge, 1);
-        assert.equal(priced.total, 65);
+        assert.equal(priced.serviceCharge, 4);
+        assert.equal(priced.total, 68);
     });
 
     it('applies the 31+ service charge once above 100 billable pages', () => {
@@ -56,12 +56,13 @@ describe('current pricing rules', () => {
         assert.equal(priced.total, 205);
     });
 
-    it('adds the binding price and its one-rupee service fee once per selected file', () => {
+    it('adds the binding price and its one-rupee service fee per selected document copy', () => {
         const priced = priceOrder([
             { pages: 5, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true },
             { pages: 5, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: false }
         ]);
         assert.equal(priced.bindingCharge, 26);
-        assert.equal(priced.total, 47);
+        assert.equal(priced.serviceCharge, 2);
+        assert.equal(priced.total, 48);
     });
 });

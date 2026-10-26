@@ -37,7 +37,10 @@ function filePrintingCost(f) {
 }
 
 /**
- * Prices server-resolved files.
+ * Prices server-resolved files using the copy-based pricing model:
+ * Each copy is a separately priced instance where printing subtotal,
+ * service charge, and applicable binding are calculated per copy and multiplied by copies.
+ *
  * @param {boolean} includeServiceCharge - Whether to include the tiered service charge.
  */
 function priceOrder(resolvedFiles, { collectionLocationId, classroomDelivery, binding, includeServiceCharge = true } = {}) {
@@ -55,18 +58,53 @@ function priceOrder(resolvedFiles, { collectionLocationId, classroomDelivery, bi
     const deliveryCharge = classroomCharge > 0
         ? 0
         : (collectionLocationId === 'hostel-gate' ? PRICING.hostelDelivery : 0);
+
     const hasPerFileBinding = resolvedFiles.some(
         file => Object.prototype.hasOwnProperty.call(file, 'spiralBinding')
     );
-    const bindingCount = hasPerFileBinding
-        ? resolvedFiles.filter(file => (file.spiralBinding === true || file.spiralBinding === 'true') && (Number(file.pages) >= 5)).length
-        : (binding === true || binding === 'true' ? (resolvedFiles[0]?.pages >= 5 ? 1 : 0) : 0);
-    const bindingCharge = bindingCount * (PRICING.binding + PRICING.bindingServiceFee);
 
+    let bindingCharge = 0;
     let serviceCharge = 0;
-    if (includeServiceCharge) {
-        const tier = SERVICE_CHARGE_TIERS.find(t => printedPages <= t.upTo);
-        serviceCharge = tier ? tier.charge : 0;
+
+    if (hasPerFileBinding) {
+        // Modern per-file, per-copy model:
+        // Each copy is a separately priced instance:
+        // Service and binding charges are calculated per copy and multiplied by copies.
+        for (const file of resolvedFiles) {
+            const pages = Number(file.pages) || 0;
+            const copies = Number(file.copies) || 1;
+            if (pages <= 0) continue;
+
+            if (includeServiceCharge) {
+                const tier = SERVICE_CHARGE_TIERS.find(t => pages <= t.upTo);
+                const servicePerCopy = tier ? tier.charge : 0;
+                serviceCharge += servicePerCopy * copies;
+            }
+
+            const isBindingEligible =
+                (file.spiralBinding === true || file.spiralBinding === 'true') && pages >= 5;
+            if (isBindingEligible) {
+                const bindingPerCopy = PRICING.binding + PRICING.bindingServiceFee;
+                bindingCharge += bindingPerCopy * copies;
+            }
+        }
+    } else {
+        // Legacy fallback when per-file spiralBinding property is absent:
+        if (includeServiceCharge) {
+            for (const file of resolvedFiles) {
+                const pages = Number(file.pages) || 0;
+                const copies = Number(file.copies) || 1;
+                if (pages <= 0) continue;
+                const tier = SERVICE_CHARGE_TIERS.find(t => pages <= t.upTo);
+                const servicePerCopy = tier ? tier.charge : 0;
+                serviceCharge += servicePerCopy * copies;
+            }
+        }
+        const legacyBindingEligible = (binding === true || binding === 'true') && (Number(resolvedFiles[0]?.pages) >= 5);
+        if (legacyBindingEligible) {
+            const copies = Number(resolvedFiles[0]?.copies) || 1;
+            bindingCharge = (PRICING.binding + PRICING.bindingServiceFee) * copies;
+        }
     }
 
     return {

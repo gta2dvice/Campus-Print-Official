@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -612,19 +612,29 @@ export default function NewOrder() {
       deliveryType = 'hostel';
     }
 
-    // Binding remains available only for PDFs with the existing five-page minimum;
-    // match the server's pricing predicate so retries/refreshes cannot change totals.
+    // Binding is charged per eligible copy (₹26 total per bound document instance).
+    // Minimum 5 pages per copy to be eligible for spiral binding.
     const boundFileCount = files.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
-    const bindingCharge = boundFileCount * BINDING_TOTAL;
+    const boundCopies = files.reduce((sum, file) => {
+      const isEligible = file.spiralBinding && printablePages(file) >= 5;
+      return sum + (isEligible ? (file.copies || 1) : 0);
+    }, 0);
+    const bindingCharge = boundCopies * BINDING_TOTAL;
 
-    // Tiered Service Charge (Slabs)
-    const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
+    // Service Charge: applied per copy based on each file's page count (1-10: 1, 11-30: 2, 31+: 3).
+    const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * (f.copies || 1)), 0);
     let serviceCharge = 0;
-    if (totalPages > 0) {
-      if (totalPages <= 10) serviceCharge = 1;
-      else if (totalPages <= 30) serviceCharge = 2;
-      else serviceCharge = 3;
-    }
+    files.forEach((f) => {
+      const pages = printablePages(f);
+      const copies = f.copies || 1;
+      if (pages > 0) {
+        let perCopyService = 1;
+        if (pages <= 10) perCopyService = 1;
+        else if (pages <= 30) perCopyService = 2;
+        else perCopyService = 3;
+        serviceCharge += perCopyService * copies;
+      }
+    });
 
     return {
       pages: totalPages || 0,
@@ -633,6 +643,7 @@ export default function NewOrder() {
       deliveryCharge,
       deliveryType,
       boundFileCount,
+      boundCopies,
       bindingCharge,
       serviceCharge,
       total: (printingSubtotal || 0) + deliveryCharge + bindingCharge + serviceCharge
@@ -1713,10 +1724,12 @@ export default function NewOrder() {
                 </div>
                 <div className="summary-line">
                   <span className="summary-line-label">
-                    {p.boundFileCount > 0 ? `Binding — ₹26 (${p.boundFileCount} PDF${p.boundFileCount !== 1 ? 's' : ''})` : 'Binding'}
+                    {p.boundCopies > 0
+                      ? `Binding — ₹26 (${p.boundCopies} ${p.boundFileCount === p.boundCopies ? (p.boundCopies === 1 ? 'PDF' : 'PDFs') : 'copies'})`
+                      : 'Binding'}
                   </span>
                   <span className="summary-line-value">
-                    {p.boundFileCount > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}
+                    {p.boundCopies > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}
                   </span>
                 </div>
                 <div className="summary-line">
@@ -2113,9 +2126,11 @@ export default function NewOrder() {
                     </div>
                     <div className="cp-review-line">
                       <span>
-                        {p.boundFileCount > 0 ? `Binding — ₹26 (${p.boundFileCount} PDF${p.boundFileCount !== 1 ? 's' : ''})` : 'Binding'}
+                        {p.boundCopies > 0
+                          ? `Binding — ₹26 (${p.boundCopies} ${p.boundFileCount === p.boundCopies ? (p.boundCopies === 1 ? 'PDF' : 'PDFs') : 'copies'})`
+                          : 'Binding'}
                       </span>
-                      <strong>{p.boundFileCount > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}</strong>
+                      <strong>{p.boundCopies > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}</strong>
                     </div>
                     {files.some(f => f.spiralBinding && f.bindingDescription) && (
                       <div className="cp-review-line">
