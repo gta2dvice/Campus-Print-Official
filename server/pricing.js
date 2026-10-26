@@ -3,10 +3,10 @@
 const PRICING = {
     single: 2,             // ₹ per page, B&W single-sided
     double: 3,             // ₹ per page, B&W double-sided
-    colorSingle: 12,       // ₹ per page, colour single-sided
-    colorDouble: 15,       // ₹ per page, colour double-sided
-    classroomDelivery: 8,  // ₹ per order
-    hostelDelivery: 5,     // ₹ per order (Hostel Gate delivery surcharge)
+    colorSingle: 10,       // ₹ per page, colour single-sided
+    colorDouble: 12,       // ₹ per page, colour double-sided
+    classroomDelivery: 5,  // ₹ per order
+    hostelDelivery: 3,     // ₹ per order (Hostel Gate delivery surcharge)
     binding: 25,            // ₹ per selected document
     bindingServiceFee: 1    // ₹ per selected document
 };
@@ -14,7 +14,7 @@ const PRICING = {
 const SERVICE_CHARGE_TIERS = [
     { upTo: 10, charge: 1 },
     { upTo: 30, charge: 2 },
-    { upTo: Infinity, charge: 3 }
+    { upTo: 100, charge: 3 }
 ];
 
 const LEGACY_CHARGES = {
