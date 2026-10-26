@@ -36,11 +36,6 @@ html {
   animation: orb-drift 10s ease-in-out infinite alternate-reverse;
 }
 
-@keyframes trusted-rotate {
-  from { transform: perspective(var(--perspective)) rotateX(var(--rotateX)) rotateY(0); }
-  to { transform: perspective(var(--perspective)) rotateX(var(--rotateX)) rotateY(1turn); }
-}
-
 /* Sticky/blurring hero */
 .hero-container {
   filter: blur(var(--hero-blur, 0px));
@@ -79,47 +74,6 @@ html {
 .nav-link:hover::after,
 .nav-link.nav-link--active::after {
   transform: scaleX(1);
-}
-
-/* 3D rotating "trusted by" orbit */
-.trusted-orbit {
-  --w: 260px;
-  --h: 170px;
-  --translateZ: calc((var(--w) + var(--h)) + 10px);
-  --rotateX: -18deg;
-  --perspective: 1200px;
-  position: relative;
-  width: var(--w);
-  height: var(--h);
-  transform-style: preserve-3d;
-  transform: perspective(var(--perspective));
-  animation: trusted-rotate 26s linear infinite;
-}
-.trusted-card {
-  position: absolute;
-  inset: 0;
-  transform: rotateY(calc((360deg / var(--quantity)) * var(--index))) translateZ(var(--translateZ));
-}
-.trusted-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom right, rgba(255, 255, 255, 0.26), transparent 55%);
-  mix-blend-mode: screen;
-  pointer-events: none;
-  border-radius: inherit;
-}
-.trusted-card-bg {
-  width: 100%;
-  height: 100%;
-  background: radial-gradient(circle at top, rgba(var(--color-card), 0.35) 0%, rgba(var(--color-card), 0.18) 40%, rgba(15, 23, 42, 0.8) 100%);
-}
-@media (max-width: 768px) {
-  .trusted-orbit {
-    --w: 220px;
-    --h: 150px;
-    --translateZ: calc((var(--w) + var(--h)) + 20px);
-  }
 }
 
 /* Footer watermark */

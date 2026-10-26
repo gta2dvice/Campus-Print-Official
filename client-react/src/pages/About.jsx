@@ -55,26 +55,25 @@ export default function About() {
             <article className="team-card" id="card-1">
               <div className="card-glow" />
               <div className="card-inner">
-                <div className="card-avatar-wrap">
-                  <img
-                    className="card-avatar"
-                    src="/assets/member1.jpg"
-                    alt="Ankit Chaurasia"
-                    onError={(e) => { e.currentTarget.src = 'https://api.dicebear.com/8.x/notionists/svg?seed=AnkitChaurasia&backgroundColor=b6e3f4'; }}
-                  />
-                  <div className="card-avatar-ring" />
+                <div className="team-media">
+                  <div className="card-avatar-wrap">
+                    <img
+                      className="card-avatar"
+                      src="/assets/member1.jpg"
+                      alt="Ankit Chaurasia"
+                      onError={(e) => { e.currentTarget.src = 'https://api.dicebear.com/8.x/notionists/svg?seed=AnkitChaurasia&backgroundColor=b6e3f4'; }}
+                    />
+                    <div className="card-avatar-ring" />
+                  </div>
                 </div>
 
                 <div className="card-body">
                   <h2 className="card-name">Ankit Chaurasia</h2>
-                  <p className="card-role">Founder &amp; Designer</p>
-                  <p className="card-desc">
-                    Obsessed with great design and smooth user experiences.
-                    Brings the visual side to life — from branding to every pixel on this page.
-                  </p>
-
-                  <div className="card-divider" />
-
+                  <p className="card-role">Founder &amp; Developer</p>
+                </div>
+                <div className="card-spacer" />
+                <div className="card-divider" />
+                <div className="team-social-area">
                   <SocialLinks
                     links={[
                       { platform: 'instagram', href: 'https://www.instagram.com/ankit.95_?igsh=MTlyaDVxemc4dmVmNA==', label: '@ankit.95_' },
@@ -89,26 +88,14 @@ export default function About() {
             <article className="team-card" id="card-2">
               <div className="card-glow card-glow--2" />
               <div className="card-inner">
-                <div className="card-avatar-wrap">
-                  <img
-                    className="card-avatar"
-                    src="/assets/member2.jpg"
-                    alt="Atishay Jain"
-                    onError={(e) => { e.currentTarget.src = 'https://api.dicebear.com/8.x/notionists/svg?seed=AtishayJain&backgroundColor=ffd5dc'; }}
-                  />
-                  <div className="card-avatar-ring card-avatar-ring--2" />
-                </div>
-
+                <div className="team-media" aria-hidden="true" />
                 <div className="card-body">
                   <h2 className="card-name">Atishay Jain</h2>
                   <p className="card-role">Co-Founder &amp; Developer</p>
-                  <p className="card-desc">
-                    Passionate about building tools that actually solve real student problems.
-                    Handles the tech, the servers, and anything that involves code.
-                  </p>
-
-                  <div className="card-divider" />
-
+                </div>
+                <div className="card-spacer" />
+                <div className="card-divider" />
+                <div className="team-social-area">
                   <SocialLinks
                     links={[
                       { platform: 'instagram', href: 'https://www.instagram.com/miraculous.jain_16?igsh=MTY3N3Vnbjk1Mms4cA==', label: '@miraculous.jain_16' },
@@ -120,6 +107,40 @@ export default function About() {
               </div>
             </article>
 
+            <article className="team-card" id="card-3">
+              <div className="card-glow" />
+              <div className="card-inner">
+                <div className="team-media" aria-hidden="true" />
+                <div className="card-body">
+                  <h2 className="card-name">Tejasv Tyagi</h2>
+                  <p className="card-role">Co-Founder &amp; Treasurer</p>
+                </div>
+                <div className="card-spacer" />
+                <div className="card-divider" />
+                <div className="team-social-area team-social-area--empty" aria-hidden="true" />
+              </div>
+            </article>
+
+          </div>
+        </section>
+
+        <section className="thanks-section" aria-labelledby="thanks-title">
+          <div className="thanks-inner">
+            <h2 className="thanks-title" id="thanks-title">Special Thanks</h2>
+            <div className="thanks-grid">
+              <article className="thanks-card">
+                <h3>Vanshika Tripathi</h3>
+                <p>For poster design.</p>
+              </article>
+              <article className="thanks-card">
+                <h3>Darshil</h3>
+                <p>For last-minute code debugging.</p>
+              </article>
+              <article className="thanks-card">
+                <h3>Ashvi</h3>
+                <p>For connecting us with people.</p>
+              </article>
+            </div>
           </div>
         </section>
         <Footer />

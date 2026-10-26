@@ -21,15 +21,6 @@ import {
 } from '../lib/classroomDelivery';
 import '../styles/style.css';
 
-const STUDENTS = [
-  { name: 'Divye', branch: 'CSE Core', color: '59, 130, 246', review: 'Very fast printing and affordable pricing. Saved my semester submissions!' },
-  { name: 'Kartike', branch: 'CSE AI-ML', color: '249, 115, 22', review: 'Upload system is smooth and no more long queues.' },
-  { name: 'Ananya', branch: 'Mechanical', color: '20, 184, 166', review: 'Clean prints and very quick service inside campus.' },
-  { name: 'Bhargavii', branch: 'BCA', color: '239, 68, 68', review: 'Very fast printing and affordable pricing. Saved my semester submissions!' },
-  { name: 'Kush', branch: 'CSE Core', color: '139, 92, 246', review: 'Upload system is smooth and no more long queues.' },
-  { name: 'Vartika', branch: 'CSE AI-ML', color: '56, 189, 248', review: 'Upload system is smooth and no more long queues.' },
-];
-
 const ALLOWED_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -397,23 +388,15 @@ export default function Home() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ── Reveal-on-scroll + GPU hints + pause orbit when tab hidden + section spy ──
+  // ── Reveal-on-scroll + section spy ──
   useEffect(() => {
     const revealObserver = new IntersectionObserver((entries) => {
       entries.forEach((entry) => { if (entry.isIntersecting) entry.target.classList.add('reveal-show'); });
     }, { threshold: 0.15, rootMargin: '0px 0px -80px 0px' });
     document.querySelectorAll('.reveal').forEach((el) => revealObserver.observe(el));
 
-    document.querySelectorAll('.trusted-card').forEach((card) => { card.style.willChange = 'transform'; });
     const heroContainer = document.querySelector('.hero-container');
     if (heroContainer) heroContainer.style.willChange = 'filter';
-
-    function onVisibility() {
-      const orbit = document.querySelector('.trusted-orbit');
-      if (!orbit) return;
-      orbit.style.animationPlayState = document.hidden ? 'paused' : 'running';
-    }
-    document.addEventListener('visibilitychange', onVisibility);
 
     const sections = document.querySelectorAll('section[id]');
     const navLinks = document.querySelectorAll('.top-nav a[href^="#"]');
@@ -438,7 +421,6 @@ export default function Home() {
 
     return () => {
       revealObserver.disconnect();
-      document.removeEventListener('visibilitychange', onVisibility);
       if (sectionSpy) sectionSpy.disconnect();
     };
   }, []);
@@ -583,33 +565,7 @@ export default function Home() {
             </div>
           </section>
 
-          {/* SECTION 2: Trusted by Students */}
-          <section className="trusted-section reveal">
-            <div className="trusted-inner">
-              <h2 className="trusted-title">Trusted by Students</h2>
-              <p className="trusted-subtitle">
-                Join hundreds of students who rely on Print Campus for fast, reliable prints.
-              </p>
-
-              <div className="trusted-wrapper">
-                <div className="trusted-orbit" style={{ '--quantity': 6 }}>
-                  {STUDENTS.map((s, i) => (
-                    <div key={s.name} className="trusted-card" style={{ '--index': i, '--color-card': s.color }}>
-                      <div className="trusted-card-bg"></div>
-                      <div className="trusted-card-content">
-                        <h3 className="student-name">{s.name}</h3>
-                        <p className="student-branch">{s.branch}</p>
-                        <p className="student-rating">⭐⭐⭐⭐⭐</p>
-                        <p className="student-review">{s.review}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* SECTION 3: Pricing */}
+          {/* SECTION 2: Pricing */}
           <section className="pricing-section reveal" id="pricing-section">
             <div className="pricing-orb pricing-orb-1"></div>
             <div className="pricing-orb pricing-orb-2"></div>
@@ -636,9 +592,8 @@ export default function Home() {
 
                 <div className="pricing-card" id="pcPaperCard">
                   <div className="pc-icon">📄</div>
-                  <h3 className="pc-title">Paper &amp; Printing Sides</h3>
+                  <h3 className="pc-title">Printing Sides</h3>
                   <div className="pc-info-list">
-                    <div className="pc-info-row"><span>Paper size</span><span className="pc-info-price">A4 only</span></div>
                     <div className="pc-info-row"><span>Single-sided</span><span className="pc-info-price">₹2 / page</span></div>
                     <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / page</span></div>
                   </div>

@@ -332,199 +332,8 @@ img[src=""] {
 
 
 /* ══════════════════════════════════════════
-   TRUSTED SECTION – 3D rotating cards
-   ══════════════════════════════════════════ */
-.trusted-section {
-    position: relative;
-    z-index: 10;
-    min-height: 100vh;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    /* background-image: url("assets/2.png"); */
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    width: 95%;
-    margin: auto;
-
-    border-radius: 60px;   /* yahi curve banayega */
-
-    overflow: hidden;      /* background cut karega */
-
-    padding: 120px 0;
-
-    background: linear-gradient(135deg,#e8f1ff,#3b82f6);
-    /* border-bottom-left-radius: 120px;
-    border-bottom-right-radius: 120px;
-    border-top-left-radius: 120px;
-    border-top-right-radius: 120px; */
-}
-
-
-.trust-content {
-    position: relative;
-    z-index: 2;
-}
-
-.trusted-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-}
-
-.trusted-title {
-    font-family: "Lobster", sans-serif;
-    font-size: clamp(3.2rem, 6.5vw, 4.6rem);
-    font-weight: 400;
-    letter-spacing: 0.01em;
-    color: #111827;
-    margin: -551px 0 7px 0;
-}
-
-.trusted-subtitle {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 1rem;
-    font-weight: 400;
-    color: #4b5563;
-    max-width: 587px;
-    margin: 10px auto 10px;
-    text-align: center;
-}
-
-.trusted-wrapper {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.trusted-orbit {
-    --w: 260px;
-    --h: 170px;
-    --translateZ: calc((var(--w) + var(--h)) + 10px);
-    --rotateX: -18deg;
-    --perspective: 1200px;
-    position: relative;
-    width: var(--w);
-    height: var(--h);
-    transform-style: preserve-3d;
-    transform: perspective(var(--perspective));
-    animation: trusted-rotate 26s linear infinite;
-}
-
-@keyframes trusted-rotate {
-    from {
-        transform: perspective(var(--perspective)) rotateX(var(--rotateX)) rotateY(0);
-    }
-
-    to {
-        transform: perspective(var(--perspective)) rotateX(var(--rotateX)) rotateY(1turn);
-    }
-}
-
-.trusted-card {
-    position: absolute;
-    inset: 0;
-    border-radius: 22px;
-    overflow: hidden;
-    transform: rotateY(calc((360deg / var(--quantity)) * var(--index))) translateZ(var(--translateZ));
-    box-shadow:
-        0 18px 40px rgba(15, 23, 42, 0.18),
-        0 0 0 1px rgba(255, 255, 255, 0.5);
-    background: rgba(255, 255, 255, 0.8);
-    will-change: transform;
-}
-
-.trusted-card-bg {
-    width: 100%;
-    height: 100%;
-    background:
-        radial-gradient(circle at top,
-            rgba(var(--color-card), 0.35) 0%,
-            rgba(var(--color-card), 0.18) 40%,
-            rgba(15, 23, 42, 0.8) 100%);
-}
-
-.trusted-card-content {
-    position: absolute;
-    inset: 0;
-    padding: 1.1rem 1.3rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    color: #f9fafb;
-    box-sizing: border-box;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    white-space: normal;
-}
-
-.student-name {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 700;
-    margin-bottom: 0.15rem;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    white-space: normal;
-}
-
-.student-branch {
-    font-family: 'DM Sans', sans-serif;
-    font-size: 0.85rem;
-    font-weight: 500;
-    opacity: 0.9;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    white-space: normal;
-}
-
-.student-rating {
-    font-size: 0.95rem;
-    margin-top: 0.4rem;
-}
-
-.student-review {
-    font-family: 'DM Sans', sans-serif;
-    margin-top: 0.4rem;
-    font-size: 0.9rem;
-    line-height: 1.4;
-    opacity: 0.95;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    white-space: normal;
-}
-
-.trusted-card::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(to bottom right,
-            rgba(255, 255, 255, 0.26),
-            transparent 55%);
-    mix-blend-mode: screen;
-    pointer-events: none;
-}
-
-.trusted-card:hover .trusted-card-content {
-    transform: translateY(-4px);
-    transition: transform 0.25s ease;
-}
-
-
-/* ══════════════════════════════════════════
    LOCATION SECTION
-   — slides over trusted section, same card style
+   — slides over the hero, same card style
    ══════════════════════════════════════════ */
 .location-section {
     position: relative;
@@ -547,17 +356,6 @@ img[src=""] {
     width: 420px;
     height: 420px;
     background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
-    pointer-events: none;
-}
-
-.location-section::after {
-    content: '';
-    position: absolute;
-    bottom: -60px;
-    left: -60px;
-    width: 340px;
-    height: 340px;
-    background: radial-gradient(circle, rgba(99, 102, 241, 0.07) 0%, transparent 70%);
     pointer-events: none;
 }
 
@@ -1569,86 +1367,6 @@ img[src=""] {
         opacity: 0.15;
     }
 
-    .trusted-inner {
-        position: relative;
-        z-index: 1;
-    }
-
-    .trusted-title {
-        position: relative;
-        z-index: 20;
-        font-family: "Lobster", sans-serif;
-        font-weight: 400;
-        font-size: clamp(2.2rem, 8vw, 3.5rem);
-        margin: clamp(-527px, -78vh, -224px) 0 7px 0;
-        max-width: 100%;
-        overflow-wrap: normal;
-        text-align: center;
-    }
-
-    .trusted-subtitle {
-        position: relative;
-        z-index: 20;
-        font-size: clamp(0.85rem, 3.5vw, 1rem);
-        max-width: 90%;
-        margin: 6px auto 10px;
-        text-align: center;
-    }
-
-    .trusted-wrapper {
-        z-index: 5;
-    }
-
-    .trusted-orbit {
-        --w: 220px;
-        --h: 150px;
-        --translateZ: calc((var(--w) + var(--h)) + 20px);
-    }
-
-    .trusted-card {
-        z-index: 5;
-    }
-
-    .trusted-card-content {
-        padding: clamp(0.55rem, 2.5vw, 0.85rem);
-        box-sizing: border-box;
-        max-width: 100%;
-        justify-content: space-between;
-    }
-
-    .student-name {
-        font-size: clamp(0.85rem, 3.8vw, 1.05rem);
-        margin-bottom: 0.1rem;
-        overflow-wrap: anywhere;
-        word-break: normal;
-        white-space: normal;
-    }
-
-    .student-branch {
-        font-size: clamp(0.65rem, 2.8vw, 0.85rem);
-        margin-bottom: 0.1rem;
-        overflow-wrap: anywhere;
-        word-break: normal;
-        white-space: normal;
-    }
-
-    .student-rating {
-        font-size: clamp(0.65rem, 3vw, 0.85rem);
-        margin-top: 0.2rem;
-        margin-bottom: 0.2rem;
-        letter-spacing: clamp(-1.5px, -0.4vw, 0px);
-    }
-
-    .student-review {
-        margin-top: 0.2rem;
-        font-size: clamp(0.6rem, 2.6vw, 0.8rem);
-        line-height: 1.3;
-        opacity: 0.95;
-        overflow-wrap: anywhere;
-        word-break: normal;
-        white-space: normal;
-    }
-
     .location-section {
         padding: 4rem 1.5rem;
     }
@@ -1775,6 +1493,7 @@ img[src=""] {
 .pricing-cards-row {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
+    align-items: stretch;
     gap: 1.25rem;
     width: 100%;
 }
@@ -1793,6 +1512,7 @@ img[src=""] {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    min-width: 0;
     opacity: 0;
     transform: translateY(26px);
     transition:
@@ -1830,6 +1550,11 @@ img[src=""] {
 .pc-icon {
     font-size: 2rem;
     line-height: 1;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 2rem;
 }
 
 .pc-title {
@@ -1838,22 +1563,29 @@ img[src=""] {
     letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--text-secondary);
+    min-height: 2.4em;
+    margin: 0;
+    text-align: center;
 }
 
 .pc-info-list {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     gap: 0.75rem;
-    margin-top: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 0;
 }
 
 .pc-info-row {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     gap: 0.75rem;
     color: var(--text-primary);
     font-size: 0.95rem;
+    min-width: 0;
 }
 
 .pc-info-price {
@@ -1865,6 +1597,9 @@ img[src=""] {
 
 .pc-info-row > span:first-child {
     min-width: 0;
+    flex: 1 1 auto;
+    text-align: left;
+    overflow-wrap: anywhere;
 }
 
 /* Chip toggles */
@@ -3307,7 +3042,6 @@ body.auth-page {
    REDUCED MOTION
    ───────────────────────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-    .trusted-orbit,
     .blob,
     .pricing-orb,
     .card-avatar-ring,
