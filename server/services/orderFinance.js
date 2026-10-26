@@ -102,7 +102,7 @@ function toPrinterOrder(order, files) {
         ? files.filter(f => f.spiral_binding === 1 || f.spiral_binding === true || f.spiralBinding === true)
         : [];
     const boundCount = boundFiles.length > 0
-        ? boundFiles.length
+        ? boundFiles.reduce((sum, f) => sum + (Number(f.copies) || 1), 0)
         : (hasAmount(order.binding_charge) ? Math.max(1, Math.round(Number(order.binding_charge) / 26)) : (order.spiral_binding ? 1 : 0));
     const isBinding = boundCount > 0 || !!order.spiral_binding;
     view.spiral_binding = isBinding ? 1 : 0;

@@ -23,15 +23,25 @@ function calcPriceFrontend(files, { selectedLocationId, classroomDelivery } = {}
     }
 
     const boundFileCount = files.filter(f => (f.spiralBinding === true || f.spiralBinding === 'true') && (Number(f.pages) >= 5)).length;
-    const bindingCharge = boundFileCount * 26;
+    const boundCopies = files.reduce((sum, f) => {
+        const isEligible = (f.spiralBinding === true || f.spiralBinding === 'true') && (Number(f.pages) >= 5);
+        return sum + (isEligible ? (Number(f.copies) || 1) : 0);
+    }, 0);
+    const bindingCharge = boundCopies * 26;
 
     const totalPages = files.reduce((sum, f) => sum + ((Number(f.pages) || 0) * (Number(f.copies) || 1)), 0);
     let serviceCharge = 0;
-    if (totalPages > 0) {
-        if (totalPages <= 10) serviceCharge = 1;
-        else if (totalPages <= 30) serviceCharge = 2;
-        else serviceCharge = 3;
-    }
+    files.forEach((f) => {
+        const pages = Number(f.pages) || 0;
+        const copies = Number(f.copies) || 1;
+        if (pages > 0) {
+            let perCopyService = 1;
+            if (pages <= 10) perCopyService = 1;
+            else if (pages <= 30) perCopyService = 2;
+            else perCopyService = 3;
+            serviceCharge += perCopyService * copies;
+        }
+    });
 
     const total = printingSubtotal + deliveryCharge + bindingCharge + serviceCharge;
 
@@ -41,6 +51,7 @@ function calcPriceFrontend(files, { selectedLocationId, classroomDelivery } = {}
         deliveryCharge,
         deliveryType,
         boundFileCount,
+        boundCopies,
         bindingCharge,
         serviceCharge,
         total
@@ -231,6 +242,141 @@ describe('Order Summary & Review Charges Verification', () => {
 
             assert.equal(backend.total, 19);
             assert.equal(frontend.total, 19);
+        });
+    });
+
+    describe('6. Copy-Based Pricing Regression Tests', () => {
+        it('calculates the canonical example: 47 B&W single pages, 2 copies, binding ON -> exactly ₹246', () => {
+            // Per copy: 47 * ₹2 (printing: ₹94) + ₹3 (service tier 31+) + ₹26 (binding) = ₹123
+            // 2 copies: ₹123 * 2 = ₹246 (NOT 47*2*2 + 3 + 26 = ₹217)
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files);
+            const frontend = calcPriceFrontend(files);
+
+            assert.equal(backend.printingAmount, 188); // 47 * 2 * 2
+            assert.equal(frontend.base, 188);
+
+            assert.equal(backend.serviceCharge, 6); // ₹3 per copy * 2 copies
+            assert.equal(frontend.serviceCharge, 6);
+
+            assert.equal(backend.bindingCharge, 52); // ₹26 per copy * 2 copies
+            assert.equal(frontend.bindingCharge, 52);
+            assert.equal(frontend.boundCopies, 2);
+
+            assert.equal(backend.total, 246);
+            assert.equal(frontend.total, 246);
+            assert.notEqual(backend.total, 217);
+        });
+
+        it('calculates 47 B&W single pages, 1 copy, binding ON -> exactly ₹123', () => {
+            const files = [
+                { pages: 47, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files);
+            const frontend = calcPriceFrontend(files);
+
+            assert.equal(backend.printingAmount, 94);
+            assert.equal(backend.serviceCharge, 3);
+            assert.equal(backend.bindingCharge, 26);
+            assert.equal(backend.total, 123);
+            assert.equal(frontend.total, 123);
+        });
+
+        it('calculates 47 B&W single pages, 2 copies, binding OFF -> exactly ₹194', () => {
+            // Per copy: 47 * ₹2 (printing: ₹94) + ₹3 (service) + ₹0 (binding) = ₹97
+            // 2 copies: ₹97 * 2 = ₹194
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: false }
+            ];
+            const backend = priceOrder(files);
+            const frontend = calcPriceFrontend(files);
+
+            assert.equal(backend.printingAmount, 188);
+            assert.equal(backend.serviceCharge, 6);
+            assert.equal(backend.bindingCharge, 0);
+            assert.equal(backend.total, 194);
+            assert.equal(frontend.total, 194);
+        });
+
+        it('multiplies service charge tiers per copy correctly for 1-10, 11-30, and 31+ pages', () => {
+            // Tier 1: 5 pages, 3 copies -> ₹1 * 3 = ₹3 service charge
+            const tier1 = priceOrder([{ pages: 5, copies: 3, printingSide: 'single', colorMode: 'bw', spiralBinding: false }]);
+            assert.equal(tier1.serviceCharge, 3);
+            assert.equal(tier1.printingAmount, 30); // 5 * 3 * 2
+            assert.equal(tier1.total, 33);
+
+            // Tier 2: 25 pages, 2 copies -> ₹2 * 2 = ₹4 service charge
+            const tier2 = priceOrder([{ pages: 25, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: false }]);
+            assert.equal(tier2.serviceCharge, 4);
+            assert.equal(tier2.printingAmount, 100); // 25 * 2 * 2
+            assert.equal(tier2.total, 104);
+
+            // Tier 3: 50 pages, 4 copies -> ₹3 * 4 = ₹12 service charge
+            const tier3 = priceOrder([{ pages: 50, copies: 4, printingSide: 'single', colorMode: 'bw', spiralBinding: false }]);
+            assert.equal(tier3.serviceCharge, 12);
+            assert.equal(tier3.printingAmount, 400); // 50 * 4 * 2
+            assert.equal(tier3.total, 412);
+        });
+
+        it('handles multiple PDFs with differing copy counts and mixed binding correctly', () => {
+            // PDF 1: 8 pages B&W single (tier 1: ₹1 service), 2 copies, binding ON (eligible: 8 >= 5)
+            //   per copy: 8 * 2 + 1 + 26 = 43; total = 43 * 2 = 86
+            // PDF 2: 12 pages Color double (tier 2: ₹2 service), 3 copies, binding OFF
+            //   per copy: 12 * 15 + 2 + 0 = 182; total = 182 * 3 = 546
+            // PDF 3: 4 pages B&W double (tier 1: ₹1 service), 1 copy, spiralBinding: true (ineligible: 4 < 5)
+            //   per copy: 4 * 3 + 1 + 0 = 13; total = 13 * 1 = 13
+            // Delivery: Classroom Delivery (₹5) - applied once at order level
+            // Expected totals:
+            //   printing: 32 + 540 + 12 = 584
+            //   service: (1 * 2) + (2 * 3) + (1 * 1) = 2 + 6 + 1 = 9
+            //   binding: 26 * 2 + 0 + 0 = 52
+            //   classroom delivery: 5
+            //   order total: 584 + 9 + 52 + 5 = 650
+            const files = [
+                { pages: 8, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true },
+                { pages: 12, copies: 3, printingSide: 'double', colorMode: 'color', spiralBinding: false },
+                { pages: 4, copies: 1, printingSide: 'double', colorMode: 'bw', spiralBinding: true }
+            ];
+
+            const backend = priceOrder(files, { collectionLocationId: 'academic-block', classroomDelivery: true });
+            const frontend = calcPriceFrontend(files, { selectedLocationId: 'academic-block', classroomDelivery: true });
+
+            assert.deepEqual(backend.fileCharges, [32, 540, 12]);
+            assert.equal(backend.printingAmount, 584);
+            assert.equal(frontend.base, 584);
+
+            assert.equal(backend.serviceCharge, 9);
+            assert.equal(frontend.serviceCharge, 9);
+
+            assert.equal(backend.bindingCharge, 52);
+            assert.equal(frontend.bindingCharge, 52);
+            assert.equal(frontend.boundCopies, 2);
+
+            assert.equal(backend.classroomCharge, 5);
+            assert.equal(frontend.deliveryCharge, 5);
+            assert.equal(frontend.deliveryType, 'classroom');
+
+            assert.equal(backend.total, 650);
+            assert.equal(frontend.total, 650);
+        });
+
+        it('does not multiply delivery charge when ordering multiple copies', () => {
+            const files = [
+                { pages: 10, copies: 5, printingSide: 'single', colorMode: 'bw', spiralBinding: false }
+            ];
+            // Classroom delivery: ₹5 once
+            const cr = priceOrder(files, { classroomDelivery: true });
+            assert.equal(cr.classroomCharge, 5);
+            assert.equal(cr.printingAmount, 100); // 10 * 5 * 2
+            assert.equal(cr.serviceCharge, 5);    // 1 * 5
+            assert.equal(cr.total, 110);          // 100 + 5 + 5
+
+            // Hostel delivery: ₹3 once
+            const hg = priceOrder(files, { collectionLocationId: 'hostel-gate' });
+            assert.equal(hg.deliveryCharge, 3);
+            assert.equal(hg.total, 108);          // 100 + 5 + 3
         });
     });
 });
