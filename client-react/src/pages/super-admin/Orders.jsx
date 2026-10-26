@@ -281,11 +281,13 @@ function OrderModal({ orderId, onClose, onChanged }) {
             {(Number(order.classroom_charge) > 0 || order.collection_location === 'Academic Block - Classroom Delivery' || order.collection_location_id === 'classroom-delivery') && (
               <DetailItem label="Classroom Number">{order.classroom_number || order.guest_classroom || order.class_room_number || '—'}</DetailItem>
             )}
-            <DetailItem label="Binding">{order.spiral_binding ? 'Yes' : 'No'}</DetailItem>
-            {order.spiral_binding && (
-              <DetailItem label="Binding Description">
-                {order.binding_description || order.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'None'}
-              </DetailItem>
+            {Boolean(order.spiral_binding) && (
+              <>
+                <DetailItem label="Binding">Yes</DetailItem>
+                <DetailItem label="Binding Description">
+                  {order.binding_description || order.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'None'}
+                </DetailItem>
+              </>
             )}
             <DetailItem label="Ticket">{order.ticket_number || '—'}</DetailItem>
             <DetailItem label="Printing Side">{order.printing_side === 'double' ? 'Double-Sided' : 'Single-Sided'}</DetailItem>
