@@ -11,9 +11,9 @@ describe('classroom delivery order handling', () => {
         const classroom = priceOrder([{ pages: 1, copies: 1, printingSide: 'single', colorMode: 'bw' }], {
             collectionLocationId: 'academic-block', classroomDelivery: true
         });
-        assert.equal(classroom.classroomCharge, 5);
+        assert.equal(classroom.classroomCharge, 8);
         assert.equal(classroom.deliveryCharge, 0);
-        assert.equal(classroom.total, base.total + 5);
+        assert.equal(classroom.total, base.total + 8);
         assert.equal(slots.locationDisplayName('academic-block', { classroomDelivery: true }), 'Academic Block - Classroom Delivery');
     });
 
@@ -32,7 +32,7 @@ describe('classroom delivery order handling', () => {
 
     it('does not identify a normal order as a classroom-delivery ticket', () => {
         assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 0, collectionLocation: 'Academic Block' }), false);
-        assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 5, collectionLocation: 'Academic Block - Classroom Delivery' }), true);
+        assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 8, collectionLocation: 'Academic Block - Classroom Delivery' }), true);
     });
 });
 
@@ -44,16 +44,16 @@ describe('current pricing rules', () => {
             { pages: 2, copies: 1, printingSide: 'single', colorMode: 'color' },
             { pages: 2, copies: 1, printingSide: 'double', colorMode: 'color' }
         ]);
-        assert.deepEqual(priced.fileCharges, [4, 6, 20, 24]);
+        assert.deepEqual(priced.fileCharges, [4, 6, 24, 30]);
         assert.equal(priced.printedPages, 8);
         assert.equal(priced.serviceCharge, 1);
-        assert.equal(priced.total, 55);
+        assert.equal(priced.total, 65);
     });
 
-    it('does not invent a service charge above 100 billable pages', () => {
+    it('applies the 31+ service charge once above 100 billable pages', () => {
         const priced = priceOrder([{ pages: 101, copies: 1, printingSide: 'single', colorMode: 'bw' }]);
-        assert.equal(priced.serviceCharge, 0);
-        assert.equal(priced.total, 202);
+        assert.equal(priced.serviceCharge, 3);
+        assert.equal(priced.total, 205);
     });
 
     it('adds the binding price and its one-rupee service fee once per selected file', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardSidebar from '../components/DashboardSidebar';
 import GuestDetailsModal from '../components/GuestDetailsModal';
@@ -142,14 +142,12 @@ function isSlotPast(time) {
 function filePrintingCost(f) {
   const pages = printablePages(f);
   const copies = f?.copies || 1;
-  if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 12 : 10);
+  if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 15 : 12);
   if (f?.printingSide === 'double') return pages * copies * 3;
   return pages * copies * 2;
 }
 
-const BINDING_CHARGE = 25;
-const BINDING_SERVICE_FEE = 1;
-const BINDING_TOTAL = BINDING_CHARGE + BINDING_SERVICE_FEE;
+const BINDING_TOTAL = 26;
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -617,9 +615,7 @@ export default function NewOrder() {
     // Binding remains available only for PDFs with the existing five-page minimum;
     // match the server's pricing predicate so retries/refreshes cannot change totals.
     const boundFileCount = files.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
-    const bindingBaseCharge = boundFileCount * BINDING_CHARGE;
-    const bindingServiceCharge = boundFileCount * BINDING_SERVICE_FEE;
-    const bindingCharge = bindingBaseCharge + bindingServiceCharge;
+    const bindingCharge = boundFileCount * BINDING_TOTAL;
 
     // Tiered Service Charge (Slabs)
     const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
@@ -644,13 +640,11 @@ export default function NewOrder() {
   }
 
   const p = calcPrice();
-  const serviceChargeRuleMissing = p.pages > 100;
   const hasFiles = files.length > 0;
   const filesMissingSettings = files.some(f => !hasCompleteFileSettings(f));
 
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
-    if (serviceChargeRuleMissing) { showToast('Service-charge pricing above 100 billable pages is not configured. Please contact Campus Print.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
     if (hasUnconfirmedPages) { showToast('Please enter and confirm the page count for all files.', 'error'); return; }
     if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
@@ -1534,7 +1528,7 @@ export default function NewOrder() {
                                     </span>
                                     <div className="cp-option-text">
                                       <span className="cp-option-name">Color</span>
-                                      <span className="cp-option-price">{f.printingSide === 'double' ? '₹12/page' : '₹10/page'}</span>
+                                      <span className="cp-option-price">{f.printingSide === 'double' ? '₹15/page' : '₹12/page'}</span>
                                     </div>
                                   </button>
                                 </div>
@@ -1604,11 +1598,12 @@ export default function NewOrder() {
                                     <span className="cp-radio-circle" aria-hidden="true"><span className="cp-radio-dot" /></span>
                                     <span className="cp-option-text">
                                       <span className="cp-option-name">Yes</span>
-                                      <span className="cp-option-price">₹25 + ₹1 fee</span>
+                                      <span className="cp-option-price">₹26</span>
                                     </span>
                                   </button>
                                 </div>
                               </div>
+                              {f.spiralBinding && <div className="cp-setting-section"><label className="cp-setting-title" htmlFor={`binding-description-${f.key}`}>Binding instructions <small>(optional)</small></label><textarea id={`binding-description-${f.key}`} className="cp-text-input" rows="3" maxLength="1000" value={f.bindingDescription || ''} placeholder="Describe which PDFs should be bound together with the current PDF." onChange={(e) => setFiles((prev) => prev.map((entry) => entry.key === f.key ? { ...entry, bindingDescription: e.target.value } : entry))} /></div>}
 
                               {/* Page Range Input (when applicable) */}
                               {showPageRangeInput(f) && (
@@ -1746,13 +1741,12 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="confirm-btn"
-                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || serviceChargeRuleMissing || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue to Order
               </button>
               {summaryNote && <p className="summary-note">{summaryNote}</p>}
-              {serviceChargeRuleMissing && <p className="summary-note" role="alert">Service-charge pricing above 100 billable pages is not configured. Please contact Campus Print.</p>}
             </div>
           </div>
 
@@ -1772,7 +1766,7 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="cp-mobile-sticky-btn"
-                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || serviceChargeRuleMissing || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue →
