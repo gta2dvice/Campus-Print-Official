@@ -137,7 +137,7 @@ function financialBreakdown(order, files = [], payments = []) {
         printing = estimate >= 0 ? estimate : null;
         notes.push('Estimated: this order was placed before charges were itemised. Printing = customer total − service charge − Hostel Gate delivery.');
         if (order.collection_location_id === 'academic-block') {
-            notes.push('Classroom delivery (₹10) was not recorded on old orders; for this Academic Block order it may be included in the printing estimate.');
+            notes.push('Classroom delivery (₹5) was not recorded on old orders; for this Academic Block order it may be included in the printing estimate.');
         }
         if (printing === null) notes.push('The customer total is lower than the fixed charges, so printing cannot be estimated.');
     }

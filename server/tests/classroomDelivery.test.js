@@ -11,9 +11,9 @@ describe('classroom delivery order handling', () => {
         const classroom = priceOrder([{ pages: 1, copies: 1, printingSide: 'single', colorMode: 'bw' }], {
             collectionLocationId: 'academic-block', classroomDelivery: true
         });
-        assert.equal(classroom.classroomCharge, 8);
+        assert.equal(classroom.classroomCharge, 5);
         assert.equal(classroom.deliveryCharge, 0);
-        assert.equal(classroom.total, base.total + 8);
+        assert.equal(classroom.total, base.total + 5);
         assert.equal(slots.locationDisplayName('academic-block', { classroomDelivery: true }), 'Academic Block - Classroom Delivery');
     });
 
@@ -32,7 +32,7 @@ describe('classroom delivery order handling', () => {
 
     it('does not identify a normal order as a classroom-delivery ticket', () => {
         assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 0, collectionLocation: 'Academic Block' }), false);
-        assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 8, collectionLocation: 'Academic Block - Classroom Delivery' }), true);
+        assert.equal(slots.isClassroomDeliveryOrder({ classroomCharge: 5, collectionLocation: 'Academic Block - Classroom Delivery' }), true);
     });
 });
 

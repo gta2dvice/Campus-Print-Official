@@ -649,7 +649,7 @@ export default function Home() {
                   <h3 className="pc-title">Add-ons</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Pickup at Point</span><span className="pc-info-price">Free</span></div>
-                    <div className="pc-info-row"><span>Classroom Delivery</span><span className="pc-info-price">₹8</span></div>
+                    <div className="pc-info-row"><span>Classroom Delivery</span><span className="pc-info-price">₹5</span></div>
                     <div className="pc-info-row"><span>Binding</span><span className="pc-info-price">₹25 + ₹1 fee / PDF</span></div>
                   </div>
                 </div>
