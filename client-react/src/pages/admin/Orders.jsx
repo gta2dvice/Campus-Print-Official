@@ -305,7 +305,7 @@ export default function Orders() {
                       <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[0.7rem] font-bold text-slate-700">
                         {o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size || 'A4'} · {o.copies}x
                         {o.classroom_delivery && <span className="ml-1 text-blue-600">· Classroom</span>}
-                        {o.spiral_binding && <span className="ml-1 text-emerald-600">· Binding</span>}
+                        {Boolean(o.spiral_binding) && <span className="ml-1 text-emerald-600">· Binding</span>}
                       </span>
                     </td>
                     <td data-label="Status" className="whitespace-nowrap">
@@ -485,23 +485,25 @@ export default function Orders() {
                         <span className="admin-modal-label">PDF Count</span>
                         <span className="admin-modal-value">{modalOrder.pdf_count || modalOrder.file_count || modalOrder.files?.length || 0}</span>
                       </div>
-                      <div className="admin-modal-field">
-                        <span className="admin-modal-label">Binding Status</span>
-                        <span className="admin-modal-value font-bold text-slate-800">{modalOrder.spiral_binding ? 'Yes' : 'No'}</span>
-                      </div>
-                      <div className="admin-modal-field">
-                        <span className="admin-modal-label">Admin Binding Amount</span>
-                        <span className="admin-modal-value font-bold text-slate-800">
-                          {modalOrder.spiral_binding ? `₹${modalOrder.binding_amount || 25}` : '₹0'}
-                        </span>
-                      </div>
-                      {modalOrder.spiral_binding && (
-                        <div className="admin-modal-field col-span-2">
-                          <span className="admin-modal-label">Binding Description</span>
-                          <span className="admin-modal-value text-slate-700 bg-amber-50/70 p-2 rounded border border-amber-200/60 block">
-                            {modalOrder.binding_description || modalOrder.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'No description provided'}
-                          </span>
-                        </div>
+                      {Boolean(modalOrder.spiral_binding) && (
+                        <>
+                          <div className="admin-modal-field">
+                            <span className="admin-modal-label">Binding Status</span>
+                            <span className="admin-modal-value font-bold text-slate-800">Yes</span>
+                          </div>
+                          <div className="admin-modal-field">
+                            <span className="admin-modal-label">Admin Binding Amount</span>
+                            <span className="admin-modal-value font-bold text-slate-800">
+                              ₹{modalOrder.binding_amount || 25}
+                            </span>
+                          </div>
+                          <div className="admin-modal-field col-span-2">
+                            <span className="admin-modal-label">Binding Description</span>
+                            <span className="admin-modal-value text-slate-700 bg-amber-50/70 p-2 rounded border border-amber-200/60 block">
+                              {modalOrder.binding_description || modalOrder.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'No description provided'}
+                            </span>
+                          </div>
+                        </>
                       )}
                       <div className="admin-modal-field col-span-2">
                         <span className="admin-modal-label">Printer Payable (printing only)</span>

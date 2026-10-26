@@ -207,6 +207,7 @@ export default function NewOrder() {
   const persistReadyRef = useRef(false);
   const fileInputRef = useRef(null);
   const confirmingPaymentRef = useRef(false);
+  const payingRef = useRef(false);
   const whatsappOpenedRef = useRef(false);
   // Meta fields NewOrder itself does not own (Home owns them) — carried through saves
   // so re-enabling persistence here doesn't reset them to defaults.
@@ -598,33 +599,34 @@ export default function NewOrder() {
   const pagesStillDetecting = files.some((f) => f.pages === null && !f.estimated && !f.requiresConfirmation);
   const hasUnconfirmedPages = files.some((f) => f.pages === null || ((f.estimated || f.requiresConfirmation) && !f.pagesConfirmed));
 
-  function calcPrice() {
-    const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
+  function calcPrice(targetFiles = files, { targetClassroom = classroomDelivery, targetLocationId = selectedLocationId } = {}) {
+    const list = Array.isArray(targetFiles) ? targetFiles : [];
+    const printingSubtotal = list.reduce((sum, f) => sum + filePrintingCost(f), 0);
 
     // Delivery: Never charge both hostel and classroom delivery together.
     let deliveryCharge = 0;
     let deliveryType = 'none'; // 'classroom' | 'hostel' | 'none'
-    if (classroomDelivery) {
+    if (targetClassroom) {
       deliveryCharge = 5;
       deliveryType = 'classroom';
-    } else if (selectedLocationId === 'hostel-gate') {
+    } else if (targetLocationId === 'hostel-gate') {
       deliveryCharge = 3;
       deliveryType = 'hostel';
     }
 
     // Binding is charged per eligible copy (₹26 total per bound document instance).
     // Minimum 5 pages per copy to be eligible for spiral binding.
-    const boundFileCount = files.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
-    const boundCopies = files.reduce((sum, file) => {
+    const boundFileCount = list.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
+    const boundCopies = list.reduce((sum, file) => {
       const isEligible = file.spiralBinding && printablePages(file) >= 5;
       return sum + (isEligible ? (file.copies || 1) : 0);
     }, 0);
     const bindingCharge = boundCopies * BINDING_TOTAL;
 
     // Service Charge: applied per copy based on each file's page count (1-10: 1, 11-30: 2, 31+: 3).
-    const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * (f.copies || 1)), 0);
+    const totalPages = list.reduce((sum, f) => sum + (printablePages(f) * (f.copies || 1)), 0);
     let serviceCharge = 0;
-    files.forEach((f) => {
+    list.forEach((f) => {
       const pages = printablePages(f);
       const copies = f.copies || 1;
       if (pages > 0) {
@@ -844,16 +846,24 @@ export default function NewOrder() {
   }
 
   function buildOrderFormData() {
+    const currentFiles = files;
+    const currentClassroom = Boolean(classroomDelivery);
+    const currentLocationId = currentClassroom ? ACADEMIC_BLOCK_ID : selectedLocationId;
+    const currentPrice = calcPrice(currentFiles, {
+      targetClassroom: currentClassroom,
+      targetLocationId: currentLocationId
+    });
+
     const formData = new FormData();
     formData.append('paperSize', 'A4');
-    formData.append('totalPages', p.pages);
-    const totalCopies = files.reduce((sum, f) => sum + f.copies, 0);
+    formData.append('totalPages', currentPrice.pages);
+    const totalCopies = currentFiles.reduce((sum, f) => sum + (f.copies || 1), 0);
     formData.append('copies', totalCopies);
-    formData.append('spiralBinding', p.boundFileCount > 0);
+    formData.append('spiralBinding', currentPrice.boundCopies > 0);
     formData.append('expressDelivery', expressDelivery);
-    formData.append('classroomDelivery', classroomDelivery);
-    formData.append('totalPrice', p.total);
-    formData.append('collectionLocationId', classroomDelivery ? ACADEMIC_BLOCK_ID : selectedLocationId);
+    formData.append('classroomDelivery', currentClassroom);
+    formData.append('totalPrice', currentPrice.total);
+    formData.append('collectionLocationId', currentLocationId);
     formData.append('collectionLocation', collectionLocationName());
     formData.append('collectionTime', selectedTimeSlot);
 
@@ -864,10 +874,10 @@ export default function NewOrder() {
     formData.append('classroom', guestDetails?.classroom || '');
 
     // Per-file settings for backend verification and storage
-    const fileSettings = buildFileSettingsPayload(files);
+    const fileSettings = buildFileSettingsPayload(currentFiles);
     formData.append('fileSettings', JSON.stringify(fileSettings));
 
-    files.forEach((f) => formData.append('files', f.file));
+    currentFiles.forEach((f) => formData.append('files', f.file));
     return formData;
   }
 
@@ -1113,68 +1123,110 @@ export default function NewOrder() {
   }
 
   async function handlePay() {
-    if (recoveryOrderId) {
-      setPaying(true);
-      try {
-        const res = await fetch(`/api/orders/payment/status?orderId=${recoveryOrderId}`, {
-          method: 'GET',
-          credentials: 'include',
-        });
-        const statusData = await res.json().catch(() => ({}));
-
-        if (res.ok && statusData.status === 'PAID') {
-          showToast('This order is already paid. You can check your ticket on the Orders page.', 'info');
-          setPaying(false);
-          return;
-        }
-
-        if (res.ok && (statusData.status === 'FAILED' || statusData.status === 'EXPIRED')) {
-          showToast('The previous payment failed or expired. You can safely retry now.', 'info');
-          // Allow proceeding by not returning early
-        } else if (!res.ok) {
-          showToast('Could not verify previous payment status. Please try again later.', 'error');
-          setPaying(false);
-          return;
-        } else {
-          // Status is likely PAYMENT_PENDING or similar
-          showToast('A payment attempt is still pending. Please check its status or wait before starting another order.', 'error');
-          setPaying(false);
-          return;
-        }
-      } catch (error) {
-        showToast('Network error while verifying payment status. Please try again.', 'error');
-        setPaying(false);
-        return;
-      }
-    }
-    if (!selectedLocationId || !selectedTimeSlot) {
-      showToast('Please select a collection location and time slot.', 'error');
-      return;
-    }
-    if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
-    if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
-    const badRange = files.find((f) => hasInvalidPageRange(f));
-    if (badRange) { showToast(`Fix the page range for “${badRange.file.name}” before continuing.`, 'error'); return; }
-
-    // Location-based classroom validation
-    const needsClassroom = ['main-gate', 'academic-block', 'classroom-delivery'].includes(selectedLocationId) || classroomDelivery;
-    if ((needsClassroom || classroomDelivery) && (!guestDetails?.classroom || !guestDetails.classroom.trim())) {
-      showToast('Please enter your classroom/room number.', 'error');
-      return;
-    }
-
-    if (!paymentMethod) {
-      showToast('Please choose a payment option.', 'error');
-      goToStep('payment');
-      return;
-    }
-
-    // UPI QR and WhatsApp have their own flows (requestPayment); only Cashfree pays here.
-    if (paymentMethod !== 'cashfree') return;
-
+    if (payingRef.current) return;
+    payingRef.current = true;
     setPaying(true);
 
     try {
+      if (recoveryOrderId) {
+        try {
+          const res = await fetch(`/api/orders/payment/status?orderId=${recoveryOrderId}`, {
+            method: 'GET',
+            credentials: 'include',
+          });
+          const statusData = await res.json().catch(() => ({}));
+
+          if (res.ok && statusData.status === 'PAID') {
+            showToast('This order is already paid. You can check your ticket on the Orders page.', 'info');
+            setPaying(false);
+            payingRef.current = false;
+            return;
+          }
+
+          if (res.ok && (statusData.status === 'FAILED' || statusData.status === 'EXPIRED')) {
+            showToast('The previous payment failed or expired. You can safely retry now.', 'info');
+            // Allow proceeding by not returning early
+          } else if (!res.ok) {
+            showToast('Could not verify previous payment status. Please try again later.', 'error');
+            setPaying(false);
+            payingRef.current = false;
+            return;
+          } else {
+            // Status is likely PAYMENT_PENDING or similar
+            showToast('A payment attempt is still pending. Please check its status or wait before starting another order.', 'error');
+            setPaying(false);
+            payingRef.current = false;
+            return;
+          }
+        } catch (error) {
+          showToast('Network error while verifying payment status. Please try again.', 'error');
+          setPaying(false);
+          payingRef.current = false;
+          return;
+        }
+      }
+      if (!selectedLocationId || !selectedTimeSlot) {
+        showToast('Please select a collection location and time slot.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+      if (!hasFiles) {
+        showToast('Please upload at least one file to continue.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+      if (pagesStillDetecting || files.some((f) => f.pages === null && !f.estimated && !f.requiresConfirmation)) {
+        showToast('Still detecting page count — please wait a moment.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+      if (hasUnconfirmedPages) {
+        showToast('Please enter and confirm the page count for all files.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+      if (filesMissingSettings) {
+        showToast('Please choose printing settings for all files.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+      const badRange = files.find((f) => hasInvalidPageRange(f));
+      if (badRange) {
+        showToast(`Fix the page range for “${badRange.file.name}” before continuing.`, 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+
+      // Location-based classroom validation
+      const needsClassroom = ['main-gate', 'academic-block', 'classroom-delivery'].includes(selectedLocationId) || classroomDelivery;
+      if ((needsClassroom || classroomDelivery) && (!guestDetails?.classroom || !guestDetails.classroom.trim())) {
+        showToast('Please enter your classroom/room number.', 'error');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+
+      if (!paymentMethod) {
+        showToast('Please choose a payment option.', 'error');
+        goToStep('payment');
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+
+      // UPI QR and WhatsApp have their own flows (requestPayment); only Cashfree pays here.
+      if (paymentMethod !== 'cashfree') {
+        setPaying(false);
+        payingRef.current = false;
+        return;
+      }
+
       try {
         await saveCurrentOrder({
           meta: {
@@ -1183,7 +1235,7 @@ export default function NewOrder() {
             spiralBinding,
             expressDelivery,
             classroomDelivery,
-            selectedLocationId,
+            selectedLocationId: classroomDelivery ? ACADEMIC_BLOCK_ID : selectedLocationId,
             selectedLocationName: collectionLocationName(),
             selectedTimeSlot,
           },
@@ -1192,6 +1244,7 @@ export default function NewOrder() {
       } catch (error) {
         showToast(storageErrorMessage(error), 'error');
         setPaying(false);
+        payingRef.current = false;
         return;
       }
       // Send the actual files so the backend derives the trusted amount from
@@ -1204,6 +1257,8 @@ export default function NewOrder() {
 
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok) {
+        setPaying(false);
+        payingRef.current = false;
         if (createData.cashfreeOrderId) {
           try {
             localStorage.setItem('cp_pending_payment', JSON.stringify({
@@ -1218,13 +1273,13 @@ export default function NewOrder() {
         }
         const code = createData.code ? ` (${createData.code})` : '';
         showToast(`${createData.message || 'Could not start payment session.'}${code}`, 'error');
-        setPaying(false);
         return;
       }
 
       if (!createData.paymentSessionId || !createData.cashfreeOrderId) {
         showToast('The payment service returned an incomplete session. Please try again.', 'error');
         setPaying(false);
+        payingRef.current = false;
         return;
       }
       await openCashfreeCheckout(createData);
@@ -1232,6 +1287,7 @@ export default function NewOrder() {
       const details = error instanceof Error ? error.message : 'Could not reach the payment service.';
       setPaymentMessage(`Payment confirmation pending. ${details} Retry without submitting payment again.`);
       setPaying(false);
+      payingRef.current = false;
     }
   }
 
@@ -1239,6 +1295,19 @@ export default function NewOrder() {
   //  'none'   → Personal WhatsApp instruction modal (no order/payment)
   //  else     → the pre-payment warning (Cashfree)
   function requestPayment() {
+    if (paying || confirmingPaymentRef.current || payingRef.current) return;
+    if (pagesStillDetecting) {
+      showToast('Still detecting page count — please wait a moment.', 'error');
+      return;
+    }
+    if (hasUnconfirmedPages) {
+      showToast('Please enter and confirm the page count for all files.', 'error');
+      return;
+    }
+    if (filesMissingSettings) {
+      showToast('Please choose printing settings for all files.', 'error');
+      return;
+    }
     // Email is mandatory for every order — older saved drafts may predate the field.
     if (!EMAIL_REGEX.test(String(guestDetails?.email || '').trim())) {
       setGuestDetailsModalOpen(true);
@@ -1281,7 +1350,7 @@ export default function NewOrder() {
   // "Continue to Payment": run the existing, unchanged pay flow exactly once.
   // The synchronous ref guard blocks double-clicks before React re-renders.
   async function confirmPaymentWarning() {
-    if (confirmingPaymentRef.current || paying) return;
+    if (confirmingPaymentRef.current || paying || payingRef.current) return;
     confirmingPaymentRef.current = true;
     setPaymentWarningOpen(false);
     try {

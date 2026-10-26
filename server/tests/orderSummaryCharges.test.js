@@ -379,4 +379,87 @@ describe('Order Summary & Review Charges Verification', () => {
             assert.equal(hg.total, 108);          // 100 + 5 + 3
         });
     });
+
+    describe('7. Price Mismatch Prevention, Stale State & Idempotency Tests', () => {
+        it('verifies exact agreement for 47 pages, 2 copies, binding ON with no delivery (₹246)', () => {
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files, { classroomDelivery: false });
+            const frontend = calcPriceFrontend(files, { classroomDelivery: false });
+
+            assert.equal(backend.printingAmount, 188);
+            assert.equal(backend.serviceCharge, 6);
+            assert.equal(backend.bindingCharge, 52);
+            assert.equal(backend.deliveryCharge, 0);
+            assert.equal(backend.total, 246);
+
+            assert.equal(frontend.base, 188);
+            assert.equal(frontend.serviceCharge, 6);
+            assert.equal(frontend.bindingCharge, 52);
+            assert.equal(frontend.deliveryCharge, 0);
+            assert.equal(frontend.total, 246);
+        });
+
+        it('verifies exact agreement for 47 pages, 2 copies, binding ON with Classroom Delivery (₹251)', () => {
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files, { collectionLocationId: 'academic-block', classroomDelivery: true });
+            const frontend = calcPriceFrontend(files, { selectedLocationId: 'academic-block', classroomDelivery: true });
+
+            assert.equal(backend.classroomCharge, 5);
+            assert.equal(backend.total, 251); // 246 + 5
+            assert.equal(frontend.deliveryCharge, 5);
+            assert.equal(frontend.total, 251);
+        });
+
+        it('verifies exact agreement for 47 pages, 2 copies, binding ON with Hostel Gate Delivery (₹249)', () => {
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files, { collectionLocationId: 'hostel-gate', classroomDelivery: false });
+            const frontend = calcPriceFrontend(files, { selectedLocationId: 'hostel-gate', classroomDelivery: false });
+
+            assert.equal(backend.deliveryCharge, 3);
+            assert.equal(backend.total, 249); // 246 + 3
+            assert.equal(frontend.deliveryCharge, 3);
+            assert.equal(frontend.total, 249);
+        });
+
+        it('simulates stale state rejection: submitting 2 copies with a stale 1-copy price triggers mismatch', () => {
+            const files = [
+                { pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }
+            ];
+            const backend = priceOrder(files);
+            // Stale frontend state (from before copies was changed from 1 to 2)
+            const staleFrontend = calcPriceFrontend([{ pages: 47, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true }]);
+
+            // Authoritative server calculates ₹246; stale client total was ₹123
+            assert.equal(backend.total, 246);
+            assert.equal(staleFrontend.total, 123);
+
+            // Emulate backend validation check in orders.js
+            const declaredTotal = Number(staleFrontend.total);
+            const isMismatch = Math.abs(declaredTotal - backend.total) > 0.01;
+            assert.equal(isMismatch, true, 'Server must detect mismatch when client sends stale price');
+
+            // Once the client state re-evaluates atomically, both agree
+            const freshFrontend = calcPriceFrontend(files);
+            assert.equal(Math.abs(freshFrontend.total - backend.total) <= 0.01, true, 'Atomic re-evaluated price must match server');
+        });
+
+        it('guarantees idempotency: multiple evaluations of the same state yield identical pricing', () => {
+            const files = [
+                { pages: 20, copies: 2, printingSide: 'double', colorMode: 'color', spiralBinding: true },
+                { pages: 5, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: false }
+            ];
+            const eval1 = priceOrder(files, { collectionLocationId: 'academic-block', classroomDelivery: true });
+            const eval2 = priceOrder(files, { collectionLocationId: 'academic-block', classroomDelivery: true });
+            const eval3 = priceOrder(files, { collectionLocationId: 'academic-block', classroomDelivery: true });
+
+            assert.deepEqual(eval1, eval2);
+            assert.deepEqual(eval2, eval3);
+        });
+    });
 });
