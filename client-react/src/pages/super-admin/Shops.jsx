@@ -194,7 +194,7 @@ function ShopModal({ shopId, onClose }) {
               <table className="sa-table w-full border-collapse text-[0.85rem]">
                 <thead>
                   <tr>
-                    {['Order ID', 'Status', 'Amount', 'Date'].map((h) => (
+                    {['Order ID', 'Status', 'Printing Subtotal', 'Date'].map((h) => (
                       <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-[0.6rem] text-left text-[0.72rem] font-semibold uppercase tracking-wide text-gray-400">{h}</th>
                     ))}
                   </tr>
@@ -204,7 +204,7 @@ function ShopModal({ shopId, onClose }) {
                     <tr key={o.id}>
                       <td data-label="Order ID" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">#{String(o.id).padStart(4, '0')}</td>
                       <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
-                      <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                      <td data-label="Printing Subtotal" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{o.printing_amount == null ? 'Not itemised' : fmtMoney(o.printing_amount)}</td>
                       <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
                     </tr>
                   ))}

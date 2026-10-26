@@ -22,6 +22,12 @@ import {
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { SLOT_LOCATIONS, TIME_SLOTS, isLocationOffered } from '../lib/slotAvailability';
+import {
+  ACADEMIC_BLOCK_ID,
+  academicBlockLocationName,
+  classroomDeliveryNoticeText,
+  locationOptionName,
+} from '../lib/classroomDelivery';
 import { printablePages, parsePageRange, showPageRangeInput, hasInvalidPageRange } from '../lib/pageRange';
 import '../styles/style.css';
 import '../styles/dashboard.css';
@@ -132,18 +138,18 @@ function isSlotPast(time) {
   return nowMinutesIST() >= slotMinutes(time) - SLOT_CUTOFF_MINUTES;
 }
 
-// Printing cost for one file. B&W double-sided is charged per physical sheet
-// (2 PDF pages per sheet, rounded up per copy); B&W single-sided and colour stay per page.
-// Keep in sync with filePrintingCost() in server/routes/orders.js, which verifies the total.
+// Mirrors server/pricing.js. The server remains authoritative at submission.
 function filePrintingCost(f) {
   const pages = printablePages(f);
   const copies = f?.copies || 1;
-  if (f?.colorMode === 'color') return pages * copies * 18;
-  if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+  if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 12 : 10);
+  if (f?.printingSide === 'double') return pages * copies * 3;
   return pages * copies * 2;
 }
 
-const BINDING_CHARGE = 26;
+const BINDING_CHARGE = 25;
+const BINDING_SERVICE_FEE = 1;
+const BINDING_TOTAL = BINDING_CHARGE + BINDING_SERVICE_FEE;
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -249,12 +255,18 @@ export default function NewOrder() {
           }
           setPaperSize('A4');
           setExpressDelivery(unfinished.expressDelivery);
-          setClassroomDelivery(unfinished.classroomDelivery || false);
-          // A saved pairing may no longer exist in the slot matrix — keep the time, drop the location.
-          const savedPairValid = !unfinished.selectedLocationId || !unfinished.selectedTimeSlot
-            || isLocationOffered(unfinished.selectedLocationId, unfinished.selectedTimeSlot);
-          setSelectedLocationId(savedPairValid ? unfinished.selectedLocationId : null);
-          setSelectedLocationName(savedPairValid ? unfinished.selectedLocationName : null);
+          const classroomOn = !!unfinished.classroomDelivery;
+          setClassroomDelivery(classroomOn);
+          // Classroom delivery is always Academic Block; otherwise restore the saved pairing
+          // if it still exists in the slot matrix.
+          const restoredLocationId = classroomOn ? ACADEMIC_BLOCK_ID : unfinished.selectedLocationId;
+          const restoredLocationName = classroomOn
+            ? academicBlockLocationName(true)
+            : unfinished.selectedLocationName;
+          const savedPairValid = !restoredLocationId || !unfinished.selectedTimeSlot
+            || isLocationOffered(restoredLocationId, unfinished.selectedTimeSlot);
+          setSelectedLocationId(savedPairValid ? restoredLocationId : null);
+          setSelectedLocationName(savedPairValid ? restoredLocationName : null);
           setSelectedTimeSlot(unfinished.selectedTimeSlot);
         }
 
@@ -338,8 +350,10 @@ export default function NewOrder() {
         spiralBinding,
         expressDelivery,
         classroomDelivery,
-        selectedLocationId,
-        selectedLocationName,
+        selectedLocationId: classroomDelivery ? ACADEMIC_BLOCK_ID : selectedLocationId,
+        selectedLocationName: classroomDelivery
+          ? academicBlockLocationName(true)
+          : (selectedLocationId === ACADEMIC_BLOCK_ID ? academicBlockLocationName(false) : selectedLocationName),
         selectedTimeSlot,
       },
       files,
@@ -578,7 +592,12 @@ export default function NewOrder() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
     const hostelCharge = selectedLocationId === 'hostel-gate' ? 3 : 0;
     const deliveryCharge = (classroomDelivery ? 5 : 0) + hostelCharge;
-    const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? BINDING_CHARGE : 0), 0);
+    // Binding remains available only for PDFs with the existing five-page minimum;
+    // match the server's pricing predicate so retries/refreshes cannot change totals.
+    const boundFileCount = files.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
+    const bindingBaseCharge = boundFileCount * BINDING_CHARGE;
+    const bindingServiceCharge = boundFileCount * BINDING_SERVICE_FEE;
+    const bindingCharge = bindingBaseCharge + bindingServiceCharge;
 
     // Tiered Service Charge (Slabs)
     const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
@@ -586,7 +605,7 @@ export default function NewOrder() {
     if (totalPages > 0) {
         if (totalPages <= 10) serviceCharge = 1;
         else if (totalPages <= 30) serviceCharge = 2;
-        else serviceCharge = 3;
+        else if (totalPages <= 100) serviceCharge = 3;
     }
 
     return {
@@ -594,6 +613,8 @@ export default function NewOrder() {
       base: printingSubtotal || 0,
       a3Extra: 0,
       deliveryCharge,
+      bindingBaseCharge,
+      bindingServiceCharge,
       bindingCharge,
       serviceCharge,
       total: (printingSubtotal || 0) + deliveryCharge + bindingCharge + serviceCharge
@@ -601,11 +622,13 @@ export default function NewOrder() {
   }
 
   const p = calcPrice();
+  const serviceChargeRuleMissing = p.pages > 100;
   const hasFiles = files.length > 0;
   const filesMissingSettings = files.some(f => !hasCompleteFileSettings(f));
 
   function openBookingModal() {
     if (!hasFiles) { showToast('Please upload at least one file to continue.', 'error'); return; }
+    if (serviceChargeRuleMissing) { showToast('Service-charge pricing above 100 billable pages is not configured. Please contact Campus Print.', 'error'); return; }
     if (pagesStillDetecting) { showToast('Still detecting page count — please wait a moment.', 'error'); return; }
     if (hasUnconfirmedPages) { showToast('Please enter and confirm the page count for all files.', 'error'); return; }
     if (filesMissingSettings) { showToast('Please choose printing settings for all files.', 'error'); return; }
@@ -674,6 +697,25 @@ export default function NewOrder() {
     setPaymentOptionsLoading(false);
   }
 
+  function collectionLocationName() {
+    if (selectedLocationId === ACADEMIC_BLOCK_ID) return academicBlockLocationName(classroomDelivery);
+    return selectedLocationName;
+  }
+
+  function applyClassroomDelivery(enabled) {
+    setClassroomDelivery(enabled);
+    if (enabled) {
+      if (!selectedTimeSlot || isLocationOffered(ACADEMIC_BLOCK_ID, selectedTimeSlot)) {
+        setSelectedLocationId(ACADEMIC_BLOCK_ID);
+        setSelectedLocationName(academicBlockLocationName(true));
+      }
+      return;
+    }
+    if (selectedLocationId === ACADEMIC_BLOCK_ID) {
+      setSelectedLocationName(academicBlockLocationName(false));
+    }
+  }
+
   function selectTimeSlot(time) {
     if (selectedTimeSlot === time) {
       setSelectedTimeSlot(null);
@@ -682,6 +724,11 @@ export default function NewOrder() {
       return;
     }
     setSelectedTimeSlot(time);
+    if (classroomDelivery && isLocationOffered(ACADEMIC_BLOCK_ID, time)) {
+      setSelectedLocationId(ACADEMIC_BLOCK_ID);
+      setSelectedLocationName(academicBlockLocationName(true));
+      return;
+    }
     if (selectedLocationId && !isLocationOffered(selectedLocationId, time)) {
       setSelectedLocationId(null);
       setSelectedLocationName(null);
@@ -743,26 +790,30 @@ export default function NewOrder() {
     }
     setLocationStatuses(locationsData);
     setSlotsLoading(false);
+    if (classroomDelivery) {
+      const academic = locationsData.find((loc) => loc.id === ACADEMIC_BLOCK_ID);
+      const academicOpen = academic && academic.status !== 'unavailable' && academic.status !== 'past' && academic.status !== 'full';
+      if (academicOpen) {
+        setSelectedLocationId(ACADEMIC_BLOCK_ID);
+        setSelectedLocationName(academicBlockLocationName(true));
+      }
+    }
   }
 
   function handleLocationSelect(locId, locName) {
     if (selectedLocationId === locId) {
+      if (classroomDelivery && locId === ACADEMIC_BLOCK_ID) return;
       setSelectedLocationId(null);
       setSelectedLocationName(null);
-      setClassroomDelivery(false);
       return;
     }
     if (selectedTimeSlot && !isLocationOffered(locId, selectedTimeSlot)) return;
     setSelectedLocationId(locId);
-    setSelectedLocationName(locName);
-
-    if (locId === 'academic-block') {
-      // Trigger confirmation for classroom delivery
-      const wantsDelivery = window.confirm('Do you want Classroom Delivery for an additional ₹5?');
-      setClassroomDelivery(wantsDelivery);
+    if (locId === ACADEMIC_BLOCK_ID) {
+      setSelectedLocationName(academicBlockLocationName(classroomDelivery));
     } else {
-      // Automatically disable for other locations
-      setClassroomDelivery(false);
+      setSelectedLocationName(locName);
+      if (classroomDelivery) setClassroomDelivery(false);
     }
   }
 
@@ -777,7 +828,7 @@ export default function NewOrder() {
     formData.append('classroomDelivery', classroomDelivery);
     formData.append('totalPrice', p.total);
     formData.append('collectionLocationId', selectedLocationId);
-    formData.append('collectionLocation', selectedLocationName);
+    formData.append('collectionLocation', collectionLocationName());
     formData.append('collectionTime', selectedTimeSlot);
 
     // Guest Details
@@ -1107,7 +1158,7 @@ export default function NewOrder() {
             expressDelivery,
             classroomDelivery,
             selectedLocationId,
-            selectedLocationName,
+            selectedLocationName: collectionLocationName(),
             selectedTimeSlot,
           },
           files,
@@ -1462,7 +1513,7 @@ export default function NewOrder() {
                                     </span>
                                     <div className="cp-option-text">
                                       <span className="cp-option-name">Color</span>
-                                      <span className="cp-option-price">₹18/page</span>
+                                      <span className="cp-option-price">{f.printingSide === 'double' ? '₹12/page' : '₹10/page'}</span>
                                     </div>
                                   </button>
                                 </div>
@@ -1500,7 +1551,7 @@ export default function NewOrder() {
                                     </span>
                                     <div className="cp-option-text">
                                       <span className="cp-option-name">Double Sided</span>
-                                      <span className="cp-option-price">₹3/sheet</span>
+                                      <span className="cp-option-price">₹3/page</span>
                                     </div>
                                   </button>
                                 </div>
@@ -1532,7 +1583,7 @@ export default function NewOrder() {
                                     <span className="cp-radio-circle" aria-hidden="true"><span className="cp-radio-dot" /></span>
                                     <span className="cp-option-text">
                                       <span className="cp-option-name">Yes</span>
-                                      <span className="cp-option-price">₹26</span>
+                                      <span className="cp-option-price">₹25 + ₹1 fee</span>
                                     </span>
                                   </button>
                                 </div>
@@ -1615,8 +1666,8 @@ export default function NewOrder() {
                   <div className="setting-group">
                     <span className="setting-label">Classroom Delivery</span>
                     <div className="toggle-group" id="classroomDeliveryGroup">
-                      <button className={toggleClass(!classroomDelivery)} onClick={() => setClassroomDelivery(false)}>No (Free)</button>
-                      <button className={toggleClass(classroomDelivery)} onClick={() => setClassroomDelivery(true)}>Yes (+₹5)</button>
+                      <button className={toggleClass(!classroomDelivery)} onClick={() => applyClassroomDelivery(false)}>No (Free)</button>
+                      <button className={toggleClass(classroomDelivery)} onClick={() => applyClassroomDelivery(true)}>Yes (+₹5)</button>
                     </div>
                   </div>
                 </div>
@@ -1642,14 +1693,20 @@ export default function NewOrder() {
                 </div>
                 {p.serviceCharge > 0 && (
                   <div className="summary-line">
-                    <span className="summary-line-label">Service Charge</span>
+                    <span className="summary-line-label">Page-count Service Charge</span>
                     <span className="summary-line-value">₹{p.serviceCharge}</span>
                   </div>
                 )}
                 {p.bindingCharge > 0 && (
                   <div className="summary-line">
                     <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
-                    <span className="summary-line-value">₹{p.bindingCharge}</span>
+                    <span className="summary-line-value">₹{p.bindingBaseCharge}</span>
+                  </div>
+                )}
+                {p.bindingServiceCharge > 0 && (
+                  <div className="summary-line">
+                    <span className="summary-line-label">Binding Service Fee</span>
+                    <span className="summary-line-value">₹{p.bindingServiceCharge}</span>
                   </div>
                 )}
                 {p.deliveryCharge > 0 && (
@@ -1670,12 +1727,13 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="confirm-btn"
-                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || serviceChargeRuleMissing || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue to Order
               </button>
               {summaryNote && <p className="summary-note">{summaryNote}</p>}
+              {serviceChargeRuleMissing && <p className="summary-note" role="alert">Service-charge pricing above 100 billable pages is not configured. Please contact Campus Print.</p>}
             </div>
           </div>
 
@@ -1695,7 +1753,7 @@ export default function NewOrder() {
               <button
                 type="button"
                 className="cp-mobile-sticky-btn"
-                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || files.some((f) => hasInvalidPageRange(f))}
+                disabled={!hasFiles || pagesStillDetecting || hasUnconfirmedPages || serviceChargeRuleMissing || files.some((f) => hasInvalidPageRange(f))}
                 onClick={openBookingModal}
               >
                 Continue →
@@ -1812,6 +1870,11 @@ export default function NewOrder() {
                 {preOrderMode && (
                   <p className="location-subtitle" style={{ color: '#9a3412', fontWeight: 600 }}>📦 This is a pre-order — same-day booking for today is closed.</p>
                 )}
+                {classroomDelivery && (
+                  <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '0.75rem', padding: '0.75rem 1rem', marginTop: '0.75rem', fontSize: '0.85rem', color: '#1e40af' }}>
+                    {classroomDeliveryNoticeText(guestDetails?.classroom)}
+                  </div>
+                )}
               </div>
               <div className="cp-cards-grid">
                 {slotsLoading ? (
@@ -1845,7 +1908,7 @@ export default function NewOrder() {
                       <div className="cp-card-icon">
                         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{loc.icon}</svg>
                       </div>
-                      <h3 className="cp-card-title">{loc.name}</h3>
+                      <h3 className="cp-card-title">{locationOptionName(loc, classroomDelivery)}</h3>
                       <p className="cp-card-sub">
                         {loc.sub}
                         {loc.id === 'hostel-gate' && (
@@ -1948,8 +2011,14 @@ export default function NewOrder() {
                     </div>
                     <div className="cp-review-line">
                       <span>Delivery Option</span>
-                      <strong>{classroomDelivery ? 'Classroom Delivery' : (selectedLocationName || '—')}</strong>
+                      <strong>{collectionLocationName() || '—'}</strong>
                     </div>
+                    {classroomDelivery && (
+                      <div className="cp-review-line">
+                        <span>Classroom Number</span>
+                        <strong>{guestDetails?.classroom?.trim() || '—'}</strong>
+                      </div>
+                    )}
                     <div className="cp-review-line">
                       <span>Email</span>
                       <strong>{guestDetails?.email || currentUser?.email || '—'}</strong>
@@ -1970,7 +2039,7 @@ export default function NewOrder() {
                   <div className="cp-review-row">
                     <div>
                       <span className="cp-review-label">Collection Location</span>
-                      <strong className="cp-review-val">{selectedLocationName || '—'}</strong>
+                      <strong className="cp-review-val">{collectionLocationName() || '—'}</strong>
                     </div>
                     <button type="button" className="cp-inline-edit" onClick={() => goToStep('location')}>Edit Location</button>
                   </div>
@@ -2023,7 +2092,7 @@ export default function NewOrder() {
                     </div>
                     <div className="cp-review-line">
                       <span>Binding</span>
-                      <strong>{spiralBinding ? `Yes — ₹${BINDING_CHARGE} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
+                      <strong>{spiralBinding ? `Yes — ₹${BINDING_TOTAL} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
                     </div>
                     <div className="cp-review-line">
                       <span>Printing ({p.pages} pages)</span>

@@ -15,6 +15,10 @@ import {
   storageErrorMessage,
 } from '../lib/orderStorage';
 import { printablePages, parsePageRange, showPageRangeInput, hasInvalidPageRange } from '../lib/pageRange';
+import {
+  ACADEMIC_BLOCK_ID,
+  academicBlockLocationName,
+} from '../lib/classroomDelivery';
 import '../styles/style.css';
 
 const ALLOWED_TYPES = [
@@ -74,6 +78,7 @@ export default function Home() {
     guestDetails: null,
     spiralBinding: false,
     expressDelivery: false,
+    classroomDelivery: false,
     selectedLocationId: null,
     selectedLocationName: null,
     selectedTimeSlot: null,
@@ -274,44 +279,30 @@ export default function Home() {
   const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
 
   function calcPrice() {
-    // Same rule as NewOrder.jsx / server: B&W double-sided is per physical sheet (2 pages per sheet).
+    // Homepage intentionally previews only the base printing subtotal.
     const printingSubtotal = files.reduce((sum, f) => {
       const pages = printablePages(f);
       const copies = f?.copies || 1;
-      if (f?.colorMode === 'color') return sum + pages * copies * 18;
-      if (f?.printingSide === 'double') return sum + Math.ceil(pages / 2) * copies * 3;
+      if (f?.colorMode === 'color') return sum + pages * copies * (f?.printingSide === 'double' ? 12 : 10);
+      if (f?.printingSide === 'double') return sum + pages * copies * 3;
       return sum + pages * copies * 2;
     }, 0);
-
-    const deliveryCharge = classroomDelivery ? 5 : 0;
-    const bindingCharge = files.reduce((sum, file) => sum + (file.spiralBinding ? 26 : 0), 0);
-
-    // Tiered Service Charge (Slabs) matching NewOrder.jsx and server/pricing.js
-    let serviceCharge = 0;
-    if (totalPages > 0) {
-      if (totalPages <= 10) serviceCharge = 1;
-      else if (totalPages <= 30) serviceCharge = 2;
-      else serviceCharge = 3;
-    }
 
     return {
       basePrice: printingSubtotal,
       a3Extra: 0,
-      deliveryCharge,
-      bindingCharge,
-      serviceCharge,
-      total: printingSubtotal + deliveryCharge + bindingCharge + serviceCharge
+      total: printingSubtotal
     };
   }
 
-  const { basePrice, a3Extra, deliveryCharge, bindingCharge, serviceCharge, total } = calcPrice();
+  const { basePrice, a3Extra, total } = calcPrice();
 
   function getFileCost(f) {
     const pages = printablePages(f);
     const copies = f?.copies || 1;
     if (pages === 0) return 0;
-    if (f?.colorMode === 'color') return pages * copies * 18;
-    if (f?.printingSide === 'double') return Math.ceil(pages / 2) * copies * 3;
+    if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 12 : 10);
+    if (f?.printingSide === 'double') return pages * copies * 3;
     return pages * copies * 2;
   }
 
@@ -333,10 +324,12 @@ export default function Home() {
           guestDetails: unfinished.guestDetails,
           spiralBinding: restoredFiles.some((file) => file.spiralBinding),
           expressDelivery: unfinished.expressDelivery,
-          selectedLocationId: unfinished.selectedLocationId,
-          selectedLocationName: unfinished.selectedLocationName,
-          selectedTimeSlot: unfinished.selectedTimeSlot,
           classroomDelivery: unfinished.classroomDelivery,
+          selectedLocationId: unfinished.classroomDelivery ? ACADEMIC_BLOCK_ID : unfinished.selectedLocationId,
+          selectedLocationName: unfinished.classroomDelivery
+            ? academicBlockLocationName(true)
+            : unfinished.selectedLocationName,
+          selectedTimeSlot: unfinished.selectedTimeSlot,
         };
         if (restoredFiles.length) setFiles(restoredFiles);
         setSize('A4');
@@ -362,14 +355,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!persistReadyRef.current) return;
+    const meta = homeOrderMeta();
+    extraMetaRef.current = meta;
     scheduleSaveCurrentOrder({
-      meta: {
-        ...extraMetaRef.current,
-        paperSize: size,
-        printingSide,
-        spiralBinding: files.some((file) => file.spiralBinding),
-        classroomDelivery,
-      },
+      meta,
       files,
       onError: (err) => alert(storageErrorMessage(err)),
     });
@@ -445,15 +434,26 @@ export default function Home() {
     smoothScrollToElement(document.getElementById(id));
   }
 
-  async function persistHomeOrder(guestDetails) {
-    const meta = {
+  function homeOrderMeta(guestDetails) {
+    const guest = guestDetails || extraMetaRef.current.guestDetails;
+    return {
       ...extraMetaRef.current,
-      guestDetails: guestDetails || extraMetaRef.current.guestDetails,
+      guestDetails: guest,
       paperSize: size,
       printingSide,
       spiralBinding: files.some((file) => file.spiralBinding),
       classroomDelivery,
+      selectedLocationId: classroomDelivery ? ACADEMIC_BLOCK_ID : extraMetaRef.current.selectedLocationId,
+      selectedLocationName: classroomDelivery
+        ? academicBlockLocationName(true)
+        : extraMetaRef.current.selectedLocationId === ACADEMIC_BLOCK_ID
+          ? academicBlockLocationName(false)
+          : extraMetaRef.current.selectedLocationName,
     };
+  }
+
+  async function persistHomeOrder(guestDetails) {
+    const meta = homeOrderMeta(guestDetails);
     extraMetaRef.current = meta;
     await saveCurrentOrder({
       meta,
@@ -585,7 +585,8 @@ export default function Home() {
                   <h3 className="pc-title">Printing Color</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Black &amp; White</span><span className="pc-info-price">₹2 / page</span></div>
-                    <div className="pc-info-row"><span>Color</span><span className="pc-info-price">₹18 / page</span></div>
+                    <div className="pc-info-row"><span>Color Single-sided</span><span className="pc-info-price">₹10 / page</span></div>
+                    <div className="pc-info-row"><span>Color Double-sided</span><span className="pc-info-price">₹12 / page</span></div>
                   </div>
                 </div>
 
@@ -594,8 +595,7 @@ export default function Home() {
                   <h3 className="pc-title">Printing Sides</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Single-sided</span><span className="pc-info-price">₹2 / page</span></div>
-                    <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / sheet</span></div>
-                    <div className="pc-info-row"><span>Double-sided color</span><span className="pc-info-price">₹18 / page</span></div>
+                    <div className="pc-info-row"><span>Double-sided B&amp;W</span><span className="pc-info-price">₹3 / page</span></div>
                   </div>
                 </div>
 
@@ -604,7 +604,7 @@ export default function Home() {
                   <h3 className="pc-title">Add-ons</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Classroom Delivery</span><span className="pc-info-price">₹5</span></div>
-                    <div className="pc-info-row"><span>Binding</span><span className="pc-info-price">₹26 / PDF</span></div>
+                    <div className="pc-info-row"><span>Binding</span><span className="pc-info-price">₹25 + ₹1 fee / PDF</span></div>
                   </div>
                 </div>
               </div>
@@ -810,7 +810,7 @@ export default function Home() {
                                   </span>
                                   <div className="home-option-text">
                                     <span className="home-option-name">Color</span>
-                                    <span className="home-option-price">₹18/page</span>
+                                    <span className="home-option-price">{f.printingSide === 'double' ? '₹12/page' : '₹10/page'}</span>
                                   </div>
                                 </button>
                               </div>
@@ -847,7 +847,7 @@ export default function Home() {
                                   </span>
                                   <div className="home-option-text">
                                     <span className="home-option-name">Double Sided</span>
-                                    <span className="home-option-price">₹3/sheet</span>
+                                    <span className="home-option-price">₹3/page</span>
                                   </div>
                                 </button>
                               </div>
@@ -881,7 +881,7 @@ export default function Home() {
                                   <span className="home-radio-circle" aria-hidden="true"><span className="home-radio-dot" /></span>
                                   <span className="home-option-text">
                                     <span className="home-option-name">{printablePages(f) < 5 ? 'Unavailable' : 'Yes'}</span>
-                                    <span className="home-option-price">{printablePages(f) < 5 ? 'Min 5 pages' : '₹26'}</span>
+                                    <span className="home-option-price">{printablePages(f) < 5 ? 'Min 5 pages' : '₹25 + ₹1 fee'}</span>
                                   </span>
                                 </button>
                               </div>
@@ -928,7 +928,7 @@ export default function Home() {
                                 {printablePages(f)} printable page{printablePages(f) !== 1 ? 's' : ''} × {f.copies} {f.copies > 1 ? 'copies' : 'copy'}
                               </span>
                               <span className="home-file-subtotal">
-                                Doc Subtotal: <strong>₹{cost + (f.spiralBinding ? 26 : 0)}</strong>
+                                Printing Subtotal: <strong>₹{cost}</strong>
                               </span>
                             </div>
                           </div>
@@ -956,21 +956,12 @@ export default function Home() {
                   <div className="ptc-breakdown" id="pcBreakdown">
                     <span className="ptc-line"><span className="ptc-line-label">Total Pages</span><span className="ptc-line-val">{totalPages} pages</span></span>
                     <span className="ptc-line"><span className="ptc-line-label">Printing Charges</span><span className="ptc-line-val">₹{basePrice + a3Extra}</span></span>
-                    {serviceCharge > 0 && (
-                      <span className="ptc-line"><span className="ptc-line-label">Service Charge</span><span className="ptc-line-val">₹{serviceCharge}</span></span>
-                    )}
-                    {deliveryCharge > 0 && (
-                      <span className="ptc-line"><span className="ptc-line-label">Classroom Delivery</span><span className="ptc-line-val">₹{deliveryCharge}</span></span>
-                    )}
-                    {bindingCharge > 0 && (
-                      <span className="ptc-line"><span className="ptc-line-label">Binding</span><span className="ptc-line-val">₹{bindingCharge}</span></span>
-                    )}
                   </div>
 
                   <div className="ptc-divider"></div>
 
                   <div className="ptc-total-row">
-                    <span className="ptc-total-label">Estimated Total</span>
+                    <span className="ptc-total-label">Printing Subtotal</span>
                     <span className={`ptc-total-amount${bump ? ' bump' : ''}`} id="pcTotalAmount">
                       ₹{total}
                     </span>
@@ -1016,6 +1007,12 @@ export default function Home() {
        {/* Guest Details Modal for guest flow */}
       <GuestDetailsModal
         isOpen={modalOpen}
+        initialValues={{
+          fullName: extraMetaRef.current.guestDetails?.fullName || '',
+          email: extraMetaRef.current.guestDetails?.email || '',
+          phone: extraMetaRef.current.guestDetails?.phone || '',
+          classroom: extraMetaRef.current.guestDetails?.classroom || '',
+        }}
         onClose={() => setModalOpen(false)}
         onSubmit={async (details) => {
           const guest = {

@@ -29,6 +29,28 @@ function getLocationById(id) {
     return LOCATIONS.find(loc => loc.id === id) || null;
 }
 
+const ACADEMIC_BLOCK_ID = 'academic-block';
+const ACADEMIC_BLOCK_CLASSROOM_NAME = 'Academic Block - Classroom Delivery';
+
+function isClassroomDelivery(value) {
+    return value === true || value === 'true';
+}
+
+/** Canonical stored location label. Classroom delivery only renames Academic Block. */
+function locationDisplayName(locationId, { classroomDelivery } = {}) {
+    const loc = getLocationById(locationId);
+    if (!loc) return null;
+    if (locationId === ACADEMIC_BLOCK_ID && isClassroomDelivery(classroomDelivery)) {
+        return ACADEMIC_BLOCK_CLASSROOM_NAME;
+    }
+    return loc.name;
+}
+
+function isClassroomDeliveryOrder({ classroomCharge, collectionLocation } = {}) {
+    if (Number(classroomCharge) > 0) return true;
+    return collectionLocation === ACADEMIC_BLOCK_CLASSROOM_NAME;
+}
+
 function getLocationByName(name) {
     return LOCATIONS.find(loc => loc.name === name) || null;
 }
@@ -225,6 +247,9 @@ module.exports = {
     OFFERED_BY_TIME,
     getLocationById,
     getLocationByName,
+    locationDisplayName,
+    isClassroomDeliveryOrder,
+    ACADEMIC_BLOCK_CLASSROOM_NAME,
     nowMinutesIST,
     slotMinutes,
     isSlotPast,

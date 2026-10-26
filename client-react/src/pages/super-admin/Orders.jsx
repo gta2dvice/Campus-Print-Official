@@ -101,7 +101,7 @@ export default function Orders() {
             <table className="sa-table w-full border-collapse text-[0.85rem]">
               <thead>
                 <tr>
-                  {['Order ID', 'Student', 'Shop', 'Pickup', 'Details', 'Status', 'Customer Total', 'Printer', 'Extras', 'Date', ''].map((h) => (
+                  {['Order ID', 'Student', 'Shop', 'Pickup', 'Details', 'Status', 'Printing Subtotal', 'Date', ''].map((h) => (
                     <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-[0.6rem] text-left text-[0.72rem] font-semibold uppercase tracking-wide text-gray-400">{h}</th>
                   ))}
                 </tr>
@@ -118,9 +118,7 @@ export default function Orders() {
                     <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
                     <td data-label="Details" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x</td>
                     <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
-                    <td data-label="Customer Total" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtRupees(o.finance?.customerTotal)}</td>
-                    <td data-label="Printer" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtRupees(o.finance?.printerPayable)}{o.finance?.basis === 'ESTIMATED' && <small className="ml-1 text-amber-600">est.</small>}</td>
-                    <td data-label="Extras" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtRupees(o.finance?.grossExtraRevenue)}{o.finance?.basis === 'ESTIMATED' && <small className="ml-1 text-amber-600">est.</small>}</td>
+                    <td data-label="Printing Subtotal" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtRupees(o.finance?.printerPayable)}{o.finance?.basis === 'ESTIMATED' && <small className="ml-1 text-amber-600">est.</small>}</td>
                     <td data-label="Date" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtDate(o.created_at)}</td>
                     <td className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]">
                       <button onClick={() => setOpenOrderId(o.id)} className="rounded-full border border-gray-200 px-[0.7rem] py-[0.32rem] text-[0.72rem] font-semibold text-gray-600 hover:border-blue-500 hover:bg-blue-500/[0.08] hover:text-blue-500">View</button>

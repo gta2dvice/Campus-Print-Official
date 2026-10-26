@@ -17,6 +17,19 @@ export default function GuestDetailsModal({ isOpen, onClose, onSubmit, initialVa
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData({
+      fullName: initialValues.fullName || '',
+      email: initialValues.email || '',
+      phone: initialValues.phone || '',
+      classroom: initialValues.classroom || '',
+      batch: initialValues.batch || '',
+      classSection: initialValues.classSection || '',
+    });
+    setError('');
+  }, [isOpen, initialValues.fullName, initialValues.email, initialValues.phone, initialValues.classroom, initialValues.batch, initialValues.classSection]);
+
   // While open: keep the background page from scrolling, close on Escape,
   // and restore normal scrolling on close.
   useEffect(() => {
