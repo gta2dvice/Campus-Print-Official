@@ -52,9 +52,9 @@ function priceOrder(resolvedFiles, { collectionLocationId, classroomDelivery, bi
     const classroomCharge = classroomDelivery === 'true' || classroomDelivery === true
         ? PRICING.classroomDelivery
         : 0;
-    const deliveryCharge = collectionLocationId === 'hostel-gate'
-        ? PRICING.hostelDelivery
-        : 0;
+    const deliveryCharge = classroomCharge > 0
+        ? 0
+        : (collectionLocationId === 'hostel-gate' ? PRICING.hostelDelivery : 0);
     const hasPerFileBinding = resolvedFiles.some(
         file => Object.prototype.hasOwnProperty.call(file, 'spiralBinding')
     );

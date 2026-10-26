@@ -484,6 +484,10 @@ async function validateAndPriceSubmission(req, res) {
         amount = priced.amount;
         data.charges = priced.charges;
         data.spiralBinding = priced.charges.bindingCharge > 0;
+        const hasColor = resolved.some(f => f.colorMode === 'color');
+        const hasDouble = resolved.some(f => f.printingSide === 'double');
+        data.colorOption = hasColor ? 'color' : 'bw';
+        data.printingSide = hasDouble ? 'double' : 'single';
     } catch (e) {
         res.status(e.httpStatus || 400).json({ message: e.message, code: e.code || 'FILE_VALIDATION_FAILED' });
         return null;

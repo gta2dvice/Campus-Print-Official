@@ -271,6 +271,22 @@ function OrderModal({ orderId, onClose, onChanged }) {
             </DetailItem>
             <DetailItem label="Collection Location">{order.collection_location || '—'}</DetailItem>
             <DetailItem label="Collection Time">{order.collection_time || '—'}</DetailItem>
+            <DetailItem label="Delivery Type">
+              {(Number(order.classroom_charge) > 0 || order.collection_location === 'Academic Block - Classroom Delivery' || order.collection_location_id === 'classroom-delivery')
+                ? 'Classroom Delivery — Yes'
+                : (order.collection_location_id === 'hostel-gate' || Number(order.delivery_charge) > 0
+                    ? 'Hostel Delivery — Yes'
+                    : 'Counter Pickup')}
+            </DetailItem>
+            {(Number(order.classroom_charge) > 0 || order.collection_location === 'Academic Block - Classroom Delivery' || order.collection_location_id === 'classroom-delivery') && (
+              <DetailItem label="Classroom Number">{order.classroom_number || order.guest_classroom || order.class_room_number || '—'}</DetailItem>
+            )}
+            <DetailItem label="Binding">{order.spiral_binding ? 'Yes' : 'No'}</DetailItem>
+            {order.spiral_binding && (
+              <DetailItem label="Binding Description">
+                {order.binding_description || order.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'None'}
+              </DetailItem>
+            )}
             <DetailItem label="Ticket">{order.ticket_number || '—'}</DetailItem>
             <DetailItem label="Printing Side">{order.printing_side === 'double' ? 'Double-Sided' : 'Single-Sided'}</DetailItem>
             <DetailItem label="Placed On">{fmtDate(order.created_at)}</DetailItem>
@@ -286,8 +302,12 @@ function OrderModal({ orderId, onClose, onChanged }) {
                     {f.original_name} <small className="text-gray-400">({(f.size_bytes / 1024).toFixed(0)} KB)</small>
                     <small className="block text-gray-500">
                       {f.page_count ? `${f.page_count} pages` : 'pages —'} · {f.copies || 1}x · {f.color_mode === 'color' ? 'Color' : 'B&W'} · {f.printing_side === 'double' ? 'Double-sided' : 'Single-sided'}
+                      {(f.spiral_binding === 1 || f.spiral_binding === true) && ' · Binding: Yes'}
                       {f.printing_charge != null && ` · printing ${fmtRupees(f.printing_charge)}`}
                     </small>
+                    {f.binding_description && (
+                      <small className="block text-amber-700 font-medium">Binding: {f.binding_description}</small>
+                    )}
                   </span>
                   <span className="flex-shrink-0">
                     {f.file_deleted_at ? (

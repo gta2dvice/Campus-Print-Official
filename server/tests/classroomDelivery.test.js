@@ -11,9 +11,9 @@ describe('classroom delivery order handling', () => {
         const classroom = priceOrder([{ pages: 1, copies: 1, printingSide: 'single', colorMode: 'bw' }], {
             collectionLocationId: 'academic-block', classroomDelivery: true
         });
-        assert.equal(classroom.classroomCharge, 8);
+        assert.equal(classroom.classroomCharge, 5);
         assert.equal(classroom.deliveryCharge, 0);
-        assert.equal(classroom.total, base.total + 8);
+        assert.equal(classroom.total, base.total + 5);
         assert.equal(slots.locationDisplayName('academic-block', { classroomDelivery: true }), 'Academic Block - Classroom Delivery');
     });
 

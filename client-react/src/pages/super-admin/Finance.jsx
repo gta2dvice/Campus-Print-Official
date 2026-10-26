@@ -45,61 +45,47 @@ function Section({ title, children }) {
   );
 }
 
-/** Per-order breakdown (sections A, B, C) from GET /api/super-admin/orders/:id → finance. */
+/** Per-order financial summary from GET /api/super-admin/orders/:id → finance. */
 export function OrderFinance({ finance }) {
   if (!finance) return null;
-  const { printing, extras, summary, reconciliation, notes, basis } = finance;
+  const { printing, extras, summary, notes, basis, deliveryLabel, deliveryCharge } = finance;
   const estimated = basis === 'ESTIMATED';
   const est = estimated ? ' (est.)' : '';
+
+  // Determine selected delivery and its charge
+  const deliveryText = deliveryLabel
+    ? `${deliveryLabel} — ${fmtRupees(deliveryCharge ?? 0)}`
+    : (extras?.classroomCharge > 0
+        ? `Classroom Delivery — ${fmtRupees(extras.classroomCharge)}`
+        : (extras?.deliveryCharge > 0
+            ? `Hostel Gate Delivery — ${fmtRupees(extras.deliveryCharge)}`
+            : `Counter Pickup — ${fmtRupees(0)}`));
+
+  const bindingVal = (extras?.bindingCharge && extras.bindingCharge > 0)
+    ? fmtRupees(extras.bindingCharge)
+    : (summary?.totalBinding && summary.totalBinding > 0)
+        ? fmtRupees(summary.totalBinding)
+        : '₹0';
 
   return (
     <div className="mt-5 flex flex-col gap-3">
       <h4 className="text-[0.9rem] font-bold text-gray-900">
-        Financial Breakdown{' '}
+        Financial Summary{' '}
         {estimated && <span className="ml-1 rounded-full bg-amber-500/10 px-2 py-[0.1rem] text-[0.7rem] font-bold text-amber-700">Estimated</span>}
       </h4>
 
-      <Section title="A. Printer's printing charges">
-        {printing.lines.length ? printing.lines.map((line) => (
-          <Row
-            key={line.category}
-            label={`${line.label} — ${line.printedPages} page${line.printedPages === 1 ? '' : 's'} printed (${line.files} file${line.files === 1 ? '' : 's'})`}
-            value={fmtRupees(line.amount, 'not itemised')}
-          />
-        )) : <Row label="No per-file page data for this order" value="" muted />}
-        <Row label={`Total printing charges${est}`} value={fmtRupees(printing.totalPrinting)} strong />
-        <Row label={`Printer payable${est}`} value={fmtRupees(printing.printerPayable)} strong />
-      </Section>
-
-      <Section title="B. Campus Print's additional charges">
-        <Row label={`Delivery charge (Hostel Gate)${est}`} value={fmtRupees(extras.deliveryCharge)} />
-        <Row label={`Service charge${est}`} value={fmtRupees(extras.serviceCharge)} />
-        <Row label="Classroom surcharge" value={fmtRupees(extras.classroomCharge, 'not recorded')} />
-        <Row label={`Binding charge${est}`} value={fmtRupees(extras.bindingCharge, 'not recorded')} />
-        <Row label="Other platform charges" value={fmtRupees(extras.otherCharges)} />
-        <Row label={`Total additional charges${est}`} value={fmtRupees(extras.totalExtras)} strong />
-      </Section>
-
-      <Section title="C. Order financial summary">
-        <Row label="Total printing charges" value={fmtRupees(summary.totalPrinting)} />
-        <Row label="Total delivery charges" value={fmtRupees(summary.totalDelivery)} />
-        <Row label="Total service charges" value={fmtRupees(summary.totalService)} />
-        <Row label="Total classroom surcharge" value={fmtRupees(summary.totalClassroom, 'not recorded')} />
-        <Row label="Total binding charges" value={fmtRupees(summary.totalBinding, 'not recorded')} />
-        <Row label="Other applicable charges" value={fmtRupees(summary.otherCharges)} />
-        <Row label="Total amount payable by customer" value={fmtRupees(summary.customerTotal)} strong />
-        <Row label="Amount paid" value={fmtRupees(summary.amountPaid)} />
-        <Row label="Refunded" value={fmtRupees(summary.refundedAmount)} />
-        <Row label="Payment status" value={PAYMENT_STATUS_LABELS[summary.paymentStatus] || summary.paymentStatus} />
-        <Row label="Printer payable" value={fmtRupees(summary.printerPayable)} strong />
-        <Row label="Campus Print gross extra-charge revenue (not profit)" value={fmtRupees(summary.grossExtraRevenue)} strong />
-        <Row label="Taxes" value="not tracked" muted />
-        <Row label="Discounts" value="not tracked" muted />
-        <Row label="Gateway fees" value="not tracked (see Cashfree dashboard)" muted />
-        <Row
-          label="Reconciles with customer total"
-          value={reconciliation.reconciled ? '✓ Yes' : estimated ? 'Estimated — cannot verify' : `✗ Off by ${fmtRupees(reconciliation.difference)}`}
-        />
+      <Section title="Financial Breakdown">
+        <Row label={`Printing subtotal${est}`} value={fmtRupees(summary?.totalPrinting ?? printing?.totalPrinting, 'Not itemised')} />
+        <Row label={`Service charge${est}`} value={fmtRupees(summary?.totalService ?? extras?.serviceCharge ?? 0)} />
+        <Row label={`Selected delivery${est}`} value={deliveryText} />
+        <Row label={`Binding amount${est}`} value={bindingVal} />
+        <Row label="Customer total payable" value={fmtRupees(summary?.customerTotal)} strong />
+        <Row label="Amount actually paid / captured" value={fmtRupees(summary?.amountPaid ?? 0)} />
+        {summary?.refundedAmount > 0 && (
+          <Row label="Refund amount" value={fmtRupees(summary.refundedAmount)} />
+        )}
+        <Row label="Payment status" value={PAYMENT_STATUS_LABELS[summary?.paymentStatus] || summary?.paymentStatus || 'PAYMENT_PENDING'} />
+        <Row label={`Printer payable${est}`} value={summary?.printerPayable != null ? fmtRupees(summary.printerPayable) : 'Not available'} strong />
       </Section>
 
       {notes?.length > 0 && (
@@ -154,8 +140,7 @@ export function FinancialSummary() {
             <Row label="Service charges" value={fmtRupees(t.totalService)} />
             <Row label="Classroom surcharges" value={fmtRupees(t.totalClassroom)} />
             <Row label="Binding charges" value={fmtRupees(t.totalBinding)} />
-            <Row label="Other charges" value={fmtRupees(t.otherCharges)} />
-            <Row label="Gross extra-charge revenue (not profit)" value={fmtRupees(t.grossExtraRevenue)} strong />
+            <Row label="Gross extra-charge revenue" value={fmtRupees(t.grossExtraRevenue)} strong />
             <Row label="Customer total" value={fmtRupees(t.itemisedCustomerTotal)} />
             <Row label="Reconciles" value={t.reconciled ? '✓ Yes' : '✗ Check orders'} />
           </Section>
@@ -164,7 +149,6 @@ export function FinancialSummary() {
             <Row label={`Placed before itemising (${t.notItemisedOrders} orders)`} value={fmtRupees(t.notItemisedCustomerTotal)} />
             <Row label="Total customer payments" value={fmtRupees(t.customerTotal)} strong />
             <Row label="Refunded" value={fmtRupees(data.refunds.refundedAmount)} />
-            <Row label="Taxes / discounts / gateway fees" value="not tracked" muted />
             {!location && data.byLocation.map((l) => (
               <Row key={l.locationId || 'none'} label={`${l.location || 'No location'} — ${l.paidOrders} orders`} value={`printer ${fmtRupees(l.printerPayable)} · extras ${fmtRupees(l.grossExtraRevenue)}`} />
             ))}

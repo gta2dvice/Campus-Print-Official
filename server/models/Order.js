@@ -61,8 +61,9 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
              collection_location_id, collection_location, collection_time, total_pages,
              collection_date,
              guest_full_name, guest_email, guest_phone, guest_classroom, payment_status, payment_method, ticket_status,
-             ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge, binding_charge)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?)
+             ticket_access_token_hash, printing_amount, service_charge, delivery_charge, classroom_charge, binding_charge,
+             color_option, printing_side)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PAYMENT_PENDING', ?, 'PENDING_PAYMENT', ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
             [
                 userId || null,
@@ -89,7 +90,9 @@ async function createOrder(userId, shopId, data, { payment, ticketTokenHash = nu
                 charges.serviceCharge ?? null,
                 charges.deliveryCharge ?? null,
                 charges.classroomCharge ?? null,
-                charges.bindingCharge ?? null
+                charges.bindingCharge ?? null,
+                data.colorOption || 'bw',
+                data.printingSide || 'single'
             ]
         );
         const id = result.insertId;
@@ -715,16 +718,32 @@ async function getPlatformStats() {
         `SELECT COALESCE(SUM(total_price), 0) AS revenue FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed'`
     );
+    const [[refundRow]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS refund_total FROM payments
+         WHERE status = 'refunded'`
+    );
+    const [[pagesRow]] = await pool.query(
+        `SELECT COALESCE(SUM(total_pages), 0) AS total_pages FROM orders
+         WHERE payment_status = 'PAID'`
+    );
     const [ordersOverTime] = await pool.query(
         `SELECT DATE(created_at) AS date, COUNT(*) AS count
          FROM orders WHERE payment_status = 'PAID' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
          GROUP BY DATE(created_at) ORDER BY date ASC`
     );
 
+    const grossRevenue = parseFloat(revenueRow.revenue);
+    const refundTotal = parseFloat(refundRow.refund_total);
+    const netRevenue = Math.max(0, grossRevenue - refundTotal);
+
     return {
         totalOrders: Object.values(counts).reduce((a, b) => a + b, 0),
         statusCounts: counts,
-        totalRevenue: parseFloat(revenueRow.revenue),
+        grossRevenue,
+        refundTotal,
+        netRevenue,
+        totalRevenue: netRevenue,
+        totalPages: parseInt(pagesRow.total_pages, 10) || 0,
         ordersOverTime: ordersOverTime.map(r => ({ date: r.date, count: parseInt(r.count, 10) }))
     };
 }
