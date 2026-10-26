@@ -288,7 +288,11 @@ export default function Orders() {
               </thead>
               <tbody>
                 {data.orders.map((o) => (
-                  <tr key={o.id}>
+                  <tr
+                    key={o.id}
+                    className="cursor-pointer hover:bg-slate-50/80 transition-colors"
+                    onClick={() => openOrderModal(o.id)}
+                  >
                     <td data-label="Order ID" className="font-extrabold text-slate-900 whitespace-nowrap">#{String(o.id).padStart(4, '0')}</td>
                     <td data-label="Customer & Contact">
                       <div>
@@ -299,7 +303,9 @@ export default function Orders() {
                     <td data-label="Pickup Slot" className="text-slate-600 font-medium whitespace-nowrap">{fmtPickup(o)}</td>
                     <td data-label="Specs" className="whitespace-nowrap">
                       <span className="inline-block rounded bg-slate-100 px-2 py-0.5 text-[0.7rem] font-bold text-slate-700">
-                        {o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size} · {o.copies}x
+                        {o.color_option === 'bw' ? 'B&W' : 'Color'} · {o.paper_size || 'A4'} · {o.copies}x
+                        {o.classroom_delivery && <span className="ml-1 text-blue-600">· Classroom</span>}
+                        {o.spiral_binding && <span className="ml-1 text-emerald-600">· Binding</span>}
                       </span>
                     </td>
                     <td data-label="Status" className="whitespace-nowrap">
@@ -315,10 +321,10 @@ export default function Orders() {
                     </td>
                     <td data-label="Printing" className="font-black text-slate-900 whitespace-nowrap">{fmtPrinterPayable(o.printer_payable)}</td>
                     <td data-label="Date" className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
-                    <td data-label="Actions" className="text-right whitespace-nowrap">
+                    <td data-label="Actions" className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="admin-actions-cell">
                         <button
-                          onClick={() => openOrderModal(o.id)}
+                          onClick={(e) => { e.stopPropagation(); openOrderModal(o.id); }}
                           className="admin-action-btn admin-action-btn-view"
                         >
                           Details
@@ -326,7 +332,7 @@ export default function Orders() {
                         {(NEXT_ACTIONS_CONFIG[o.status] || []).map((a) => (
                           <button
                             key={a.status}
-                            onClick={() => (a.status === 'rejected' ? openRejectModal(o.id) : updateOrderStatus(o.id, a.status))}
+                            onClick={(e) => { e.stopPropagation(); a.status === 'rejected' ? openRejectModal(o.id) : updateOrderStatus(o.id, a.status); }}
                             disabled={busyOrderId === o.id}
                             className={ACTION_BUTTON_CLASSES[a.status] || 'admin-action-btn admin-action-btn-print'}
                           >
@@ -401,8 +407,51 @@ export default function Orders() {
                         <span className="admin-modal-value">{modalOrder.customer_email || 'N/A'}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Room / Hostel</span>
-                        <span className="admin-modal-value">{modalOrder.class_room_number || 'N/A'}</span>
+                        <span className="admin-modal-label">Classroom / Room</span>
+                        <span className="admin-modal-value">{modalOrder.classroom_number || modalOrder.guest_classroom || modalOrder.class_room_number || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Delivery & Collection Section */}
+                  <div className="admin-modal-section">
+                    <div className="admin-modal-section-title">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      Delivery &amp; Collection
+                    </div>
+                    <div className="admin-modal-grid">
+                      <div className="admin-modal-field">
+                        <span className="admin-modal-label">Delivery Type</span>
+                        <span className="admin-modal-value font-bold text-slate-800">
+                          {modalOrder.classroom_delivery
+                            ? 'Classroom Delivery — Yes'
+                            : (modalOrder.collection_location_id === 'hostel-gate' || modalOrder.delivery_charge === 3
+                                ? 'Hostel Delivery — Yes'
+                                : 'Counter Pickup')}
+                        </span>
+                      </div>
+                      <div className="admin-modal-field">
+                        <span className="admin-modal-label">Delivery Charge</span>
+                        <span className="admin-modal-value">
+                          {modalOrder.classroom_delivery ? '₹5' : (modalOrder.collection_location_id === 'hostel-gate' || modalOrder.delivery_charge === 3 ? '₹3' : '₹0')}
+                        </span>
+                      </div>
+                      <div className="admin-modal-field">
+                        <span className="admin-modal-label">Classroom Number</span>
+                        <span className="admin-modal-value font-bold text-slate-800">
+                          {modalOrder.classroom_number || modalOrder.guest_classroom || modalOrder.class_room_number || '—'}
+                        </span>
+                      </div>
+                      <div className="admin-modal-field">
+                        <span className="admin-modal-label">Collection Location</span>
+                        <span className="admin-modal-value">{modalOrder.collection_location || '—'}</span>
+                      </div>
+                      <div className="admin-modal-field">
+                        <span className="admin-modal-label">Time Slot</span>
+                        <span className="admin-modal-value">{fmtPickup(modalOrder)}</span>
                       </div>
                     </div>
                   </div>
@@ -417,7 +466,7 @@ export default function Orders() {
                     </div>
                     <div className="admin-modal-grid">
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Color Mode</span>
+                        <span className="admin-modal-label">Print Mode (Color)</span>
                         <span className="admin-modal-value">{modalOrder.color_option === 'bw' ? 'Black & White' : 'Color'}</span>
                       </div>
                       <div className="admin-modal-field">
@@ -425,26 +474,36 @@ export default function Orders() {
                         <span className="admin-modal-value">{modalOrder.paper_size || 'A4'}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Copies</span>
-                        <span className="admin-modal-value">{modalOrder.copies}</span>
-                      </div>
-                      <div className="admin-modal-field">
                         <span className="admin-modal-label">Printing Side</span>
                         <span className="admin-modal-value">{modalOrder.printing_side === 'double' ? 'Double-Sided' : 'Single-Sided'}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Binding</span>
-                        <span className="admin-modal-value">{modalOrder.spiral_binding ? 'Yes' : 'No'}</span>
+                        <span className="admin-modal-label">Copies</span>
+                        <span className="admin-modal-value">{modalOrder.copies}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Express Delivery</span>
-                        <span className="admin-modal-value">{modalOrder.express_delivery ? 'Yes' : 'No'}</span>
+                        <span className="admin-modal-label">PDF Count</span>
+                        <span className="admin-modal-value">{modalOrder.pdf_count || modalOrder.file_count || modalOrder.files?.length || 0}</span>
                       </div>
                       <div className="admin-modal-field">
-                        <span className="admin-modal-label">Pickup Slot</span>
-                        <span className="admin-modal-value">{fmtPickup(modalOrder)}</span>
+                        <span className="admin-modal-label">Binding Status</span>
+                        <span className="admin-modal-value font-bold text-slate-800">{modalOrder.spiral_binding ? 'Yes' : 'No'}</span>
                       </div>
                       <div className="admin-modal-field">
+                        <span className="admin-modal-label">Admin Binding Amount</span>
+                        <span className="admin-modal-value font-bold text-slate-800">
+                          {modalOrder.spiral_binding ? `₹${modalOrder.binding_amount || 25}` : '₹0'}
+                        </span>
+                      </div>
+                      {modalOrder.spiral_binding && (
+                        <div className="admin-modal-field col-span-2">
+                          <span className="admin-modal-label">Binding Description</span>
+                          <span className="admin-modal-value text-slate-700 bg-amber-50/70 p-2 rounded border border-amber-200/60 block">
+                            {modalOrder.binding_description || modalOrder.files?.filter(f => f.binding_description).map(f => `${f.original_name}: ${f.binding_description}`).join('; ') || 'No description provided'}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-modal-field col-span-2">
                         <span className="admin-modal-label">Printer Payable (printing only)</span>
                         <span className="admin-modal-value text-blue-600 text-base font-black">{fmtPrinterPayable(modalOrder.printer_payable)}</span>
                       </div>
@@ -509,8 +568,16 @@ export default function Orders() {
                                   {' · '}{f.copies || 1} cop{(f.copies || 1) === 1 ? 'y' : 'ies'}
                                   {' · '}{f.color_mode === 'color' ? 'Color' : 'B&W'}
                                   {' · '}{f.printing_side === 'double' ? 'Double-sided' : 'Single-sided'}
+                                  {(f.spiral_binding === 1 || f.spiral_binding === true) && (
+                                    <> · <strong className="text-emerald-700">Binding (₹25)</strong></>
+                                  )}
                                   {f.printing_charge != null && <> · <strong>{fmtMoney(f.printing_charge)}</strong></>}
                                 </div>
+                                {f.binding_description && (
+                                  <div className="mt-1 text-[0.72rem] text-slate-700 bg-amber-50/80 border border-amber-200/60 rounded px-2 py-0.5">
+                                    <strong>Binding Note:</strong> {f.binding_description}
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">

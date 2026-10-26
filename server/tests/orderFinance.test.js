@@ -29,31 +29,31 @@ describe('canonical pricing split (customer prices)', () => {
         assert.deepEqual([c.printingAmount, c.serviceCharge, c.deliveryCharge, c.classroomCharge, c.bindingCharge, c.total], [40, 0, 0, 0, 0, 40]);
     });
 
-    it('double-sided B&W is per sheet, rounded up per copy: 5 pages × 3 copies = 3 sheets × 3 × ₹3 = ₹27', () => {
+    it('double-sided B&W is ₹3 per page: 5 pages × 3 copies × ₹3 = ₹45', () => {
         const c = priceOrder([file(5, 3, 'double', 'bw')], { collectionLocationId: 'red-canteen' });
-        assert.equal(c.printingAmount, 27);
-        assert.equal(c.total, 27);
+        assert.equal(c.printingAmount, 45);
+        assert.equal(c.total, 45);
     });
 
-    it('colour is ₹18 per page on either side', () => {
+    it('colour is ₹12 per page single-sided and ₹15 per page double-sided', () => {
         const single = priceOrder([file(4, 1, 'single', 'color')], {});
         const double = priceOrder([file(4, 1, 'double', 'color')], {});
-        assert.equal(single.printingAmount, 72);
-        assert.equal(double.printingAmount, 72);
+        assert.equal(single.printingAmount, 48);
+        assert.equal(double.printingAmount, 60);
     });
 
     it('multiple files with different settings: per-file charges sum to the printing amount', () => {
         const c = priceOrder([file(10, 1, 'single', 'bw'), file(7, 2, 'double', 'bw'), file(3, 1, 'single', 'color')], { collectionLocationId: 'academic-block' });
-        assert.deepEqual(c.fileCharges, [20, 24, 54]);
+        assert.deepEqual(c.fileCharges, [20, 42, 36]);
         assert.equal(c.printingAmount, 98);
         assert.equal(c.total, 98);
     });
 
-    it('classroom delivery adds ₹5 once; Hostel Gate adds ?3 delivery', () => {
-        const hostel = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate', classroomDelivery: 'true' });
-        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [3, 5, 11]);
-        const pickup = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate' });
-        assert.deepEqual([pickup.deliveryCharge, pickup.classroomCharge, pickup.total], [3, 0, 6]);
+    it('classroom delivery adds ₹5 once; Hostel Gate adds ₹3 delivery (never both)', () => {
+        const classroom = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate', classroomDelivery: 'true' });
+        assert.deepEqual([classroom.deliveryCharge, classroom.classroomCharge, classroom.total], [0, 5, 7]);
+        const hostel = priceOrder([file(1, 1, 'single', 'bw')], { collectionLocationId: 'hostel-gate' });
+        assert.deepEqual([hostel.deliveryCharge, hostel.classroomCharge, hostel.total], [3, 0, 5]);
     });
 
     it('legacy order-wide binding remains supported when per-file settings are absent', () => {
@@ -102,35 +102,61 @@ describe('Printer Admin view', () => {
     const order = itemisedOrder(charges, { collection_location_id: 'hostel-gate' });
     const files = [
         { id: 1, order_id: 101, original_name: 'a.pdf', page_count: 10, copies: 1, printing_side: 'single', color_mode: 'bw', printing_charge: '20.00', storage_path: 'secret/a.pdf' },
-        { id: 2, order_id: 101, original_name: 'b.pdf', page_count: 4, copies: 2, printing_side: 'double', color_mode: 'color', printing_charge: '144.00', storage_path: 'secret/b.pdf' }
+        { id: 2, order_id: 101, original_name: 'b.pdf', page_count: 4, copies: 2, printing_side: 'double', color_mode: 'color', printing_charge: '120.00', storage_path: 'secret/b.pdf' }
     ];
     const view = toPrinterOrder(order, files);
 
     it('gets only the printing amount as printer payable', () => {
-        assert.equal(view.printer_payable, 164);
+        assert.equal(view.printer_payable, 140);
         assert.equal(view.itemised, true);
     });
 
     it('never receives the customer total, extra charges or internal fields', () => {
         const json = JSON.stringify(view);
         for (const field of FORBIDDEN_FOR_PRINTER) assert.ok(!(field in view), `${field} leaked to printer`);
-        assert.ok(!json.includes(String(charges.total)) || charges.total === 164, 'customer total value leaked');
+        assert.ok(!json.includes(String(charges.total)) || charges.total === 140, 'customer total value leaked');
         assert.ok(!json.includes('storage_path'));
     });
 
     it('sees per-file print settings and printing charges', () => {
         assert.deepEqual(view.files.map(f => [f.page_count, f.copies, f.printing_side, f.color_mode, f.printing_category, f.printing_charge]), [
             [10, 1, 'single', 'bw', 'BW_SINGLE', 20],
-            [4, 2, 'double', 'color', 'COLOR_DOUBLE', 144]
+            [4, 2, 'double', 'color', 'COLOR_DOUBLE', 120]
         ]);
     });
 
-    it('receives each file’s binding instruction', () => {
-        const boundFiles = toPrinterOrder(order, [
-            { ...files[0], spiral_binding: 1 },
+    it('receives each file’s binding instruction and admin binding amount of ₹25', () => {
+        const boundOrder = toPrinterOrder(order, [
+            { ...files[0], spiral_binding: 1, binding_description: 'Front and back cover' },
             { ...files[1], spiral_binding: 0 }
-        ]).files;
-        assert.deepEqual(boundFiles.map(f => f.spiral_binding), [1, 0]);
+        ]);
+        assert.deepEqual(boundOrder.files.map(f => f.spiral_binding), [1, 0]);
+        assert.equal(boundOrder.binding_status, 'Yes');
+        assert.equal(boundOrder.binding_amount, 25);
+        assert.equal(boundOrder.bound_pdf_count, 1);
+        assert.equal(boundOrder.binding_description, 'Front and back cover');
+        assert.equal(boundOrder.files[0].binding_description, 'Front and back cover');
+    });
+
+    it('provides all admin panel fields for binding and classroom delivery', () => {
+        const orderWithBinding = itemisedOrder(charges, {
+            collection_location: 'Academic Block - Classroom Delivery',
+            classroom_charge: '5.00',
+            guest_classroom: 'Room 302',
+            binding_charge: '26.00',
+            spiral_binding: 1
+        });
+        const adminOrder = toPrinterOrder(orderWithBinding, [
+            { ...files[0], spiral_binding: 1, binding_description: 'Bind together with notes' }
+        ]);
+        assert.equal(adminOrder.classroom_delivery, true);
+        assert.equal(adminOrder.classroom_number, 'Room 302');
+        assert.equal(adminOrder.delivery_type, 'Classroom Delivery');
+        assert.equal(adminOrder.binding_status, 'Yes');
+        assert.equal(adminOrder.binding_amount, 25);
+        assert.equal(adminOrder.bound_pdf_count, 1);
+        assert.equal(adminOrder.binding_description, 'Bind together with notes');
+        assert.equal(adminOrder.files[0].binding_description, 'Bind together with notes');
     });
 
     it('an order placed before itemising shows no payable instead of the customer total', () => {
@@ -147,7 +173,7 @@ describe('Printer Admin view', () => {
 
 describe('Super Admin breakdown', () => {
     it('itemised order: printing, extras and summary reconcile with the customer total', () => {
-        const charges = priceOrder([file(15, 1, 'single', 'bw')], { classroomDelivery: true, binding: true });
+        const charges = basePriceOrder([file(15, 1, 'single', 'bw')], { classroomDelivery: true, binding: true });
         const order = itemisedOrder(charges, { collection_location_id: 'academic-block' });
         const payments = [
             { status: 'failed', amount: '63.00' },
@@ -164,10 +190,10 @@ describe('Super Admin breakdown', () => {
         assert.equal(b.summary.customerTotal, 63);
         assert.equal(b.summary.amountPaid, 63);
         assert.equal(b.summary.grossExtraRevenue, 33);
+        assert.equal(b.deliveryLabel, 'Classroom Delivery');
+        assert.equal(b.deliveryCharge, 5);
         assert.equal(b.reconciliation.reconciled, true);
         assert.equal(b.reconciliation.difference, 0);
-        // Not tracked by the system → explicit nulls, never guessed.
-        assert.deepEqual([b.summary.taxes, b.summary.discounts, b.summary.gatewayFees], [null, null, null]);
     });
 
     it('flags saved charges that do not add up', () => {

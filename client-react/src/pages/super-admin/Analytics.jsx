@@ -34,17 +34,18 @@ export default function Analytics() {
 
   const oc = data.orderStats.statusCounts;
   const total = data.orderStats.totalOrders;
-  const rejectedCancelled = oc.rejected + oc.cancelled;
-  const cancelRate = total > 0 ? ((rejectedCancelled / total) * 100).toFixed(1) : '0.0';
   const maxStatus = Math.max(...Object.values(oc), 1);
+  const refundTotal = data.orderStats.refundTotal || 0;
+  const netRevenue = data.orderStats.netRevenue ?? data.orderStats.totalRevenue;
+  const totalPages = data.orderStats.totalPages || 0;
 
   return (
     <>
       <div className="mb-6 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">
         <StatCard number={total} label="Total Orders" />
-        <StatCard number={`${cancelRate}%`} label="Cancellation / Rejection Rate" />
-        <StatCard number={fmtMoney(data.earnings.avgOrderValue)} label="Average Order Value" />
-        <StatCard number={fmtMoney(data.orderStats.totalRevenue)} label="Total Revenue" />
+        <StatCard number={fmtMoney(netRevenue)} label="Collected Revenue (after refunds)" />
+        <StatCard number={fmtMoney(refundTotal)} label="Refund Total" />
+        <StatCard number={`${totalPages.toLocaleString()} pages`} label="Printing Volume" />
       </div>
 
       <FinancialSummary />

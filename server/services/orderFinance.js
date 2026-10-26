@@ -38,7 +38,7 @@ const PRINTER_ORDER_FIELDS = [
 const PRINTER_FILE_FIELDS = [
     'id', 'order_id', 'original_name', 'mime_type', 'size_bytes', 'file_type',
     'page_count', 'page_range', 'printing_side', 'copies', 'color_mode', 'spiral_binding',
-    'created_at', 'file_deleted_at'
+    'binding_description', 'created_at', 'file_deleted_at'
 ];
 
 function pick(source, fields) {
@@ -68,6 +68,7 @@ function toPrinterFile(file) {
     const view = pick(file, PRINTER_FILE_FIELDS);
     view.printing_category = printingCategory(file);
     view.printing_charge = hasAmount(file.printing_charge) ? money(file.printing_charge) : null;
+    view.binding_description = file.binding_description || null;
     return view;
 }
 
@@ -81,6 +82,44 @@ function toPrinterOrder(order, files) {
     view.itemised = isItemised(order);
     view.printer_payable = view.itemised ? money(order.printing_amount) : null;
     if (files) view.files = files.map(toPrinterFile);
+
+    // Delivery details for printer admin
+    const isClassroom = (Number(order.classroom_charge) > 0) ||
+        (order.collection_location === 'Academic Block - Classroom Delivery') ||
+        (order.collection_location_id === 'classroom-delivery');
+    view.classroom_delivery = isClassroom;
+    view.classroom_number = order.guest_classroom || order.class_room_number || order.classroom_number || null;
+    if (isClassroom) {
+        view.delivery_type = 'Classroom Delivery';
+    } else if (order.collection_location_id === 'hostel-gate' || Number(order.delivery_charge) > 0) {
+        view.delivery_type = 'Hostel Gate Delivery';
+    } else {
+        view.delivery_type = 'Counter Pickup';
+    }
+
+    // Binding details for printer admin
+    const boundFiles = files
+        ? files.filter(f => f.spiral_binding === 1 || f.spiral_binding === true || f.spiralBinding === true)
+        : [];
+    const boundCount = boundFiles.length > 0
+        ? boundFiles.length
+        : (hasAmount(order.binding_charge) ? Math.max(1, Math.round(Number(order.binding_charge) / 26)) : (order.spiral_binding ? 1 : 0));
+    const isBinding = boundCount > 0 || !!order.spiral_binding;
+    view.spiral_binding = isBinding ? 1 : 0;
+    view.binding_status = isBinding ? 'Yes' : 'No';
+    view.bound_pdf_count = isBinding ? boundCount : 0;
+    // Include ₹25 in the admin's binding amount when selected. Customer binding remains ₹26.
+    view.binding_amount = isBinding ? boundCount * 25 : 0;
+
+    const descriptions = boundFiles
+        .map(f => f.binding_description)
+        .filter(Boolean);
+    view.binding_description = descriptions.length > 0
+        ? descriptions.join('; ')
+        : (order.binding_description || null);
+
+    view.pdf_count = order.file_count || (files ? files.length : 0);
+
     return view;
 }
 
@@ -145,7 +184,7 @@ function financialBreakdown(order, files = [], payments = []) {
     const extrasTotal = money(service + delivery + (classroom || 0) + (binding || 0));
     const successful = payments.find(p => p.status === 'success');
     const refundedAmount = money(payments.filter(p => p.status === 'refunded').reduce((sum, p) => sum + Number(p.amount || 0), 0));
-    const amountPaid = successful ? money(successful.amount) : 0;
+    const amountPaid = successful ? money(successful.amount) : (order.payment_status === 'PAID' && refundedAmount === 0 ? customerTotal : 0);
     const paymentStatus = refundedAmount > 0 && !successful ? 'REFUNDED' : (order.payment_status || 'PAYMENT_PENDING');
 
     const expectedTotal = printing === null ? null : money(printing + extrasTotal);
@@ -155,8 +194,15 @@ function financialBreakdown(order, files = [], payments = []) {
         notes.push(`Saved charges do not add up to the customer total (difference ₹${difference}). Check this order.`);
     }
 
+    const deliveryType = classroom > 0 ? 'classroom' : (delivery > 0 ? 'hostel' : 'pickup');
+    const deliveryLabel = classroom > 0 ? 'Classroom Delivery' : (delivery > 0 ? 'Hostel Gate Delivery' : 'Counter Pickup');
+    const activeDeliveryCharge = classroom > 0 ? classroom : (delivery > 0 ? delivery : 0);
+
     return {
         basis: itemised ? 'ITEMISED' : 'ESTIMATED',
+        deliveryType,
+        deliveryLabel,
+        deliveryCharge: activeDeliveryCharge,
         printing: {
             lines: printingLines(files),
             totalPrinting: printing,
@@ -176,18 +222,15 @@ function financialBreakdown(order, files = [], payments = []) {
             totalService: service,
             totalClassroom: classroom,
             totalBinding: binding,
-            otherCharges: 0,
+            deliveryType,
+            deliveryLabel,
+            deliveryCharge: activeDeliveryCharge,
             customerTotal,
             amountPaid,
             refundedAmount,
             printerPayable: printing,
-            // Gross, NOT profit: gateway fees, taxes and other costs are not deducted.
             grossExtraRevenue: extrasTotal,
-            paymentStatus,
-            // Not recorded anywhere in the system today.
-            taxes: null,
-            discounts: null,
-            gatewayFees: null
+            paymentStatus
         },
         reconciliation: { expectedTotal, customerTotal, difference, reconciled },
         notes
