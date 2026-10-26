@@ -283,7 +283,7 @@ export default function Home() {
     const printingSubtotal = files.reduce((sum, f) => {
       const pages = printablePages(f);
       const copies = f?.copies || 1;
-      if (f?.colorMode === 'color') return sum + pages * copies * (f?.printingSide === 'double' ? 15 : 12);
+      if (f?.colorMode === 'color') return sum + pages * copies * (f?.printingSide === 'double' ? 12 : 10);
       if (f?.printingSide === 'double') return sum + pages * copies * 3;
       return sum + pages * copies * 2;
     }, 0);
@@ -301,7 +301,7 @@ export default function Home() {
     const pages = printablePages(f);
     const copies = f?.copies || 1;
     if (pages === 0) return 0;
-    if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 15 : 12);
+    if (f?.colorMode === 'color') return pages * copies * (f?.printingSide === 'double' ? 12 : 10);
     if (f?.printingSide === 'double') return pages * copies * 3;
     return pages * copies * 2;
   }
@@ -585,8 +585,8 @@ export default function Home() {
                   <h3 className="pc-title">Printing Color</h3>
                   <div className="pc-info-list">
                     <div className="pc-info-row"><span>Black &amp; White</span><span className="pc-info-price">₹2 / page</span></div>
-                    <div className="pc-info-row"><span>Color Single-sided</span><span className="pc-info-price">₹12 / page</span></div>
-                    <div className="pc-info-row"><span>Color Double-sided</span><span className="pc-info-price">₹15 / page</span></div>
+                    <div className="pc-info-row"><span>Color Single-sided</span><span className="pc-info-price">₹10 / page</span></div>
+                    <div className="pc-info-row"><span>Color Double-sided</span><span className="pc-info-price">₹12 / page</span></div>
                   </div>
                 </div>
 
@@ -603,7 +603,6 @@ export default function Home() {
                   <div className="pc-icon">✨</div>
                   <h3 className="pc-title">Add-ons</h3>
                   <div className="pc-info-list">
-                    <div className="pc-info-row"><span>Pickup at Point</span><span className="pc-info-price">Free</span></div>
                     <div className="pc-info-row"><span>Classroom Delivery</span><span className="pc-info-price">₹5</span></div>
                     <div className="pc-info-row"><span>Binding</span><span className="pc-info-price">₹25 + ₹1 fee / PDF</span></div>
                   </div>
@@ -811,7 +810,7 @@ export default function Home() {
                                   </span>
                                   <div className="home-option-text">
                                     <span className="home-option-name">Color</span>
-                                    <span className="home-option-price">{f.printingSide === 'double' ? '₹15/page' : '₹12/page'}</span>
+                                    <span className="home-option-price">{f.printingSide === 'double' ? '₹12/page' : '₹10/page'}</span>
                                   </div>
                                 </button>
                               </div>

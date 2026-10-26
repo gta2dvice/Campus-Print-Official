@@ -14,7 +14,7 @@ const PRICING = {
 const SERVICE_CHARGE_TIERS = [
     { upTo: 10, charge: 1 },
     { upTo: 30, charge: 2 },
-    { upTo: Infinity, charge: 3 }
+    { upTo: 100, charge: 3 }
 ];
 
 const LEGACY_CHARGES = {

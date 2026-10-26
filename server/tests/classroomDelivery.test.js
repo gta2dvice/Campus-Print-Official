@@ -44,16 +44,16 @@ describe('current pricing rules', () => {
             { pages: 2, copies: 1, printingSide: 'single', colorMode: 'color' },
             { pages: 2, copies: 1, printingSide: 'double', colorMode: 'color' }
         ]);
-        assert.deepEqual(priced.fileCharges, [4, 6, 24, 30]);
+        assert.deepEqual(priced.fileCharges, [4, 6, 20, 24]);
         assert.equal(priced.printedPages, 8);
         assert.equal(priced.serviceCharge, 1);
-        assert.equal(priced.total, 65);
+        assert.equal(priced.total, 55);
     });
 
-    it('applies the 31+ service charge once above 100 billable pages', () => {
+    it('does not invent a service charge above 100 billable pages', () => {
         const priced = priceOrder([{ pages: 101, copies: 1, printingSide: 'single', colorMode: 'bw' }]);
-        assert.equal(priced.serviceCharge, 3);
-        assert.equal(priced.total, 205);
+        assert.equal(priced.serviceCharge, 0);
+        assert.equal(priced.total, 202);
     });
 
     it('adds the binding price and its one-rupee service fee once per selected file', () => {
