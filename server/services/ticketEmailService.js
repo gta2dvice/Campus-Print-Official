@@ -76,6 +76,9 @@ function buildTicketEmailHtml({ order, ticketNumber, ticketUrl, transactionRef }
     const collectionDate = escapeHtml(formatDate(order.collection_date || order.created_at));
     const collectionLocation = escapeHtml(order.collection_location || 'Campus Pickup Counter');
     const collectionTime = escapeHtml(order.collection_time || 'Designated Slot');
+    const classroomDelivery = Number(order.classroom_charge) > 0
+        || order.collection_location === 'Academic Block - Classroom Delivery';
+    const classroomNumber = classroomDelivery ? escapeHtml(order.guest_classroom || '—') : '';
     const totalPrice = Number(order.total_price || 0).toFixed(2);
     const fileCount = escapeHtml(order.file_count || 1);
     const totalPages = escapeHtml(order.total_pages || '—');
@@ -154,6 +157,11 @@ function buildTicketEmailHtml({ order, ticketNumber, ticketUrl, transactionRef }
                   <td style="padding:10px 0;font-size:13px;color:#94a3b8;">Collection Location:</td>
                   <td align="right" style="padding:10px 0;font-size:13px;font-weight:600;color:#f1f5f9;">${collectionLocation}</td>
                 </tr>
+                ${classroomDelivery ? `
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <td style="padding:10px 0;font-size:13px;color:#94a3b8;">Classroom Number:</td>
+                  <td align="right" style="padding:10px 0;font-size:13px;font-weight:600;color:#f1f5f9;">${classroomNumber}</td>
+                </tr>` : ''}
                 <tr style="border-bottom:1px solid #1e293b;">
                   <td style="padding:10px 0;font-size:13px;color:#94a3b8;">Collection Time Slot:</td>
                   <td align="right" style="padding:10px 0;font-size:13px;font-weight:600;color:#f1f5f9;">${collectionTime}</td>
@@ -243,6 +251,11 @@ function buildTicketEmailText({ order, ticketNumber, ticketUrl, transactionRef }
     const collectionTime = order.collection_time || 'Designated Slot';
     const collectionDate = formatDate(order.collection_date || order.created_at);
     const totalPrice = Number(order.total_price || 0).toFixed(2);
+    const classroomDelivery = Number(order.classroom_charge) > 0
+        || order.collection_location === 'Academic Block - Classroom Delivery';
+    const classroomLine = classroomDelivery
+        ? `Classroom Number: ${order.guest_classroom || '—'}\n`
+        : '';
 
     return `CAMPUS PRINT — COLLECTION TICKET
 
@@ -256,7 +269,7 @@ Payment Status: PAID
 Total Amount: Rs. ${totalPrice}
 ${transactionRef ? `Transaction Ref: ${transactionRef}\n` : ''}
 Collection Location: ${collectionLocation}
-Collection Time: ${collectionTime}
+${classroomLine}Collection Time: ${collectionTime}
 Collection Date: ${collectionDate}
 
 View or retrieve your ticket online:

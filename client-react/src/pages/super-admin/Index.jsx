@@ -78,7 +78,7 @@ export default function Index() {
                   <table className="sa-table w-full border-collapse text-[0.85rem]">
                     <thead>
                       <tr>
-                        {['Order ID', 'Student', 'Shop', 'Pickup', 'Amount', 'Status'].map((h) => (
+                        {['Order ID', 'Student', 'Shop', 'Pickup', 'Printing Subtotal', 'Status'].map((h) => (
                           <th key={h} className="whitespace-nowrap border-b border-gray-200 px-3 py-[0.6rem] text-left text-[0.72rem] font-semibold uppercase tracking-wide text-gray-400">{h}</th>
                         ))}
                       </tr>
@@ -90,7 +90,7 @@ export default function Index() {
                           <td data-label="Student" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.customer_email}</td>
                           <td data-label="Shop" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{o.shop_name || '—'}</td>
                           <td data-label="Pickup" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] text-gray-900">{fmtPickup(o)}</td>
-                          <td data-label="Amount" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{fmtMoney(o.total_price)}</td>
+                          <td data-label="Printing Subtotal" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem] font-semibold text-gray-900">{o.printing_amount == null ? 'Not itemised' : fmtMoney(o.printing_amount)}</td>
                           <td data-label="Status" className="whitespace-nowrap border-b border-gray-100 px-3 py-[0.7rem]"><StatusBadge status={o.status} /></td>
                         </tr>
                       ))}

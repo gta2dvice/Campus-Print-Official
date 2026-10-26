@@ -2,17 +2,19 @@
 // explaining orders created before the pricing update.
 const PRICING = {
     single: 2,             // ₹ per page, B&W single-sided
-    double: 3,             // ₹ per sheet (2 pages), B&W double-sided
-    color: 18,             // ₹ per page, colour (either side)
+    double: 3,             // ₹ per page, B&W double-sided
+    colorSingle: 10,       // ₹ per page, colour single-sided
+    colorDouble: 12,       // ₹ per page, colour double-sided
     classroomDelivery: 5,  // ₹ per order
     hostelDelivery: 3,     // ₹ per order (Hostel Gate delivery surcharge)
-    binding: 26             // ₹ per document
+    binding: 25,            // ₹ per selected document
+    bindingServiceFee: 1    // ₹ per selected document
 };
 
 const SERVICE_CHARGE_TIERS = [
     { upTo: 10, charge: 1 },
     { upTo: 30, charge: 2 },
-    { upTo: Infinity, charge: 3 }
+    { upTo: 100, charge: 3 }
 ];
 
 const LEGACY_CHARGES = {
@@ -21,14 +23,16 @@ const LEGACY_CHARGES = {
 };
 
 /**
- * B&W double-sided printing is charged per physical sheet, rounded up per copy.
- * Colour and B&W single-sided printing are charged per printed page.
+ * Printing is charged per billable page (page count × copies). The service
+ * charge is separately applied once per order by priceOrder().
  */
 function filePrintingCost(f) {
     const pages = Number(f.pages) || 0;
     const copies = Number(f.copies) || 1;
-    if (f.colorMode === 'color') return pages * copies * PRICING.color;
-    if (f.printingSide === 'double') return Math.ceil(pages / 2) * copies * PRICING.double;
+    if (f.colorMode === 'color') {
+        return pages * copies * (f.printingSide === 'double' ? PRICING.colorDouble : PRICING.colorSingle);
+    }
+    if (f.printingSide === 'double') return pages * copies * PRICING.double;
     return pages * copies * PRICING.single;
 }
 
@@ -57,7 +61,7 @@ function priceOrder(resolvedFiles, { collectionLocationId, classroomDelivery, bi
     const bindingCount = hasPerFileBinding
         ? resolvedFiles.filter(file => (file.spiralBinding === true || file.spiralBinding === 'true') && (Number(file.pages) >= 5)).length
         : (binding === true || binding === 'true' ? (resolvedFiles[0]?.pages >= 5 ? 1 : 0) : 0);
-    const bindingCharge = bindingCount * PRICING.binding;
+    const bindingCharge = bindingCount * (PRICING.binding + PRICING.bindingServiceFee);
 
     let serviceCharge = 0;
     if (includeServiceCharge) {

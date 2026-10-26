@@ -1,5 +1,6 @@
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const { maskPhone } = require('../phone');
+const { isClassroomDeliveryOrder } = require('../slots');
 
 /**
  * Formats a date into a clean, human-readable string (e.g., "18 Oct 2026").
@@ -197,6 +198,15 @@ async function generateTicketPdf(order, options = {}) {
     curY -= 45;
     drawFieldRow('Collection Location', order.collection_location || 'Campus Counter', curY, col1X);
     drawFieldRow('Collection Time Slot', order.collection_time || 'Regular Hours', curY, col2X);
+
+    const classroomDelivery = isClassroomDeliveryOrder({
+        classroomCharge: order.classroom_charge,
+        collectionLocation: order.collection_location
+    });
+    if (classroomDelivery) {
+        curY -= 45;
+        drawFieldRow('Classroom Number', order.guest_classroom || '—', curY, col1X);
+    }
 
     curY -= 45;
     drawFieldRow('Order Date', formatDate(order.created_at), curY, col1X);

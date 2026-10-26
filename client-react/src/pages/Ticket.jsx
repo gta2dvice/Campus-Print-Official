@@ -355,6 +355,22 @@ export default function Ticket() {
                   </div>
                 </div>
 
+                {order?.classroom_delivery && (
+                  <div className="ticket-info-row highlight-row">
+                    <div className="info-icon-badge loc-badge">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 21V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16"></path>
+                        <path d="M9 21v-4h6v4"></path>
+                        <path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"></path>
+                      </svg>
+                    </div>
+                    <div className="info-details">
+                      <span className="info-label label-accent">CLASSROOM NUMBER</span>
+                      <span className="info-value value-prominent">{order.classroom_number || '—'}</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="ticket-info-row highlight-row">
                   <div className="info-icon-badge time-badge">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

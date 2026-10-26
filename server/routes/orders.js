@@ -216,8 +216,14 @@ async function buildTicketView(order) {
     delete view.ticket_access_token_hash;
     const state = orderState(order, payment);
     const emailDelivery = await getTicketEmailStatus(order.id).catch(() => null);
+    const classroomDelivery = slots.isClassroomDeliveryOrder({
+        classroomCharge: order.classroom_charge,
+        collectionLocation: order.collection_location
+    });
     return {
         ...view,
+        classroom_delivery: classroomDelivery,
+        classroom_number: classroomDelivery ? (order.guest_classroom || null) : null,
         // Never ship the full phone number to the client; the ticket shows a mask.
         guest_phone: maskPhone(order.guest_phone),
         ticket_number: state.ticketStatus === 'READY' ? order.ticket_number : null,
@@ -447,6 +453,19 @@ async function validateAndPriceSubmission(req, res) {
         return null;
     }
     data.paperSize = 'A4';
+    const classroomDelivery = req.body.classroomDelivery === 'true' || req.body.classroomDelivery === true;
+    // Classroom delivery is a delivery variant of Academic Block, not a separate
+    // client-defined location. Keep the persisted location and the surcharge in
+    // lockstep so a forged request cannot attach the classroom charge elsewhere.
+    if (classroomDelivery && data.collectionLocationId !== 'academic-block') {
+        res.status(400).json({
+            message: 'Classroom delivery is only available at Academic Block.',
+            code: 'CLASSROOM_DELIVERY_LOCATION_INVALID'
+        });
+        return null;
+    }
+    const canonicalLocationName = slots.locationDisplayName(data.collectionLocationId, { classroomDelivery });
+    if (canonicalLocationName) data.collectionLocationName = canonicalLocationName;
     const pickupErr = slots.pickupError(data.collectionLocationId, data.collectionTime);
     if (pickupErr) { res.status(400).json({ message: pickupErr }); return null; }
 
@@ -456,7 +475,7 @@ async function validateAndPriceSubmission(req, res) {
     try {
         priced = await resolveAndPriceFiles(req.files, req.body.fileSettings, {
             collectionLocationId: data.collectionLocationId,
-            classroomDelivery: req.body.classroomDelivery,
+            classroomDelivery,
             // Preserve compatibility with old clients; per-file settings are canonical.
             binding: data.spiralBinding
         });
@@ -629,6 +648,13 @@ router.get('/slots', async (req, res) => {
     } catch (err) {
         console.error('Slots error:', err);
         res.status(500).json({ message: 'Server Error' });
+    }
+    if (priced.charges.printedPages > 100) {
+        res.status(422).json({
+            message: 'Orders above 100 billable pages cannot be priced until the service-charge rule is configured.',
+            code: 'SERVICE_CHARGE_RULE_MISSING'
+        });
+        return null;
     }
 });
 
