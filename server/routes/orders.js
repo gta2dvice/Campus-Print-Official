@@ -372,7 +372,8 @@ async function resolveAndPriceFiles(files, fileSettingsRaw, { collectionLocation
             colorMode: setting.colorMode === 'color' ? 'color' : 'bw',
             ...(Object.prototype.hasOwnProperty.call(setting, 'spiralBinding')
                 ? { spiralBinding: setting.spiralBinding === true || setting.spiralBinding === 'true' }
-                : {})
+                : {}),
+            bindingDescription: typeof setting.bindingDescription === 'string' ? setting.bindingDescription.trim().slice(0, 1000) : ''
         });
     }
 
@@ -535,7 +536,8 @@ async function persistUploadedFiles(userId, orderId, resolvedFiles) {
                 copies: rf.copies,
                 colorMode: rf.colorMode,
                 printingCharge: rf.printingCharge,
-                spiralBinding: rf.spiralBinding
+                spiralBinding: rf.spiralBinding,
+                bindingDescription: rf.spiralBinding ? rf.bindingDescription : null
             });
             console.info('[ORDER_CREATE] File storage upload completed:', {
                 orderId,

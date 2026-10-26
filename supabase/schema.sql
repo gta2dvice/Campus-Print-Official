@@ -107,6 +107,7 @@ ALTER TABLE order_files ADD COLUMN IF NOT EXISTS printing_side VARCHAR(10) NOT N
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS copies INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS color_mode VARCHAR(10) NOT NULL DEFAULT 'bw';
 ALTER TABLE order_files ADD COLUMN IF NOT EXISTS spiral_binding SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE order_files ADD COLUMN IF NOT EXISTS binding_description TEXT NULL;
 -- Multi-format support: the resolved logical type (PDF/DOCX/…) and the
 -- page count used for pricing (server-detected, or user-declared for types we
 -- can't count server-side).

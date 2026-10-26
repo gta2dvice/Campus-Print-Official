@@ -51,6 +51,7 @@ export function normalizeFileSettings(entry = {}) {
     printingSide: ['single', 'double'].includes(entry.printingSide) ? entry.printingSide : null,
     colorMode: ['bw', 'color'].includes(entry.colorMode) ? entry.colorMode : null,
     spiralBinding: entry.spiralBinding === true || entry.spiralBinding === 'true',
+    bindingDescription: typeof entry.bindingDescription === 'string' ? entry.bindingDescription.trim().slice(0, 1000) : '',
     pageRange: typeof entry.pageRange === 'string' ? entry.pageRange.trim() : '',
   };
 }
