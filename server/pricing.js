@@ -3,8 +3,8 @@
 const PRICING = {
     single: 2,             // ₹ per page, B&W single-sided
     double: 3,             // ₹ per page, B&W double-sided
-    colorSingle: 10,       // ₹ per page, colour single-sided
-    colorDouble: 12,       // ₹ per page, colour double-sided
+    colorSingle: 12,       // ₹ per page, colour single-sided
+    colorDouble: 15,       // ₹ per page, colour double-sided
     classroomDelivery: 5,  // ₹ per order
     hostelDelivery: 3,     // ₹ per order (Hostel Gate delivery surcharge)
     binding: 25,            // ₹ per selected document

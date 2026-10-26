@@ -176,6 +176,11 @@ export default function NewOrder() {
   const [files, setFiles] = useState([]);
   const [paperSize, setPaperSize] = useState('A4');
   const [spiralBinding, setSpiralBinding] = useState(false);
+
+  useEffect(() => {
+    const hasBinding = files.some((f) => f.spiralBinding && printablePages(f) >= 5);
+    setSpiralBinding(hasBinding);
+  }, [files]);
   const [expressDelivery, setExpressDelivery] = useState(false);
   const [classroomDelivery, setClassroomDelivery] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState(null);
@@ -252,6 +257,7 @@ export default function NewOrder() {
             const restoredKeys = restoredFiles.map((entry) => Number(entry.key)).filter((n) => Number.isFinite(n));
             if (restoredKeys.length) fileKeySeq = Math.max(fileKeySeq, ...restoredKeys);
             setFiles(restoredFiles);
+            setSpiralBinding(restoredFiles.some((entry) => entry.spiralBinding && printablePages(entry) >= 5));
           }
           setPaperSize('A4');
           setExpressDelivery(unfinished.expressDelivery);
@@ -514,12 +520,16 @@ export default function NewOrder() {
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, printingSide: side } : f)));
   }
 
-  function updateFileBinding(key, spiralBinding) {
-    setFiles((prev) => prev.map((f) => {
-      if (f.key !== key) return f;
-      const isEligible = printablePages(f) >= 5;
-      return { ...f, spiralBinding: isEligible ? spiralBinding : false };
-    }));
+  function updateFileBinding(key, bindingOn) {
+    setFiles((prev) => {
+      const updated = prev.map((f) => {
+        if (f.key !== key) return f;
+        const isEligible = printablePages(f) >= 5;
+        return { ...f, spiralBinding: isEligible ? bindingOn : false, bindingDescription: isEligible && bindingOn ? (f.bindingDescription || '') : '' };
+      });
+      setSpiralBinding(updated.some((f) => f.spiralBinding && printablePages(f) >= 5));
+      return updated;
+    });
   }
 
   function updateFileColorMode(key, mode) {
@@ -555,6 +565,8 @@ export default function NewOrder() {
     skipPersistRef.current = true;
     setFiles([]);
     setPaperSize('A4');
+    setSpiralBinding(false);
+    setClassroomDelivery(false);
     setExpressDelivery(false);
     setSelectedLocationId(null);
     setSelectedLocationName(null);
@@ -590,8 +602,18 @@ export default function NewOrder() {
 
   function calcPrice() {
     const printingSubtotal = files.reduce((sum, f) => sum + filePrintingCost(f), 0);
-    const hostelCharge = selectedLocationId === 'hostel-gate' ? 3 : 0;
-    const deliveryCharge = (classroomDelivery ? 5 : 0) + hostelCharge;
+
+    // Delivery: Never charge both hostel and classroom delivery together.
+    let deliveryCharge = 0;
+    let deliveryType = 'none'; // 'classroom' | 'hostel' | 'none'
+    if (classroomDelivery) {
+      deliveryCharge = 5;
+      deliveryType = 'classroom';
+    } else if (selectedLocationId === 'hostel-gate') {
+      deliveryCharge = 3;
+      deliveryType = 'hostel';
+    }
+
     // Binding remains available only for PDFs with the existing five-page minimum;
     // match the server's pricing predicate so retries/refreshes cannot change totals.
     const boundFileCount = files.filter((file) => file.spiralBinding && printablePages(file) >= 5).length;
@@ -603,9 +625,9 @@ export default function NewOrder() {
     const totalPages = files.reduce((sum, f) => sum + (printablePages(f) * f.copies), 0);
     let serviceCharge = 0;
     if (totalPages > 0) {
-        if (totalPages <= 10) serviceCharge = 1;
-        else if (totalPages <= 30) serviceCharge = 2;
-        else if (totalPages <= 100) serviceCharge = 3;
+      if (totalPages <= 10) serviceCharge = 1;
+      else if (totalPages <= 30) serviceCharge = 2;
+      else serviceCharge = 3;
     }
 
     return {
@@ -613,8 +635,8 @@ export default function NewOrder() {
       base: printingSubtotal || 0,
       a3Extra: 0,
       deliveryCharge,
-      bindingBaseCharge,
-      bindingServiceCharge,
+      deliveryType,
+      boundFileCount,
       bindingCharge,
       serviceCharge,
       total: (printingSubtotal || 0) + deliveryCharge + bindingCharge + serviceCharge
@@ -698,17 +720,16 @@ export default function NewOrder() {
   }
 
   function collectionLocationName() {
-    if (selectedLocationId === ACADEMIC_BLOCK_ID) return academicBlockLocationName(classroomDelivery);
+    if (classroomDelivery) return academicBlockLocationName(true);
+    if (selectedLocationId === ACADEMIC_BLOCK_ID) return academicBlockLocationName(false);
     return selectedLocationName;
   }
 
   function applyClassroomDelivery(enabled) {
     setClassroomDelivery(enabled);
     if (enabled) {
-      if (!selectedTimeSlot || isLocationOffered(ACADEMIC_BLOCK_ID, selectedTimeSlot)) {
-        setSelectedLocationId(ACADEMIC_BLOCK_ID);
-        setSelectedLocationName(academicBlockLocationName(true));
-      }
+      setSelectedLocationId(ACADEMIC_BLOCK_ID);
+      setSelectedLocationName(academicBlockLocationName(true));
       return;
     }
     if (selectedLocationId === ACADEMIC_BLOCK_ID) {
@@ -823,11 +844,11 @@ export default function NewOrder() {
     formData.append('totalPages', p.pages);
     const totalCopies = files.reduce((sum, f) => sum + f.copies, 0);
     formData.append('copies', totalCopies);
-    formData.append('spiralBinding', spiralBinding);
+    formData.append('spiralBinding', p.boundFileCount > 0);
     formData.append('expressDelivery', expressDelivery);
     formData.append('classroomDelivery', classroomDelivery);
     formData.append('totalPrice', p.total);
-    formData.append('collectionLocationId', selectedLocationId);
+    formData.append('collectionLocationId', classroomDelivery ? ACADEMIC_BLOCK_ID : selectedLocationId);
     formData.append('collectionLocation', collectionLocationName());
     formData.append('collectionTime', selectedTimeSlot);
 
@@ -1691,30 +1712,28 @@ export default function NewOrder() {
                   <span className="summary-line-label">Printing Charges</span>
                   <span className="summary-line-value">₹{p.base + p.a3Extra}</span>
                 </div>
-                {p.serviceCharge > 0 && (
-                  <div className="summary-line">
-                    <span className="summary-line-label">Page-count Service Charge</span>
-                    <span className="summary-line-value">₹{p.serviceCharge}</span>
-                  </div>
-                )}
-                {p.bindingCharge > 0 && (
-                  <div className="summary-line">
-                    <span className="summary-line-label">Binding ({files.filter((file) => file.spiralBinding).length} PDFs)</span>
-                    <span className="summary-line-value">₹{p.bindingBaseCharge}</span>
-                  </div>
-                )}
-                {p.bindingServiceCharge > 0 && (
-                  <div className="summary-line">
-                    <span className="summary-line-label">Binding Service Fee</span>
-                    <span className="summary-line-value">₹{p.bindingServiceCharge}</span>
-                  </div>
-                )}
-                {p.deliveryCharge > 0 && (
-                  <div className="summary-line">
-                    <span className="summary-line-label">Delivery{classroomDelivery ? ' (Classroom)' : ''}{selectedLocationId === 'hostel-gate' ? ' (Hostel Gate)' : ''}</span>
-                    <span className="summary-line-value">₹{p.deliveryCharge}</span>
-                  </div>
-                )}
+                <div className="summary-line">
+                  <span className="summary-line-label">Service Charge</span>
+                  <span className="summary-line-value">₹{p.serviceCharge}</span>
+                </div>
+                <div className="summary-line">
+                  <span className="summary-line-label">
+                    {p.boundFileCount > 0 ? `Binding — ₹26 (${p.boundFileCount} PDF${p.boundFileCount !== 1 ? 's' : ''})` : 'Binding'}
+                  </span>
+                  <span className="summary-line-value">
+                    {p.boundFileCount > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}
+                  </span>
+                </div>
+                <div className="summary-line">
+                  <span className="summary-line-label">
+                    {p.deliveryType === 'classroom'
+                      ? 'Delivery Charge (Classroom)'
+                      : p.deliveryType === 'hostel'
+                      ? 'Delivery Charge (Hostel Gate)'
+                      : 'Delivery Charge'}
+                  </span>
+                  <span className="summary-line-value">₹{p.deliveryCharge}</span>
+                </div>
               </div>
 
               <div className="summary-divider"></div>
@@ -2091,11 +2110,7 @@ export default function NewOrder() {
                       <strong>{`A4`} · {files.some(f => f.printingSide === 'double') ? 'Mixed (S/D)' : (files[0]?.printingSide === 'double' ? 'Double-Sided' : 'Single-Sided')}</strong>
                     </div>
                     <div className="cp-review-line">
-                      <span>Binding</span>
-                      <strong>{spiralBinding ? `Yes — ₹${BINDING_TOTAL} (₹25 binding + ₹1 service)` : 'No — ₹0'}</strong>
-                    </div>
-                    <div className="cp-review-line">
-                      <span>Printing ({p.pages} pages)</span>
+                      <span>Printing Charges</span>
                       <strong>₹{p.base + p.a3Extra}</strong>
                     </div>
                     <div className="cp-review-line">
@@ -2103,12 +2118,36 @@ export default function NewOrder() {
                       <strong>₹{p.serviceCharge}</strong>
                     </div>
                     <div className="cp-review-line">
-                      <span>Delivery Charge</span>
+                      <span>
+                        {p.boundFileCount > 0 ? `Binding — ₹26 (${p.boundFileCount} PDF${p.boundFileCount !== 1 ? 's' : ''})` : 'Binding'}
+                      </span>
+                      <strong>{p.boundFileCount > 0 ? `₹${p.bindingCharge}` : 'No — ₹0'}</strong>
+                    </div>
+                    {files.some(f => f.spiralBinding && f.bindingDescription) && (
+                      <div className="cp-review-line">
+                        <span>Binding Instructions</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', maxWidth: '60%' }}>
+                          {files.filter(f => f.spiralBinding && f.bindingDescription).map(f => (
+                            <span key={f.key} style={{ fontSize: '0.8rem', textAlign: 'right' }}>
+                              {files.length > 1 ? `${f.file.name}: ` : ''}{f.bindingDescription}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="cp-review-line">
+                      <span>
+                        {p.deliveryType === 'classroom'
+                          ? 'Delivery Charge (Classroom)'
+                          : p.deliveryType === 'hostel'
+                          ? 'Delivery Charge (Hostel Gate)'
+                          : 'Delivery Charge'}
+                      </span>
                       <strong>₹{p.deliveryCharge}</strong>
                     </div>
                   </div>
                   <div className="cp-review-total">
-                    <span>Total Amount</span>
+                    <span>Total Payable</span>
                     <strong>₹{p.total}</strong>
                   </div>
                 </div>
