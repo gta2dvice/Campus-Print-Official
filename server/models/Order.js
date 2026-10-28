@@ -420,8 +420,8 @@ async function listOrders({ search = '', status = '', shopId = null, dateFrom = 
     }
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    // The printer's "amount" sort uses printing charges plus printer binding, never the customer total.
-    const sortableColumns = { created_at: 'o.created_at', total_price: amountExpr(view, 'o'), status: 'o.status' };
+    // The printer's "amount" sort uses printing charges, never the customer total.
+    const sortableColumns = { created_at: 'o.created_at', total_price: `o.${amountColumn(view)}`, status: 'o.status' };
     const sortCol = sortableColumns[sort] || 'o.created_at';
     const sortDir = dir === 'ASC' ? 'ASC' : 'DESC';
 
@@ -533,16 +533,6 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
         COALESCE(SUM(o.delivery_charge), 0) AS delivery,
         COALESCE(SUM(o.classroom_charge), 0) AS classroom,
         COALESCE(SUM(o.binding_charge), 0) AS binding,
-        COALESCE(SUM(CASE
-            WHEN o.printing_amount IS NOT NULL THEN (
-                CASE
-                    WHEN o.binding_charge > 0 THEN ROUND(o.binding_charge / 26.0) * 25
-                    WHEN o.binding_charge IS NULL AND o.spiral_binding = 1 THEN COALESCE(o.copies, 1) * 25
-                    ELSE 0
-                END
-            )
-            ELSE 0
-        END), 0) AS printer_binding,
         COUNT(*) FILTER (WHERE o.printing_amount IS NULL) AS not_itemised_orders,
         COALESCE(SUM(o.total_price) FILTER (WHERE o.printing_amount IS NULL), 0) AS not_itemised_total`;
 
@@ -563,22 +553,17 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
     const shape = (r) => {
         const num = (v) => Math.round(parseFloat(v || 0) * 100) / 100;
         const printing = num(r.printing);
-        const customerBinding = num(r.binding);
-        const printerBinding = num(r.printer_binding);
-        const printerPayable = num(printing + printerBinding);
-        const extras = num(num(r.service) + num(r.delivery) + num(r.classroom) + customerBinding);
+        const extras = num(num(r.service) + num(r.delivery) + num(r.classroom) + num(r.binding));
         const itemisedCustomerTotal = num(r.itemised_customer_total);
         return {
             paidOrders: parseInt(r.paid_orders, 10),
             itemisedOrders: parseInt(r.itemised_orders, 10),
             totalPrinting: printing,
-            printerBinding,
-            customerBinding,
-            printerPayable,
+            printerPayable: printing,
             totalService: num(r.service),
             totalDelivery: num(r.delivery),
             totalClassroom: num(r.classroom),
-            totalBinding: customerBinding,
+            totalBinding: num(r.binding),
             otherCharges: 0,
             // Gross, not profit: gateway fees, taxes and other costs are not deducted.
             grossExtraRevenue: extras,
@@ -608,17 +593,15 @@ async function getFinancialSummary({ dateFrom = '', dateTo = '', location = '' }
 }
 
 // Which amount the money aggregates sum: the customer's total (Super Admin) or only
-// the printer's payable (printing + ₹25/bound copy for Printer Admin).
-function amountExpr(view, alias = '') {
-    const prefix = alias ? `${alias}.` : '';
-    if (view === 'printing') {
-        return `(${prefix}printing_amount + CASE WHEN ${prefix}binding_charge > 0 THEN ROUND(${prefix}binding_charge / 26.0) * 25 WHEN ${prefix}binding_charge IS NULL AND ${prefix}spiral_binding = 1 THEN COALESCE(${prefix}copies, 1) * 25 ELSE 0 END)`;
-    }
-    return `${prefix}total_price`;
+// the printer's printing charges (Printer Admin). Whitelisted — never user input.
+const AMOUNT_COLUMNS = { customer: 'total_price', printing: 'printing_amount' };
+
+function amountColumn(view) {
+    return AMOUNT_COLUMNS[view] || AMOUNT_COLUMNS.customer;
 }
 
 async function getDashboardStats(shopId = null, { view = 'customer' } = {}) {
-    const expr = amountExpr(view);
+    const col = amountColumn(view);
     const shopFilter = shopId ? ' AND shop_id = ?' : '';
     const shopParams = shopId ? [shopId] : [];
 
@@ -630,14 +613,14 @@ async function getDashboardStats(shopId = null, { view = 'customer' } = {}) {
     statusRows.forEach(r => { counts[r.status] = parseInt(r.count, 10); });
 
     const [[todayRow]] = await pool.query(
-        `SELECT COUNT(*) AS orders_today, COALESCE(SUM(${expr}), 0) AS earnings_today
+        `SELECT COUNT(*) AS orders_today, COALESCE(SUM(${col}), 0) AS earnings_today
          FROM orders WHERE payment_status = 'PAID' AND DATE(created_at) = CURDATE()
            AND status NOT IN ('rejected','cancelled') ${shopFilter}`,
         shopParams
     );
     const [[totalRow]] = await pool.query(
-        `SELECT COALESCE(SUM(${expr}), 0) AS total_earnings,
-                COUNT(*) FILTER (WHERE ${view === 'printing' ? 'printing_amount' : 'total_price'} IS NULL) AS not_itemised
+        `SELECT COALESCE(SUM(${col}), 0) AS total_earnings,
+                COUNT(*) FILTER (WHERE ${col} IS NULL) AS not_itemised
          FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`,
         shopParams
@@ -662,13 +645,12 @@ async function getDashboardStats(shopId = null, { view = 'customer' } = {}) {
 }
 
 async function getEarnings(shopId = null, { view = 'customer' } = {}) {
-    const expr = amountExpr(view);
-    const itemCol = view === 'printing' ? 'printing_amount' : 'total_price';
+    const col = amountColumn(view);
     const shopFilter = shopId ? 'AND shop_id = ?' : '';
     const shopParams = shopId ? [shopId] : [];
     // Counts only orders that have this amount, so averages aren't skewed by
     // orders placed before charges were itemised.
-    const sumCount = `COALESCE(SUM(${expr}), 0) AS amount, COUNT(${itemCol}) AS count`;
+    const sumCount = `COALESCE(SUM(${col}), 0) AS amount, COUNT(${col}) AS count`;
 
     const [[today]] = await pool.query(
         `SELECT ${sumCount} FROM orders
@@ -687,7 +669,7 @@ async function getEarnings(shopId = null, { view = 'customer' } = {}) {
          WHERE payment_status = 'PAID' AND status = 'completed' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) ${shopFilter}`, shopParams
     );
     const [[total]] = await pool.query(
-        `SELECT ${sumCount}, COUNT(*) FILTER (WHERE ${itemCol} IS NULL) AS not_itemised FROM orders
+        `SELECT ${sumCount}, COUNT(*) FILTER (WHERE ${col} IS NULL) AS not_itemised FROM orders
          WHERE payment_status = 'PAID' AND status = 'completed' ${shopFilter}`, shopParams
     );
     const [trend] = await pool.query(

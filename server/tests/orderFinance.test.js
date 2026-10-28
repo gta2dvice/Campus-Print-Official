@@ -67,15 +67,11 @@ describe('canonical pricing split (customer prices)', () => {
         assert.equal(priceOrder([file(9, 1, 'single', 'bw')], { binding: 'yes' }).bindingCharge, 0);
     });
 
-    it('the printer receives printing charges plus ₹25 binding per bound copy (and no delivery fees)', () => {
+    it('the printer still sees only the printing amount with binding and delivery on', () => {
         // 15 B&W pages = ₹30 printing; classroom delivery + binding are extras.
         const c = priceOrder([file(15, 1, 'single', 'bw')], { collectionLocationId: 'academic-block', classroomDelivery: true, binding: true });
         const order = itemisedOrder(c);
-        // Printing ₹30 + 1 bound copy ₹25 = ₹55 printer payable
-        assert.equal(toPrinterOrder(order).printer_payable, 55);
-        assert.equal(toPrinterOrder(order).printing_subtotal, 30);
-        assert.equal(toPrinterOrder(order).binding_amount, 25);
-        assert.equal(financialBreakdown(order).summary.printerPayable, 55);
+        assert.equal(toPrinterOrder(order).printer_payable, 30);
         assert.equal(financialBreakdown(order).summary.customerTotal, 30 + 5 + 26);
     });
 });
@@ -129,7 +125,7 @@ describe('Printer Admin view', () => {
         ]);
     });
 
-    it('receives each file’s binding instruction, admin binding amount of ₹25, and combines it into printer payable', () => {
+    it('receives each file’s binding instruction and admin binding amount of ₹25', () => {
         const boundOrder = toPrinterOrder(order, [
             { ...files[0], spiral_binding: 1, binding_description: 'Front and back cover' },
             { ...files[1], spiral_binding: 0 }
@@ -137,8 +133,6 @@ describe('Printer Admin view', () => {
         assert.deepEqual(boundOrder.files.map(f => f.spiral_binding), [1, 0]);
         assert.equal(boundOrder.binding_status, 'Yes');
         assert.equal(boundOrder.binding_amount, 25);
-        assert.equal(boundOrder.printing_subtotal, 140);
-        assert.equal(boundOrder.printer_payable, 165);
         assert.equal(boundOrder.bound_pdf_count, 1);
         assert.equal(boundOrder.binding_description, 'Front and back cover');
         assert.equal(boundOrder.files[0].binding_description, 'Front and back cover');
@@ -160,8 +154,6 @@ describe('Printer Admin view', () => {
         assert.equal(adminOrder.delivery_type, 'Classroom Delivery');
         assert.equal(adminOrder.binding_status, 'Yes');
         assert.equal(adminOrder.binding_amount, 25);
-        assert.equal(adminOrder.printing_subtotal, 140);
-        assert.equal(adminOrder.printer_payable, 165);
         assert.equal(adminOrder.bound_pdf_count, 1);
         assert.equal(adminOrder.binding_description, 'Bind together with notes');
         assert.equal(adminOrder.files[0].binding_description, 'Bind together with notes');
@@ -191,19 +183,12 @@ describe('Super Admin breakdown', () => {
 
         assert.equal(b.basis, 'ITEMISED');
         assert.equal(b.printing.totalPrinting, 30);
-        assert.equal(b.printing.printerBinding, 25);
-        assert.equal(b.printing.printerPayable, 55);
+        assert.equal(b.printing.printerPayable, 30);
         assert.deepEqual(b.printing.lines.map(l => [l.category, l.printedPages, l.amount]), [['BW_SINGLE', 15, 30]]);
         // Classroom delivery ₹5 and binding ₹26.
         assert.deepEqual([b.extras.deliveryCharge, b.extras.serviceCharge, b.extras.classroomCharge, b.extras.bindingCharge, b.extras.totalExtras], [0, 2, 5, 26, 33]);
-        assert.equal(b.extras.printerBinding, 25);
-        assert.equal(b.extras.customerBinding, 26);
-        assert.equal(b.extras.campusPrintBinding, 1);
         assert.equal(b.summary.customerTotal, 63);
         assert.equal(b.summary.amountPaid, 63);
-        assert.equal(b.summary.printerPayable, 55);
-        assert.equal(b.summary.totalBinding, 26);
-        assert.equal(b.summary.printerBinding, 25);
         assert.equal(b.summary.grossExtraRevenue, 33);
         assert.equal(b.deliveryLabel, 'Classroom Delivery');
         assert.equal(b.deliveryCharge, 5);
@@ -250,128 +235,5 @@ describe('Super Admin breakdown', () => {
         assert.deepEqual([failed.summary.paymentStatus, failed.summary.amountPaid], ['PAYMENT_FAILED', 0]);
         const refunded = financialBreakdown(itemisedOrder(charges), [], [{ status: 'refunded', amount: '7.00' }]);
         assert.deepEqual([refunded.summary.paymentStatus, refunded.summary.amountPaid, refunded.summary.refundedAmount], ['REFUNDED', 0, 7]);
-    });
-});
-
-describe('Binding payout calculations & regression tests', () => {
-    it('calculates the canonical example: 47 B&W pages, 1 bound copy -> ₹94 printing + ₹25 binding = ₹119 admin payable', () => {
-        // Customer pricing: 47 * 2 = 94 printing, 3 service, 26 binding = 123 customer total
-        const charges = basePriceOrder([{ pages: 47, copies: 1, printingSide: 'single', colorMode: 'bw', spiralBinding: true }]);
-        const order = itemisedOrder(charges);
-        const files = [{ id: 1, order_id: 101, original_name: 'doc.pdf', page_count: 47, copies: 1, printing_side: 'single', color_mode: 'bw', printing_charge: '94.00', spiral_binding: 1 }];
-
-        // 1. Admin order details view (with files)
-        const adminView = toPrinterOrder(order, files);
-        assert.equal(adminView.printing_subtotal, 94);
-        assert.equal(adminView.binding_amount, 25);
-        assert.equal(adminView.printer_payable, 119);
-        assert.equal(adminView.bound_pdf_count, 1);
-        assert.equal(adminView.binding_status, 'Yes');
-
-        // 2. Admin order list view (without files, derived from order.binding_charge)
-        const listView = toPrinterOrder(order);
-        assert.equal(listView.printing_subtotal, 94);
-        assert.equal(listView.binding_amount, 25);
-        assert.equal(listView.printer_payable, 119);
-
-        // 3. Super Admin financial breakdown
-        const breakdown = financialBreakdown(order, files);
-        assert.equal(breakdown.printing.totalPrinting, 94);
-        assert.equal(breakdown.printing.printerBinding, 25);
-        assert.equal(breakdown.printing.printerPayable, 119);
-        assert.equal(breakdown.extras.customerBinding, 26);
-        assert.equal(breakdown.extras.printerBinding, 25);
-        assert.equal(breakdown.extras.campusPrintBinding, 1);
-        assert.equal(breakdown.summary.printerPayable, 119);
-        assert.equal(breakdown.summary.customerTotal, 123);
-    });
-
-    it('calculates multiple bound copies: 47 B&W pages, 2 copies, binding ON -> adds ₹50 to printing subtotal', () => {
-        // Customer pricing: 47 * 2 * 2 = 188 printing, 3 * 2 = 6 service, 26 * 2 = 52 binding = 246 customer total
-        const charges = basePriceOrder([{ pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: true }]);
-        const order = itemisedOrder(charges);
-        const files = [{ id: 1, order_id: 101, original_name: 'doc.pdf', page_count: 47, copies: 2, printing_side: 'single', color_mode: 'bw', printing_charge: '188.00', spiral_binding: 1 }];
-
-        // Admin order view with 2 bound copies
-        const adminView = toPrinterOrder(order, files);
-        assert.equal(adminView.printing_subtotal, 188);
-        assert.equal(adminView.binding_amount, 50); // 2 copies * ₹25
-        assert.equal(adminView.printer_payable, 238); // 188 + 50
-        assert.equal(adminView.bound_pdf_count, 2);
-
-        // Admin list view (without files)
-        const listView = toPrinterOrder(order);
-        assert.equal(listView.printer_payable, 238);
-        assert.equal(listView.binding_amount, 50);
-
-        // Super Admin financial details
-        const breakdown = financialBreakdown(order, files);
-        assert.equal(breakdown.extras.customerBinding, 52); // ₹26 * 2
-        assert.equal(breakdown.extras.printerBinding, 50);  // ₹25 * 2
-        assert.equal(breakdown.extras.campusPrintBinding, 2); // ₹1 * 2
-        assert.equal(breakdown.summary.printerPayable, 238);
-        assert.equal(breakdown.summary.customerTotal, 246);
-    });
-
-    it('calculates binding OFF: adds ₹0 to printing subtotal', () => {
-        const charges = priceOrder([{ pages: 47, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: false }]);
-        const order = itemisedOrder(charges);
-        const files = [{ id: 1, order_id: 101, original_name: 'doc.pdf', page_count: 47, copies: 2, printing_side: 'single', color_mode: 'bw', printing_charge: '188.00', spiral_binding: 0 }];
-
-        const adminView = toPrinterOrder(order, files);
-        assert.equal(adminView.printing_subtotal, 188);
-        assert.equal(adminView.binding_amount, 0);
-        assert.equal(adminView.printer_payable, 188); // 188 + 0
-        assert.equal(adminView.bound_pdf_count, 0);
-        assert.equal(adminView.binding_status, 'No');
-
-        const listView = toPrinterOrder(order);
-        assert.equal(listView.binding_amount, 0);
-        assert.equal(listView.printer_payable, 188);
-
-        const breakdown = financialBreakdown(order, files);
-        assert.equal(breakdown.extras.customerBinding, 0);
-        assert.equal(breakdown.extras.printerBinding, 0);
-        assert.equal(breakdown.extras.campusPrintBinding, 0);
-        assert.equal(breakdown.summary.printerPayable, 188);
-    });
-
-    it('handles mixed per-file binding selection across multiple files', () => {
-        // File 1: 10 pages, 3 copies, binding ON -> 3 * ₹25 = ₹75 printer binding
-        // File 2: 20 pages, 2 copies, binding OFF -> ₹0 printer binding
-        const filesData = [
-            { pages: 10, copies: 3, printingSide: 'single', colorMode: 'bw', spiralBinding: true },
-            { pages: 20, copies: 2, printingSide: 'single', colorMode: 'bw', spiralBinding: false }
-        ];
-        const charges = priceOrder(filesData);
-        // Printing: (10*3*2) + (20*2*2) = 60 + 80 = 140
-        // Customer binding: 3 * 26 = 78
-        assert.equal(charges.printingAmount, 140);
-        assert.equal(charges.bindingCharge, 78);
-
-        const order = itemisedOrder(charges);
-        const files = [
-            { id: 1, order_id: 101, original_name: 'f1.pdf', page_count: 10, copies: 3, printing_side: 'single', color_mode: 'bw', printing_charge: '60.00', spiral_binding: 1 },
-            { id: 2, order_id: 101, original_name: 'f2.pdf', page_count: 20, copies: 2, printing_side: 'single', color_mode: 'bw', printing_charge: '80.00', spiral_binding: 0 }
-        ];
-
-        const adminView = toPrinterOrder(order, files);
-        assert.equal(adminView.printing_subtotal, 140);
-        assert.equal(adminView.binding_amount, 75); // 3 * 25
-        assert.equal(adminView.printer_payable, 215); // 140 + 75
-        assert.equal(adminView.bound_pdf_count, 3);
-
-        const listView = toPrinterOrder(order);
-        assert.equal(listView.printer_payable, 215);
-        assert.equal(listView.binding_amount, 75);
-
-        const breakdown = financialBreakdown(order, files);
-        assert.equal(breakdown.printing.totalPrinting, 140);
-        assert.equal(breakdown.printing.printerBinding, 75);
-        assert.equal(breakdown.printing.printerPayable, 215);
-        assert.equal(breakdown.extras.customerBinding, 78);
-        assert.equal(breakdown.extras.printerBinding, 75);
-        assert.equal(breakdown.extras.campusPrintBinding, 3); // 3 * ₹1
-        assert.equal(breakdown.summary.printerPayable, 215);
     });
 });

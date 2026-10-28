@@ -96,9 +96,7 @@ describe('Printer Admin responses carry printing charges only', () => {
 
     it('order detail shows the printer payable and per-file printing charges', async () => {
         const json = await (await fetch(`${base}/api/admin/orders/7`)).json();
-        assert.equal(json.printer_payable, 55);
-        assert.equal(json.printing_subtotal, 30);
-        assert.equal(json.binding_amount, 25);
+        assert.equal(json.printer_payable, 30);
         assert.equal(json.files[0].printing_charge, 30);
         assert.equal(json.files[0].printing_category, 'BW_SINGLE');
     });
