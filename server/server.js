@@ -112,6 +112,14 @@ app.use(session({
 }));
 
 // ── API Routes ───────────────────────────────────
+if (process.env.MAINTENANCE_MODE === 'true') {
+    app.post('/api/orders', (req, res) => {
+        res.status(503).json({
+            error: 'Campus Print is temporarily on a short break. No new orders can be placed at this time.',
+            status: 'maintenance'
+        });
+    });
+}
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
