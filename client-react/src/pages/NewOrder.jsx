@@ -1504,7 +1504,11 @@ export default function NewOrder() {
                         } else {
                           pagesText = `${f.pages} page${f.pages > 1 ? 's' : ''}`;
                         }
-                        const pdfTotal = filePrintingCost(f);
+                        const printingCost = filePrintingCost(f);
+                        const bindingCost = (f.spiralBinding && printablePages(f) >= 5)
+                          ? BINDING_TOTAL * (f.copies || 1)
+                          : 0;
+                        const pdfTotal = printingCost + bindingCost;
                         return (
                           <div className="cp-file-card" key={f.key}>
                             {/* File Card Header */}
@@ -1927,16 +1931,19 @@ export default function NewOrder() {
                   const isPast = s.status === 'past';
                   const isFull = s.status === 'full';
                   const isLimited = s.status === 'limited';
-                  const isDisabled = isPast || isFull;
+                  const isPermanentlyDisabled = ['11:15 AM', '1:15 PM'].includes(s.time);
+                  const isDisabled = isPast || isFull || isPermanentlyDisabled;
                   const isSelected = selectedTimeSlot === s.time;
                   const notAtSelectedLocation = !!selectedLocationId && !isLocationOffered(selectedLocationId, s.time);
                   let statusLabel = 'Available';
-                  if (isPast) statusLabel = 'Unavailable';
+                  if (isPermanentlyDisabled) statusLabel = 'Unavailable';
+                  else if (isPast) statusLabel = 'Unavailable';
                   else if (isFull) statusLabel = 'Fully Booked';
                   else if (notAtSelectedLocation) statusLabel = `Not at ${selectedLocationName}`;
                   else if (isLimited) statusLabel = 'Limited';
                   let classes = 'cp-slot-pill';
-                  if (isPast) classes += ' is-past';
+                  if (isPermanentlyDisabled) classes += ' is-past';
+                  else if (isPast) classes += ' is-past';
                   else if (isFull) classes += ' is-full';
                   else if (isLimited || notAtSelectedLocation) classes += ' is-limited';
                   else classes += ' is-available';
