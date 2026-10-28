@@ -5,10 +5,8 @@ import matrix from './slotMatrix.json';
 
 export const SLOT_LOCATIONS = matrix.locations;
 export const TIME_SLOTS = Object.keys(matrix.availability);
-const DISABLED_TIME_SLOTS = ['11:15 AM', '1:15 PM'];
 
 export function isLocationOffered(locationId, time) {
-  if (DISABLED_TIME_SLOTS.includes(time)) return false;
   return matrix.availability[time]?.[locationId] === true;
 }
 

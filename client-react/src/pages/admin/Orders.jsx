@@ -281,7 +281,7 @@ export default function Orders() {
                   <th>Pickup Slot</th>
                   <th>Specs</th>
                   <th>Status</th>
-                  <th>Printer Payable</th>
+                  <th>Printing</th>
                   <th>Date</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -319,7 +319,7 @@ export default function Orders() {
                         </div>
                       )}
                     </td>
-                    <td data-label="Printer Payable" className="font-black text-slate-900 whitespace-nowrap">{fmtPrinterPayable(o.printer_payable)}</td>
+                    <td data-label="Printing" className="font-black text-slate-900 whitespace-nowrap">{fmtPrinterPayable(o.printer_payable)}</td>
                     <td data-label="Date" className="text-[0.68rem] text-slate-400 whitespace-nowrap">{fmtDate(o.created_at)}</td>
                     <td data-label="Actions" className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="admin-actions-cell">
@@ -489,8 +489,12 @@ export default function Orders() {
                         <>
                           <div className="admin-modal-field">
                             <span className="admin-modal-label">Binding Status</span>
+                            <span className="admin-modal-value font-bold text-slate-800">Yes</span>
+                          </div>
+                          <div className="admin-modal-field">
+                            <span className="admin-modal-label">Admin Binding Amount</span>
                             <span className="admin-modal-value font-bold text-slate-800">
-                              Yes{modalOrder.bound_pdf_count > 1 ? ` (${modalOrder.bound_pdf_count} copies)` : ''}
+                              ₹{modalOrder.binding_amount || 25}
                             </span>
                           </div>
                           <div className="admin-modal-field col-span-2">
@@ -501,20 +505,8 @@ export default function Orders() {
                           </div>
                         </>
                       )}
-                      <div className="admin-modal-field">
-                        <span className="admin-modal-label">Printing Charges</span>
-                        <span className="admin-modal-value font-bold text-slate-800">
-                          {fmtPrinterPayable(modalOrder.printing_subtotal ?? modalOrder.printing_charges)}
-                        </span>
-                      </div>
-                      <div className="admin-modal-field">
-                        <span className="admin-modal-label">Admin Binding Amount</span>
-                        <span className="admin-modal-value font-bold text-slate-800">
-                          ₹{modalOrder.binding_amount || 0}
-                        </span>
-                      </div>
                       <div className="admin-modal-field col-span-2">
-                        <span className="admin-modal-label">Printer Payable</span>
+                        <span className="admin-modal-label">Printer Payable (printing only)</span>
                         <span className="admin-modal-value text-blue-600 text-base font-black">{fmtPrinterPayable(modalOrder.printer_payable)}</span>
                       </div>
                     </div>

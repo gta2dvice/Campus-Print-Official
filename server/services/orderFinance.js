@@ -103,18 +103,13 @@ function toPrinterOrder(order, files) {
         : [];
     const boundCount = boundFiles.length > 0
         ? boundFiles.reduce((sum, f) => sum + (Number(f.copies) || 1), 0)
-        : (hasAmount(order.binding_charge) && Number(order.binding_charge) > 0
-            ? Math.round(Number(order.binding_charge) / 26)
-            : (!hasAmount(order.binding_charge) && order.spiral_binding ? (Number(order.copies) || 1) : 0));
-    const isBinding = boundCount > 0;
+        : (hasAmount(order.binding_charge) ? Math.max(1, Math.round(Number(order.binding_charge) / 26)) : (order.spiral_binding ? 1 : 0));
+    const isBinding = boundCount > 0 || !!order.spiral_binding;
     view.spiral_binding = isBinding ? 1 : 0;
     view.binding_status = isBinding ? 'Yes' : 'No';
     view.bound_pdf_count = isBinding ? boundCount : 0;
     // Include ₹25 in the admin's binding amount when selected. Customer binding remains ₹26.
     view.binding_amount = isBinding ? boundCount * 25 : 0;
-    view.printing_subtotal = view.itemised ? money(order.printing_amount) : null;
-    view.printing_charges = view.printing_subtotal;
-    view.printer_payable = view.itemised ? money(Number(order.printing_amount) + view.binding_amount) : null;
 
     const descriptions = boundFiles
         .map(f => f.binding_description)
@@ -203,20 +198,6 @@ function financialBreakdown(order, files = [], payments = []) {
     const deliveryLabel = classroom > 0 ? 'Classroom Delivery' : (delivery > 0 ? 'Hostel Gate Delivery' : 'Counter Pickup');
     const activeDeliveryCharge = classroom > 0 ? classroom : (delivery > 0 ? delivery : 0);
 
-    // Bound copy calculation:
-    // Customer binding is ₹26/copy; printer binding payout is ₹25/copy; Campus Print retains ₹1/copy.
-    const boundFiles = files
-        ? files.filter(f => f.spiral_binding === 1 || f.spiral_binding === true || f.spiralBinding === true)
-        : [];
-    const boundCount = boundFiles.length > 0
-        ? boundFiles.reduce((sum, f) => sum + (Number(f.copies) || 1), 0)
-        : (binding && binding > 0
-            ? Math.round(binding / 26)
-            : (order.spiral_binding ? (Number(order.copies) || 1) : 0));
-
-    const printerBinding = itemised ? (boundCount * 25) : null;
-    const printerPayable = printing === null ? null : money(printing + (printerBinding || 0));
-
     return {
         basis: itemised ? 'ITEMISED' : 'ESTIMATED',
         deliveryType,
@@ -225,17 +206,13 @@ function financialBreakdown(order, files = [], payments = []) {
         printing: {
             lines: printingLines(files),
             totalPrinting: printing,
-            printerBinding,
-            printerPayable
+            printerPayable: printing
         },
         extras: {
             deliveryCharge: delivery,
             serviceCharge: service,
             classroomCharge: classroom,
             bindingCharge: binding,
-            customerBinding: binding,
-            printerBinding,
-            campusPrintBinding: (binding !== null && printerBinding !== null) ? money(binding - printerBinding) : null,
             otherCharges: 0,
             totalExtras: extrasTotal
         },
@@ -245,16 +222,13 @@ function financialBreakdown(order, files = [], payments = []) {
             totalService: service,
             totalClassroom: classroom,
             totalBinding: binding,
-            customerBinding: binding,
-            printerBinding,
-            boundCount,
             deliveryType,
             deliveryLabel,
             deliveryCharge: activeDeliveryCharge,
             customerTotal,
             amountPaid,
             refundedAmount,
-            printerPayable,
+            printerPayable: printing,
             grossExtraRevenue: extrasTotal,
             paymentStatus
         },
