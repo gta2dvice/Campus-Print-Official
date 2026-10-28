@@ -91,7 +91,16 @@ async function listPrinterPayables({ search = '', status = '', shopId, dateFrom 
     const [rows] = await pool.query(
         `SELECT p.id, p.order_id, p.status, p.method, p.transaction_ref, p.created_at,
                 COALESCE(u.email, o.guest_full_name) AS customer_email,
-                o.ticket_number, o.printing_amount AS amount
+                o.ticket_number,                 CASE
+                    WHEN o.printing_amount IS NULL THEN NULL
+                    ELSE o.printing_amount + (
+                        CASE
+                            WHEN o.binding_charge > 0 THEN ROUND(o.binding_charge / 26.0) * 25
+                            WHEN o.binding_charge IS NULL AND o.spiral_binding = 1 THEN COALESCE(o.copies, 1) * 25
+                            ELSE 0
+                        END
+                    )
+                END AS amount
          FROM payments p
          JOIN orders o ON o.id = p.order_id
          LEFT JOIN users u ON u.id = o.user_id
