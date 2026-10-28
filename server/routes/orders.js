@@ -655,13 +655,6 @@ router.get('/slots', async (req, res) => {
         console.error('Slots error:', err);
         res.status(500).json({ message: 'Server Error' });
     }
-    if (priced.charges.printedPages > 100) {
-        res.status(422).json({
-            message: 'Orders above 100 billable pages cannot be priced until the service-charge rule is configured.',
-            code: 'SERVICE_CHARGE_RULE_MISSING'
-        });
-        return null;
-    }
 });
 
 // GET /api/orders/stats
