@@ -179,7 +179,7 @@ export default function Index() {
                         <th>Pickup</th>
                         <th>Specs</th>
                         <th>Status</th>
-                        <th className="text-right">Printing</th>
+                        <th className="text-right">Printer Payable</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -196,7 +196,7 @@ export default function Index() {
                           <td data-label="Status">
                             <StatusBadge status={o.status} />
                           </td>
-                          <td data-label="Printing" className="text-right font-black text-slate-900">{o.printer_payable == null ? 'Not itemised' : fmtMoney(o.printer_payable)}</td>
+                          <td data-label="Printer Payable" className="text-right font-black text-slate-900">{o.printer_payable == null ? 'Not itemised' : fmtMoney(o.printer_payable)}</td>
                         </tr>
                       ))}
                     </tbody>

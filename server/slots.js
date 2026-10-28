@@ -6,11 +6,17 @@ const LOCATIONS = SLOT_MATRIX.locations;
 
 const TIME_SLOTS = Object.keys(SLOT_MATRIX.availability);
 
+const DISABLED_TIME_SLOTS = ['11:15 AM', '1:15 PM'];
+
+function isSlotDisabled(time) {
+    return DISABLED_TIME_SLOTS.includes(time);
+}
+
 /** Location ids offered at each slot, derived from the matrix. */
 const OFFERED_BY_TIME = Object.fromEntries(
     TIME_SLOTS.map(time => [
         time,
-        LOCATIONS.filter(loc => SLOT_MATRIX.availability[time][loc.id] === true).map(loc => loc.id)
+        isSlotDisabled(time) ? [] : LOCATIONS.filter(loc => SLOT_MATRIX.availability[time][loc.id] === true).map(loc => loc.id)
     ])
 );
 
@@ -127,6 +133,7 @@ function isSlotPast(time, atMs = Date.now()) {
 
 function pickupError(locationId, time, atMs = Date.now()) {
     if (!TIME_SLOTS.includes(time)) return 'Unknown collection time';
+    if (isSlotDisabled(time)) return 'This time slot is permanently unavailable.';
     if (!getLocationById(locationId)) return 'Unknown collection location';
     if (isSlotPast(time, atMs)) return 'This time slot is no longer available.';
     if (!isLocationOffered(locationId, time)) return 'This location is not available for the selected time.';
