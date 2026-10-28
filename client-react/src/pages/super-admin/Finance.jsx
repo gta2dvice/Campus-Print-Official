@@ -61,11 +61,8 @@ export function OrderFinance({ finance }) {
             ? `Hostel Gate Delivery — ${fmtRupees(extras.deliveryCharge)}`
             : `Counter Pickup — ${fmtRupees(0)}`));
 
-  const bindingVal = (extras?.bindingCharge && extras.bindingCharge > 0)
-    ? fmtRupees(extras.bindingCharge)
-    : (summary?.totalBinding && summary.totalBinding > 0)
-        ? fmtRupees(summary.totalBinding)
-        : '₹0';
+  const customerBinding = summary?.customerBinding ?? summary?.totalBinding ?? extras?.bindingCharge ?? 0;
+  const printerBinding = summary?.printerBinding ?? extras?.printerBinding ?? 0;
 
   return (
     <div className="mt-5 flex flex-col gap-3">
@@ -78,7 +75,14 @@ export function OrderFinance({ finance }) {
         <Row label={`Printing subtotal${est}`} value={fmtRupees(summary?.totalPrinting ?? printing?.totalPrinting, 'Not itemised')} />
         <Row label={`Service charge${est}`} value={fmtRupees(summary?.totalService ?? extras?.serviceCharge ?? 0)} />
         <Row label={`Selected delivery${est}`} value={deliveryText} />
-        <Row label={`Binding amount${est}`} value={bindingVal} />
+        {customerBinding > 0 ? (
+          <>
+            <Row label={`Customer binding revenue (₹26/copy)${est}`} value={fmtRupees(customerBinding)} />
+            <Row label={`Printer binding payout (₹25/copy)${est}`} value={fmtRupees(printerBinding)} />
+          </>
+        ) : (
+          <Row label={`Binding amount${est}`} value="₹0" />
+        )}
         <Row label="Customer total payable" value={fmtRupees(summary?.customerTotal)} strong />
         <Row label="Amount actually paid / captured" value={fmtRupees(summary?.amountPaid ?? 0)} />
         {summary?.refundedAmount > 0 && (
@@ -135,11 +139,13 @@ export function FinancialSummary() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           <Section title={`Itemised orders (${t.itemisedOrders})`}>
-            <Row label="Printer payable (printing only)" value={fmtRupees(t.printerPayable)} strong />
+            <Row label="Printing subtotal" value={fmtRupees(t.totalPrinting)} />
+            <Row label="Printer binding payout (₹25/copy)" value={fmtRupees(t.printerBinding ?? 0)} />
+            <Row label="Printer payable (total)" value={fmtRupees(t.printerPayable)} strong />
             <Row label="Delivery charges (Hostel Gate)" value={fmtRupees(t.totalDelivery)} />
             <Row label="Service charges" value={fmtRupees(t.totalService)} />
             <Row label="Classroom surcharges" value={fmtRupees(t.totalClassroom)} />
-            <Row label="Binding charges" value={fmtRupees(t.totalBinding)} />
+            <Row label="Customer binding revenue (₹26/copy)" value={fmtRupees(t.totalBinding)} />
             <Row label="Gross extra-charge revenue" value={fmtRupees(t.grossExtraRevenue)} strong />
             <Row label="Customer total" value={fmtRupees(t.itemisedCustomerTotal)} />
             <Row label="Reconciles" value={t.reconciled ? '✓ Yes' : '✗ Check orders'} />
