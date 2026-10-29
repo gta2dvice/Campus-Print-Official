@@ -23,7 +23,6 @@ const { processSuccessfulPayment } = require('../services/paymentFinalizer');
 const { tryEnsureTicket } = require('../services/ticketService');
 const { sendTicketEmail, getTicketEmailStatus, retryTicketEmail } = require('../services/ticketEmailService');
 const { logPaymentEvent } = require('../services/paymentLog');
-const { notifyAdminOfNewOrder } = require('../services/adminOrderNotification');
 const { normalizePhone, maskPhone } = require('../phone');
 const { normalizeEmail, maskEmail, emailRateLimitKey } = require('../email');
 const { rateLimit, phoneRateLimitKey } = require('../middleware/rateLimit');
@@ -579,10 +578,6 @@ async function createOrderWithFiles(req, { data, resolved, payment, ticketTokenH
     logPaymentEvent('ORDER_CREATED', { orderId: order.id, method: payment.method, amount: data.totalPrice });
     try {
         await persistUploadedFiles(userId, order.id, resolved);
-        // Notify admin of the new order
-        notifyAdminOfNewOrder(order.id).catch(err =>
-            console.error(`[ADMIN_NOTIFY_TRIGGER_ERROR] Order ${order.id}:`, err.message)
-        );
     } catch (error) {
         await Order.failPaymentAttempt(order.paymentId);
         logPaymentEvent('PAYMENT_FAILED', { orderId: order.id, paymentId: order.paymentId, reason: 'FILE_STORAGE_FAILED' });
