@@ -3,7 +3,6 @@ import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import React, { Suspense, lazy } from 'react';
 
-import Maintenance from './Maintenance';
 import Home from './pages/Home';
 import About from './pages/About';
 import NewOrder from './pages/NewOrder';
@@ -69,26 +68,19 @@ export default function App() {
             <Route path="settings" element={<SuperAdminSettings />} />
           </Route>
 
-          {/* When maintenance is active, all non-admin routes show the break page */}
-          {IS_MAINTENANCE ? (
-            <Route path="*" element={<Maintenance />} />
-          ) : (
-            <>
-              {/* Public Routes */}
-              <Route path="/" element={<Home />} />
-              <Route path="/about" element={<About />} />
+          {/* Public Routes */}
+          <Route path="/" element={<Home />} />
+          <Route path="/about" element={<About />} />
 
-              {/* Student Guest Flow */}
-              <Route path="/new-order" element={<NewOrder />} />
-              <Route path="/select-location" element={<SelectLocation />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/ticket" element={<Ticket />} />
-              <Route path="/order/:id" element={<OrderDetails />} />
+          {/* Student Guest Flow */}
+          <Route path="/new-order" element={<NewOrder />} />
+          <Route path="/select-location" element={<SelectLocation />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/ticket" element={<Ticket />} />
+          <Route path="/order/:id" element={<OrderDetails />} />
 
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </>
-          )}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </AuthProvider>
