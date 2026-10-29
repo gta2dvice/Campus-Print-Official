@@ -35,14 +35,23 @@ const SuperAdminPaymentGateway = lazy(() => import('./pages/super-admin/PaymentG
 const SuperAdminAnalytics = lazy(() => import('./pages/super-admin/Analytics'));
 const SuperAdminSettings = lazy(() => import('./pages/super-admin/Settings'));
 
-// Set to false (or set VITE_MAINTENANCE_MODE="false" in env) to reopen public routes
-const IS_MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE !== 'false';
-
 export default function App() {
   return (
     <AuthProvider>
       <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontSize: '1.2rem', fontFamily: 'inherit' }}>Loading...</div>}>
         <Routes>
+          {/* Public Routes */}
+          <Route path="/" element={<Home />} />
+          <Route path="/about" element={<About />} />
+
+          {/* Student Guest Flow - Now Public */}
+          <Route path="/new-order" element={<NewOrder />} />
+          <Route path="/select-location" element={<SelectLocation />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/ticket" element={<Ticket />} />
+          <Route path="/order/:id" element={<OrderDetails />} />
+
           {/* Shop Admin Routes */}
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminLayout />}>
