@@ -77,6 +77,18 @@ export default function App() {
             <Route path="settings" element={<SuperAdminSettings />} />
           </Route>
 
+          {/* Public Routes */}
+          <Route path="/" element={<Home />} />
+          <Route path="/about" element={<About />} />
+
+          {/* Student Guest Flow */}
+          <Route path="/new-order" element={<NewOrder />} />
+          <Route path="/select-location" element={<SelectLocation />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/ticket" element={<Ticket />} />
+          <Route path="/order/:id" element={<OrderDetails />} />
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
