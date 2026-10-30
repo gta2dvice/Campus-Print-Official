@@ -14,7 +14,6 @@ const pool = require('../db');
 const { logPaymentEvent } = require('./paymentLog');
 const { tryEnsureTicket } = require('./ticketService');
 const { sendTicketEmail } = require('./ticketEmailService');
-const { notifyAdminOfPaidOrder } = require('./adminOrderNotification');
 
 const AMOUNT_TOLERANCE = 0.05;
 
@@ -131,11 +130,6 @@ async function processSuccessfulPayment(orderId, details) {
         // Dispatch email in background to avoid blocking the payment response
         sendTicketEmail(orderId, { source }).catch(emailErr => {
             console.error('[TICKET_EMAIL_DISPATCH_FAILED]', { orderId, error: emailErr.message });
-        });
-
-        // Notify admin only after payment is PAID and ticket is READY
-        notifyAdminOfPaidOrder(orderId).catch(adminErr => {
-            console.error('[ADMIN_NOTIFY_DISPATCH_FAILED]', { orderId, error: adminErr.message });
         });
     }
     return {

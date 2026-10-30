@@ -35,7 +35,7 @@ async function createFiles(orderId, files) {
 
 async function getFilesByOrder(orderId) {
     const [rows] = await pool.execute(
-        `SELECT id, order_id, original_name, storage_path, mime_type, size_bytes, file_type, page_count, page_range, printing_side, copies, color_mode, printing_charge, spiral_binding, binding_description, created_at, file_deleted_at
+        `SELECT id, order_id, original_name, mime_type, size_bytes, file_type, page_count, page_range, printing_side, copies, color_mode, printing_charge, spiral_binding, binding_description, created_at, file_deleted_at
          FROM order_files WHERE order_id = ?`,
         [orderId]
     );
