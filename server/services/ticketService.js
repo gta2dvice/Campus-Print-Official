@@ -4,7 +4,6 @@
 // existing ticket is returned unchanged.
 const pool = require('../db');
 const { logPaymentEvent } = require('./paymentLog');
-const { notifyAdminOfPaidOrder } = require('./adminOrderNotification');
 
 function ticketNumberFor(orderId) {
     return `CP-${String(orderId).padStart(3, '0')}`;
@@ -78,11 +77,6 @@ async function retryPendingTickets(limit = 50) {
             try {
                 const { sendTicketEmail } = require('./ticketEmailService');
                 await sendTicketEmail(row.id, { source: 'ticket_recovery_sweep' });
-
-                // Notify admin after ticket recovery succeeds
-                notifyAdminOfPaidOrder(row.id).catch(adminErr => {
-                    console.error('[ADMIN_NOTIFY_RECOVERY_FAILED]', { orderId: row.id, error: adminErr.message });
-                });
             } catch {}
         }
     }
